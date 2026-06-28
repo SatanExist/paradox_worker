@@ -23,8 +23,8 @@ RUN pip install --no-cache-dir ninja spconv-cu118
 # 5. БЕЗОПАСНЫЙ ПУТЬ: Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
-# 6. Устанавливаем TRELLIS прямо из скопированной папки!
-RUN pip install --no-cache-dir /app/TRELLIS
+# 6. Устанавливаем TRELLIS прямо из скопированной папки с отключенной изоляцией!
+RUN pip install --no-cache-dir --no-build-isolation /app/TRELLIS
 
 # 7. Копируем наш код воркера внутрь контейнера
 COPY worker.py /app/worker.py
