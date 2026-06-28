@@ -3,7 +3,7 @@ FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
 
 WORKDIR /app
 
-# 1. Системные зависимости (оставляем компиляторы для надежности)
+# 1. Системные зависимости (компиляторы для надежности)
 RUN apt-get update && apt-get install -y \
     git \
     libgl1-mesa-glx \
@@ -23,11 +23,15 @@ RUN pip install --no-cache-dir ninja spconv-cu118
 # 5. БЕЗОПАСНЫЙ ПУТЬ: Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
-# 6. Устанавливаем TRELLIS прямо из скопированной папки с отключенной изоляцией!
-RUN pip install --no-cache-dir --no-build-isolation /app/TRELLIS
+# 6. МАГИЯ: Указываем Python, где искать исходники TRELLIS (вместо установки через pip)
+ENV PYTHONPATH="/app/TRELLIS"
 
-# 7. Копируем наш код воркера внутрь контейнера
+# 7. Устанавливаем зависимости самой нейросети
+# Робот проверит: если файл требований есть - он скачает все нужные библиотеки
+RUN if [ -f "/app/TRELLIS/requirements.txt" ]; then pip install --no-cache-dir -r /app/TRELLIS/requirements.txt; fi
+
+# 8. Копируем наш код воркера внутрь контейнера
 COPY worker.py /app/worker.py
 
-# 8. Указываем команду для запуска
+# 9. Указываем команду для запуска
 CMD [ "python", "-u", "/app/worker.py" ]
