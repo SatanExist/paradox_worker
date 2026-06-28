@@ -3,21 +3,31 @@ FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
 
 WORKDIR /app
 
-# 1. Устанавливаем системные пакеты (нужны для работы с графикой)
-RUN apt-get update && apt-get install -y git libgl1-mesa-glx libglib2.0-0
+# 1. Системные зависимости (оставляем компиляторы для надежности)
+RUN apt-get update && apt-get install -y \
+    git \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# 2. Устанавливаем базовые библиотеки для нашего скрипта
-RUN pip install --no-cache-dir --upgrade pip
+# 2. Обновляем базовые инструменты Python
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 3. Базовые библиотеки для воркера
 RUN pip install --no-cache-dir runpod Pillow requests
 
-# 3. Устанавливаем специфические ускорители для 3D-сетей (SpConv)
+# 4. Специфические ускорители для 3D-сетей (SpConv)
 RUN pip install --no-cache-dir ninja spconv-cu118
 
-# 4. Устанавливаем сам TRELLIS напрямую из репозитория Microsoft
-RUN pip install --no-cache-dir git+https://github.com/microsoft/TRELLIS.git
+# 5. БЕЗОПАСНЫЙ ПУТЬ: Копируем локальный TRELLIS в контейнер
+COPY TRELLIS /app/TRELLIS
 
-# 5. Копируем наш код воркера внутрь контейнера
+# 6. Устанавливаем TRELLIS прямо из скопированной папки!
+RUN pip install --no-cache-dir /app/TRELLIS
+
+# 7. Копируем наш код воркера внутрь контейнера
 COPY worker.py /app/worker.py
 
-# 6. Указываем команду для запуска
+# 8. Указываем команду для запуска
 CMD [ "python", "-u", "/app/worker.py" ]
