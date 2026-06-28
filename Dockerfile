@@ -3,7 +3,7 @@ FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
 
 WORKDIR /app
 
-# 1. Системные зависимости (компиляторы для надежности)
+# 1. Системные пакеты
 RUN apt-get update && apt-get install -y \
     git \
     libgl1-mesa-glx \
@@ -11,27 +11,28 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Обновляем базовые инструменты Python
+# 2. Обновляем инструменты установки
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# 3. Базовые библиотеки для воркера
+# 3. Базовые библиотеки для нашего скрипта
 RUN pip install --no-cache-dir runpod Pillow requests
 
-# 4. Специфические ускорители для 3D-сетей (SpConv)
+# 4. Специфические ускорители для 3D-сетей (строго под нашу CUDA 11.8)
 RUN pip install --no-cache-dir ninja spconv-cu118
 
-# 5. БЕЗОПАСНЫЙ ПУТЬ: Копируем локальный TRELLIS в контейнер
+# 5. ХИРУРГИЧЕСКАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ TRELLIS
+# (Игнорируем их requirements.txt, ставим только то, что безопасно)
+RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph transformers pydantic gradio_litmodel3d xformers==0.0.20
+RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+
+# 6. Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
-# 6. МАГИЯ: Указываем Python, где искать исходники TRELLIS (вместо установки через pip)
+# 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"
 
-# 7. Устанавливаем зависимости самой нейросети
-# Робот проверит: если файл требований есть - он скачает все нужные библиотеки
-RUN if [ -f "/app/TRELLIS/requirements.txt" ]; then pip install --no-cache-dir -r /app/TRELLIS/requirements.txt; fi
-
-# 8. Копируем наш код воркера внутрь контейнера
+# 8. Копируем наш код воркера
 COPY worker.py /app/worker.py
 
-# 9. Указываем команду для запуска
+# 9. Запуск
 CMD [ "python", "-u", "/app/worker.py" ]
