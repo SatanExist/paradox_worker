@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir ninja spconv-cu118
 # Игнорируем вшитый системный пакет blinker, чтобы pip не крашился при его обновлении
 RUN pip install --no-cache-dir --ignore-installed blinker
 # Устанавливаем всё остальное
-RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph pydantic gradio_litmodel3d xformers==0.0.20 open3d numpy==1.26.4 transformers==4.40.2
+RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph pydantic gradio_litmodel3d xformers==0.0.20 open3d numpy==1.26.4 transformers==4.40.2 tables
 RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
 
 # 6. Копируем локальный TRELLIS в контейнер
