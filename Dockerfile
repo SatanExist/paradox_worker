@@ -27,7 +27,12 @@ RUN pip install --no-cache-dir --ignore-installed blinker
 RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph pydantic gradio_litmodel3d xformers==0.0.20 open3d numpy==1.26.4 transformers==4.40.2
 RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
 
+# 6. Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
+
+# 6.5. ВОССТАНАВЛИВАЕМ ПУСТУЮ ПАПКУ (качаем модуль напрямую от Microsoft)
+RUN rm -rf /app/TRELLIS/trellis/representations/mesh/flexicubes && \
+    git clone https://github.com/microsoft/FlexiCubes.git /app/TRELLIS/trellis/representations/mesh/flexicubes
 
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"
