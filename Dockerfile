@@ -30,9 +30,9 @@ RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.
 # 6. Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
-# 6.5. ВОССТАНАВЛИВАЕМ ПУСТУЮ ПАПКУ (качаем модуль напрямую от Microsoft)
+# 6.5. ВОССТАНАВЛИВАЕМ ПУСТУЮ ПАПКУ (качаем модуль напрямую от NVIDIA)
 RUN rm -rf /app/TRELLIS/trellis/representations/mesh/flexicubes && \
-    git clone https://github.com/microsoft/FlexiCubes.git /app/TRELLIS/trellis/representations/mesh/flexicubes
+    git clone https://github.com/nv-tlabs/FlexiCubes.git /app/TRELLIS/trellis/representations/mesh/flexicubes
 
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"
