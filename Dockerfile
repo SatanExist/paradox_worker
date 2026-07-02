@@ -22,9 +22,10 @@ RUN pip install --no-cache-dir ninja spconv-cu118
 
 # 5. ХИРУРГИЧЕСКАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ TRELLIS
 # (Добавили open3d и жестко зафиксировали версии numpy и transformers для совместимости с PyTorch 2.0.1)
-RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph pydantic gradio_litmodel3d xformers==0.0.20 open3d "numpy<2.0.0" "transformers<4.41.0"
+# 5. ХИРУРГИЧЕСКАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ TRELLIS
+# (Добавили open3d и жестко зафиксировали версии numpy и transformers для совместимости с PyTorch 2.0.1)
+RUN pip install --no-cache-dir imageio imageio-ffmpeg easydict opencv-python-headless scipy rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph pydantic gradio_litmodel3d xformers==0.0.20 open3d numpy==1.26.4 transformers==4.40.2
 RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
-
 # 6. Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
