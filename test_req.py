@@ -1,11 +1,21 @@
-﻿import requests
+﻿import os
+import requests
 import time
+from dotenv import load_dotenv
+
+# Эта команда заставит Python найти файл .env и загрузить из него данные
+load_dotenv()
 
 # --- ТВОИ ДАННЫЕ ОТ RUNPOD ---
 ENDPOINT_ID = "z44fok853g0e14"
-API_KEY = "API_KEY_RUNPOD"
 
-# Используем runsync, чтобы скрипт ждал ответа (модель может генерироваться пару минут)
+# Теперь скрипт сам подтянет настоящий ключ из безопасного места!
+API_KEY = os.getenv("RUNPOD_API_KEY")
+
+# Небольшая проверка, чтобы сразу понять, если что-то пошло не так
+if not API_KEY:
+    raise ValueError("❌ Ключ API не найден! Проверь, создал ли ты файл .env")
+
 url = f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync"
 
 headers = {
