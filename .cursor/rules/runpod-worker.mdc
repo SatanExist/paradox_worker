@@ -1,0 +1,42 @@
+---
+description: Конвенции RunPod worker и Docker для TRELLIS 3D
+globs: worker.py,Dockerfile,test_req.py
+alwaysApply: false
+---
+
+# Правила RunPod worker
+
+## Контракт handler
+
+Вход: `{ "input": { "image_url": "<публичный https url>" } }`
+
+Успех: ключи `status`, `message`, `model_base64` (GLB в base64).
+
+Ошибки: `{ "error": "..." }`, без необработанных exception.
+
+## Не ломать
+
+- `HF_HOME=/runpod-volume/huggingface_cache`
+- Веса в `/runpod-volume/trellis-weights`
+- Symlink `/app/ckpts` → `{model_path}/ckpts` (требование TRELLIS)
+- Ленивый `load_model()` — pipeline один раз на процесс
+- `PYTHONPATH=/app/TRELLIS` в Docker
+
+## Ограничения Dockerfile
+
+- База: CUDA **11.8** (`runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel`)
+- `spconv-cu118`, не generic spconv
+- FlexiCubes — clone в path TRELLIS mesh (шаг 6.5 Dockerfile)
+- Pin: `xformers==0.0.20`, `numpy==1.26.4`, `transformers==4.40.2`
+
+## Тестирование
+
+- Локально: `test_req.py` + `RUNPOD_API_KEY` в `.env`
+- `/runsync` с timeout 600s+ для cold start
+- Тестовая картинка: fox PNG из репо Microsoft TRELLIS
+
+## При изменении worker.py
+
+- Сохранять очистку temp-файлов (PNG + GLB)
+- Логировать через `print()` для RunPod dashboard
+- Новые input-параметры — обновить секцию API в `memory-bank/techContext.md`

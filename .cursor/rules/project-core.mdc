@@ -1,0 +1,38 @@
+---
+description: Базовый контекст paradox_worker и платформы AI_MESH
+alwaysApply: true
+---
+
+# paradox_worker — правила агента
+
+## Проект
+
+RunPod Serverless worker: **URL картинки → TRELLIS → GLB base64**.
+Часть платформы **AI_MESH** (3D, текстуры, анимации).
+
+Текущий спринт — в `memory-bank/activeContext.md` (на русском).
+
+## Общение
+
+- Ответы пользователю — **на русском**
+- Код, комментарии и commit messages — **на английском**
+- Файлы memory-bank — **на русском** (можно обновлять по-русски)
+
+## Безопасность
+
+- Не коммитить `.env`, API keys, секреты
+- Не делать `git commit` / `git push` без явной просьбы пользователя
+- Не трогать vendored `TRELLIS/` без необходимости
+
+## Работа с памятью
+
+- В начале сессии: `git pull`, затем `memory-bank/activeContext.md`
+- Два разработчика на разных ПК — см. `memory-bank/teamWorkflow.md`
+- После задачи: предложить обновить `activeContext.md` (журнал сессий, «кто работал»)
+- Архитектурные решения → `memory-bank/systemPatterns.md`
+- Изменения стека / infra → `memory-bank/techContext.md`
+- Конец сессии: напомнить про `git push` memory-bank (без commit без просьбы)
+
+## Scope
+
+Этот репо = только GPU worker. Frontend и сайт — отдельный проект (`AI_MESH`).
