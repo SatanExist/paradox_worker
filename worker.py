@@ -5,6 +5,7 @@ import base64
 import runpod
 import torch
 from PIL import Image
+import traceback
 
 # TRELLIS can try to import flash_attn by default. We ship xformers in Docker,
 # so force the attention backend to xformers to avoid ModuleNotFoundError.
@@ -93,7 +94,9 @@ def handler(job):
         }
 
     except Exception as e:
+        tb = traceback.format_exc()
         print(f"КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
+        print(tb)
         return {"error": f"Ошибка при генерации: {str(e)}"}
 
 
