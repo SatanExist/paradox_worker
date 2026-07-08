@@ -6,6 +6,10 @@ import runpod
 import torch
 from PIL import Image
 
+# TRELLIS can try to import flash_attn by default. We ship xformers in Docker,
+# so force the attention backend to xformers to avoid ModuleNotFoundError.
+os.environ.setdefault("ATTN_BACKEND", "xformers")
+
 # ПРО-ФИШКА: Перенаправляем кэш нейросетей на наш примонтированный сетевой диск.
 os.environ["HF_HOME"] = "/runpod-volume/huggingface_cache"
 

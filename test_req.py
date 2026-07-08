@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- ТВОИ ДАННЫЕ ОТ RUNPOD ---
-ENDPOINT_ID = "z44fok853g0e14"
+ENDPOINT_ID = "splmm6w2rblqkp"
 
 # Теперь скрипт сам подтянет настоящий ключ из безопасного места!
 API_KEY = os.getenv("RUNPOD_API_KEY")
@@ -22,6 +22,24 @@ headers = {
     "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json"
 }
+
+def wait_for_result(job_id: str, *, poll_interval_s: float = 5.0, max_wait_s: float = 15 * 60) -> dict:
+    status_url = f"https://api.runpod.ai/v2/{ENDPOINT_ID}/status/{job_id}"
+    deadline = time.time() + max_wait_s
+
+    while True:
+        if time.time() > deadline:
+            raise TimeoutError(f"Timed out waiting for job result after {int(max_wait_s)}s (id={job_id})")
+
+        r = requests.get(status_url, headers=headers, timeout=60)
+        r.raise_for_status()
+        payload = r.json()
+
+        status = payload.get("status")
+        if status in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
+            return payload
+
+        time.sleep(poll_interval_s)
 
 # Отправляем тестовую картинку лисы (стандартный тест TRELLIS)
 data = {
@@ -38,6 +56,13 @@ try:
 
     print("✅ Ответ от облака получен:")
     print(result)
+
+    job_id = result.get("id")
+    if job_id and result.get("status") in ("IN_QUEUE", "IN_PROGRESS"):
+        print(f"⏳ Job {job_id} is {result.get('status')}. Waiting for completion...")
+        final_payload = wait_for_result(job_id)
+        print("✅ Финальный статус получен:")
+        print(final_payload)
 
 except Exception as e:
     print(f"❌ Ошибка: {e}")
