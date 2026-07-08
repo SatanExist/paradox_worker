@@ -12,9 +12,9 @@
 
 | Поле | Значение |
 |------|----------|
-| Кто | — (заполняйте после каждой сессии) |
-| ПК | — |
-| Коммит | — |
+| Кто | Pedrokita (с Cursor агентом) |
+| ПК | Windows (D:\PyCharm\paradox_worker) |
+| Коммит | (см. GitHub Actions build; фикс в `worker.py` + улучшение `test_req.py`) |
 
 ---
 
@@ -22,7 +22,7 @@
 
 **Фаза:** MVP воркера готов → готовимся к интеграции с сайтом.
 
-**Ближайшая цель:** настроена синхронизация memory-bank через git; следующий шаг — frontend + API.
+**Ближайшая цель:** стабилизировать RunPod endpoint: убрать падения на старте/инференсе и добиться `COMPLETED` на `test_req.py`.
 
 ---
 
@@ -43,6 +43,7 @@
 
 - [ ] Первый «прогон» синхронизации: один делает push, второй pull (вы + брат)
 - [ ] Выбрать стек frontend (в плане — Next.js)
+- [ ] RunPod endpoint: добиться успешного прогона `test_req.py` (COMPLETED)
 
 ---
 
@@ -51,14 +52,16 @@
 1. Оба: `git pull` или `.\scripts\sync-start.ps1`
 2. Один обновляет этот файл после сессии → `git push`
 3. Второй: pull → новый чат → `@memory-bank/activeContext.md`
-4. Создать репо сайта (`AI_MESH`) — upload, API, Three.js viewer
-5. Опционально: параметр `seed` в worker input
+4. RunPod: дождаться GPU capacity (throttling) → запустить `test_req.py` → собрать traceback/логи при падении
+5. Если RunPod job падает: смотреть Logs (теперь печатается полный traceback) и фиксить по конкретной строке
+6. После стабилизации воркера: создать репо сайта (`AI_MESH`) — upload, API, Three.js viewer
+7. Опционально: параметр `seed` в worker input
 
 ---
 
 ## Блокеры
 
-Нет.
+- RunPod GPU capacity: воркеры часто `Throttled` / нет свободных GPU (EU-CZ-1, 3090/24GB). Нужен wait/смена региона/квоты/уменьшить max workers.
 
 ---
 
@@ -67,6 +70,7 @@
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
 | 2026-07-08 | — | Memory-bank, rules, teamWorkflow | Прогнать sync вдвоём |
+| 2026-07-08 | Pedrokita | 1) `test_req.py`: добавлен polling по `/status/{id}` при `IN_QUEUE`; 2) `worker.py`: форс `ATTN_BACKEND=xformers` (фикс `flash_attn`), добавлен полный traceback в logs; 3) Endpoints: обновление image через GHCR digest | Дождаться GPU capacity → повторить `test_req.py` → по traceback починить `dmc_table is not defined` |
 | | | | |
 | | | | |
 
