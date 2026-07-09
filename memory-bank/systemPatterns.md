@@ -79,7 +79,45 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 - **Upload**: браузер → ваш API → URL картинки → RunPod (тот же контракт)
 - **Большие модели**: S3 presigned URL вместо base64, если GLB > ~5 MB
 - **Async**: RunPod `/run` + polling или webhooks вместо `/runsync`
+- **Multi-endpoint (HA на serverless)**: 2 endpoint'а в разных регионах + fallback по времени в `IN_QUEUE`
 - **Несколько воркеров**: отдельные endpoint'ы под 3D, текстуры, анимации
+
+## Паттерн: Multi-endpoint fallback (serverless HA)
+
+Проблема: в serverless бывают периоды, когда **в одном регионе нет свободных GPU** (долгий `IN_QUEUE`, `Throttled`).
+
+Решение:
+
+- Поднять **2 endpoint'а** с одним и тем же образом воркера в **разных регионах** (например, EU и US).
+- В каждом регионе иметь свой **network volume** (веса кэшируются локально в регионе; volume не шарится между регионами).
+- На стороне клиента/сайта:
+  - Отправить job в primary endpoint (`/run`).
+  - Если job остаётся в `IN_QUEUE` дольше \(X\) минут → отменить и отправить в secondary endpoint.
+  - Дальше обычный polling `/status/{id}` до `COMPLETED/FAILED`.
+
+Минимальный безопасный UX:
+- Free: ждать capacity \(X\) минут, потом просить повторить позже.
+- Paid: включать fallback в другой регион и/или более широкий список GPU.
+
+## Паттерн: Controlled rollout через теги образа (prod)
+
+Проблема: в serverless нестабильна не только capacity, но и **релизы** (новый образ может сломать старт/инференс).
+
+Решение: деплоить endpoint'ы по Docker image **с версионированными тегами** и отдельным тегом **`stable`**:
+
+- `ghcr.io/.../paradox_worker:vX.Y.Z` — неизменяемый релиз (или date-based: `v2026-07-09-1`)
+- `ghcr.io/.../paradox_worker:stable` — “боевой указатель” на последнюю проверенную версию
+- Не использовать `latest` как продовый тег.
+
+Процесс (канарейка):
+1. Собрать и запушить `vX.Y.Z`.
+2. Обновить **secondary endpoint** (резервный регион) на `vX.Y.Z` и прогнать 1–2 job.
+3. Если ок — передвинуть `stable` на `vX.Y.Z` (или обновить primary на `vX.Y.Z`).
+4. Обновить **primary endpoint**.
+
+Связка с Multi-endpoint:
+- Multi-endpoint решает **capacity** (где есть свободный GPU).
+- Controlled rollout решает **надёжность релизов** (не ломаем всё сразу).
 
 ## Конвенции кода
 

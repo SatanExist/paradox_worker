@@ -22,15 +22,42 @@
 
 ## Настройка RunPod
 
-- **Endpoint**: ID serverless endpoint — в `test_req.py` (`ENDPOINT_ID`)
+- **Endpoint**: ID serverless endpoint(ов) — в `.env` или `test_req.py`
 - **API key**: `RUNPOD_API_KEY` в `.env` (не коммитить!)
 - **Network volume** (должен быть примонтирован к endpoint):
   - `/runpod-volume/huggingface_cache` — кэш HF (`HF_HOME`)
   - `/runpod-volume/trellis-weights` — веса модели через `snapshot_download`
 
+### Multi-endpoint (вариант B)
+
+Для повышения доступности на serverless используем 2 endpoint'а в разных регионах:
+
+- `RUNPOD_ENDPOINT_ID_PRIMARY` — основной регион
+- `RUNPOD_ENDPOINT_ID_SECONDARY` — резервный регион (fallback, если primary долго в `IN_QUEUE`)
+
+Важно: **network volume не шарится между регионами**, поэтому во втором регионе нужен отдельный volume, смонтированный в тот же путь `/runpod-volume`.
+
 ## Контракт API
 
-**Запрос** (`POST https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync`):
+Рекомендуемо для сайта: **async**.
+
+**Запрос (async)** (`POST https://api.runpod.ai/v2/{ENDPOINT_ID}/run`):
+
+```json
+{
+  "input": {
+    "image_url": "https://example.com/image.png"
+  }
+}
+```
+
+Ответ содержит `id`, который нужно опрашивать.
+
+**Статус** (`GET https://api.runpod.ai/v2/{ENDPOINT_ID}/status/{id}`).
+
+Для отладки можно использовать `/runsync`, но в проде лучше `/run` + polling/webhook.
+
+**Запрос (sync, debug)** (`POST https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync`):
 
 ```json
 {
@@ -65,11 +92,20 @@ pip install requests python-dotenv
 
 # .env (не в git):
 # RUNPOD_API_KEY=your_key_here
+# RUNPOD_ENDPOINT_ID_PRIMARY=...
+# RUNPOD_ENDPOINT_ID_SECONDARY=...  (опционально)
 
 python test_req.py
 ```
 
 TRELLIS inference работает **только внутри Docker на RunPod**, не локально (если только нет GPU-окружения как в Dockerfile).
+
+## Деплой образа (prod)
+
+Рекомендуемый подход:
+- GitHub Actions собирает и пушит Docker image в GHCR.
+- Используем **версионированные теги** (`vX.Y.Z`) + тег **`stable`** для продового endpoint'а.
+- В RunPod endpoint указываем `...:stable` (и делаем controlled rollout через secondary).
 
 ## Сборка Docker — важное
 

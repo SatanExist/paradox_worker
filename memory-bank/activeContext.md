@@ -44,6 +44,9 @@
 - [ ] Первый «прогон» синхронизации: один делает push, второй pull (вы + брат)
 - [ ] Выбрать стек frontend (в плане — Next.js)
 - [ ] RunPod endpoint: добиться успешного прогона `test_req.py` (COMPLETED)
+- [ ] Вариант B: поднять второй RunPod endpoint в другом регионе + fallback (если `IN_QUEUE` > X минут)
+- [ ] Перевести тестирование/сайт на async `/run` + polling `/status/{id}` (не держать `/runsync` в проде)
+- [ ] Прод: controlled rollout образа через теги `vX.Y.Z` + `stable` (канарейка через secondary)
 
 ---
 
@@ -56,12 +59,22 @@
 5. Если RunPod job падает: смотреть Logs (теперь печатается полный traceback) и фиксить по конкретной строке
 6. После стабилизации воркера: создать репо сайта (`AI_MESH`) — upload, API, Three.js viewer
 7. Опционально: параметр `seed` в worker input
+8. Для прода: перейти на `/run` + polling/webhook и реализовать multi-endpoint fallback (serverless HA)
 
 ---
 
 ## Блокеры
 
 - RunPod GPU capacity: воркеры часто `Throttled` / нет свободных GPU (EU-CZ-1, 3090/24GB). Нужен wait/смена региона/квоты/уменьшить max workers.
+- Сейчас наблюдается дефицит GPU в EU-CZ-1 второй день подряд → план: резервный endpoint в другом регионе (вариант B).
+
+---
+
+## Заметки по RunPod (важное)
+
+- **Network volume ускоряет только скачивание весов**, но не решает `Waiting for GPU` — это отдельная очередь на capacity.
+- `Low Supply` может означать “почти ноль” часами/сутками — это не гарантия, что GPU скоро появится.
+- Для дефицита лучше `max_workers=1`, `active_workers=0/1`, широкий список VRAM классов и **multi-region fallback**.
 
 ---
 
