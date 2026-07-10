@@ -17,13 +17,25 @@
 |------|------------|
 | `worker.py` | RunPod handler: скачать картинку → TRELLIS → GLB → base64 |
 | `Dockerfile` | Сборка контейнера: deps, копия TRELLIS, фикс FlexiCubes |
-| `test_req.py` | Локальный тест RunPod API `/runsync` |
+| `test_req.py` | Локальный тест RunPod API: async `/run` + polling + fallback |
+| `scripts/watch_endpoint.py` | Мониторинг `/health` (queue, workers, throttled) |
 | `TRELLIS/` | Исходники TRELLIS в репо (`PYTHONPATH=/app/TRELLIS`) |
 
 ## Настройка RunPod
 
-- **Endpoint**: ID serverless endpoint(ов) — в `.env` или `test_req.py`
 - **API key**: `RUNPOD_API_KEY` в `.env` (не коммитить!)
+- **Endpoints** (defaults в `test_req.py` / `.env`):
+
+| Роль | ID | Регион | Volume |
+|------|-----|--------|--------|
+| Primary CZ | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` |
+| Secondary RO | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` |
+
+- **Docker image** (GHCR): `ghcr.io/satanexist/paradox_worker`
+  - Сейчас (починка): `:latest`
+  - Прод (план): `:stable` или `:vX.Y.Z`
+  - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
+  - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
 - **Network volume** (должен быть примонтирован к endpoint):
   - `/runpod-volume/huggingface_cache` — кэш HF (`HF_HOME`)
   - `/runpod-volume/trellis-weights` — веса модели через `snapshot_download`
@@ -100,17 +112,29 @@ python test_req.py
 
 TRELLIS inference работает **только внутри Docker на RunPod**, не локально (если только нет GPU-окружения как в Dockerfile).
 
-## Деплой образа (prod)
+## Деплой образа
 
-Рекомендуемый подход:
-- GitHub Actions собирает и пушит Docker image в GHCR.
-- Используем **версионированные теги** (`vX.Y.Z`) + тег **`stable`** для продового endpoint'а.
-- В RunPod endpoint указываем `...:stable` (и делаем controlled rollout через secondary).
+| Тег | Когда |
+|-----|--------|
+| `:latest` | CI на каждый push в `main`; dev и экстренная починка |
+| `:v2026-07-10-1` | Immutable релиз (пример) |
+| `:stable` | Прод primary — обновляется только после теста на secondary |
+
+Процесс:
+- GitHub Actions (`.github/workflows/build.yml`) пушит `latest` в GHCR.
+- Позже: добавить теги `v...` + `stable` и controlled rollout (RO → CZ).
+- **RunPod Flash** (UI «Deploy with Flash») не используем — нужен кастомный Dockerfile для TRELLIS.
+
+### Env на endpoint (важно)
+
+- **Не задавать** `RUNPOD_SOURCE_PATH` для кастомного Docker с `CMD ["python", "-u", "/app/worker.py"]`
+- Model field: пусто
 
 ## Сборка Docker — важное
 
 - `spconv-cu118` строго под CUDA 11.8
-- FlexiCubes клонируется отдельно (нет во vendored TRELLIS)
+- FlexiCubes: **MaxtirError/FlexiCubes** @ `f97beb0` (TRELLIS submodule fork), не nv-tlabs
+- `kaolin` для torch 2.0.1 + cu118 (FlexiCubes dependency)
 - Зафиксированы: `xformers==0.0.20`, `numpy==1.26.4`, `transformers==4.40.2`
 - Первый cold start долгий (~15 GB весов на network volume)
 

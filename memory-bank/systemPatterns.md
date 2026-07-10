@@ -73,6 +73,9 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026 | TRELLIS vendored в репо | Контроль Dockerfile, патч FlexiCubes |
 | 2026-07-08 | `ATTN_BACKEND=xformers` | Избежать зависимости `flash_attn` и падений на старте |
 | 2026-07-08 | Печатать полный traceback в logs | Быстрее диагностировать падения внутри зависимостей |
+| 2026-07-10 | Не pin digest вручную в RunPod UI | Обрезанный SHA-256 (63 chars) ломает pull; симптом = IN_QUEUE / Initializing loop |
+| 2026-07-10 | Docker, не RunPod Flash | TRELLIS + CUDA 11.8 + vendored код — только кастомный образ |
+| 2026-07-10 | MaxtirError FlexiCubes + kaolin in Docker | nv-tlabs fork uses `from tables import *` → `dmc_table` NameError in serverless |
 
 ## Будущее (когда будет сайт)
 

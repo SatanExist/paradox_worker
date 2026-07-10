@@ -30,9 +30,16 @@ RUN pip install --no-cache-dir git+https://github.com/EasternJournalist/utils3d.
 # 6. Копируем локальный TRELLIS в контейнер
 COPY TRELLIS /app/TRELLIS
 
-# 6.5. ВОССТАНАВЛИВАЕМ ПУСТУЮ ПАПКУ (качаем модуль напрямую от NVIDIA)
+# 6.5. FlexiCubes: TRELLIS needs MaxtirError fork (relative imports + vertex attrs).
+# Do NOT use nv-tlabs/FlexiCubes — its `from tables import *` breaks as a submodule (dmc_table NameError).
 RUN rm -rf /app/TRELLIS/trellis/representations/mesh/flexicubes && \
-    git clone https://github.com/nv-tlabs/FlexiCubes.git /app/TRELLIS/trellis/representations/mesh/flexicubes
+    git clone https://github.com/MaxtirError/FlexiCubes.git /app/TRELLIS/trellis/representations/mesh/flexicubes && \
+    cd /app/TRELLIS/trellis/representations/mesh/flexicubes && \
+    git checkout f97beb0dd3c6c68f3ab5696b6dcaf9af69f0514e && \
+    touch /app/TRELLIS/trellis/representations/mesh/flexicubes/__init__.py
+
+# 6.6. Kaolin required by FlexiCubes (check_tensor, mesh extraction)
+RUN pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.1_cu118.html
 
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"

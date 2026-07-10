@@ -15,7 +15,8 @@ RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.
 ```powershell
 .\scripts\sync-start.ps1   # начало сессии: git pull + превью контекста
 .\scripts\sync-end.ps1     # перед push: статус + чеклист
-python test_req.py         # тест RunPod endpoint
+python test_req.py                    # тест RunPod endpoint (async + fallback)
+python scripts/watch_endpoint.py      # мониторинг /health
 docker build -t paradox .  # сборка образа worker
 ```
 
