@@ -43,6 +43,17 @@ def _runpod_billing_metadata(handler_ms: dict) -> dict:
 
 def load_model():
     global pipeline
+    build_sha = os.environ.get("PARADOX_BUILD_SHA", "unknown")
+    print(f"paradox_worker image build: {build_sha}")
+    try:
+        import diff_gaussian_rasterization  # noqa: F401
+        print("diff_gaussian_rasterization: OK")
+    except ImportError as exc:
+        print(f"diff_gaussian_rasterization: MISSING ({exc})")
+        raise RuntimeError(
+            "diff_gaussian_rasterization not installed — update RunPod image to a fresh "
+            "ghcr.io/satanexist/paradox_worker:sha-<commit> tag and New Release"
+        ) from exc
     if pipeline is None:
         print("Инициализация TRELLIS. Загрузка весов на сетевой диск...")
         from trellis.pipelines import TrellisImageTo3DPipeline
