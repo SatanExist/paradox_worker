@@ -91,6 +91,12 @@ Inference доходит до GLB export, но в образе не было nvd
 
 **Фикс:** `609b201` — libegl1-mesa-dev и др. + `PYOPENGL_PLATFORM=egl`.
 
+### 8. Job FAILED: `No module named 'diff_gaussian_rasterization'` (2026-07-13)
+
+После nvdiffrast inference доходит до `to_glb` → `render_multiview` → `GaussianRenderer`, но в образе не было mip-splatting / diff-gaussian-rasterization.
+
+**Фикс:** Dockerfile 6.8 — `git clone autonomousvision/mip-splatting` + `pip install .../submodules/diff-gaussian-rasterization/` (как `setup.sh --mipgaussian`).
+
 ---
 
 ## Сделано
@@ -109,7 +115,7 @@ Inference доходит до GLB export, но в образе не было nvd
 
 ## В работе (прямо сейчас)
 
-- [ ] **CI зелёный** после `609b201` (nvdiffrast build)
+- [ ] **CI зелёный** после diff_gaussian_rasterization (Dockerfile 6.8)
 - [ ] **RunPod:** убрать 5090/B300/A40/A6000 с CZ и RO → New Release
 - [ ] **RunPod:** CZ + RO на свежий тег образа
 - [ ] `test_req.py` → `COMPLETED` + `model_base64`
@@ -185,8 +191,9 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 |--------|--------|
 | Битый digest | ✅ снят |
 | FlexiCubes `dmc_table` | ✅ в образе |
-| nvdiffrast missing | ✅ в Dockerfile, ждём CI |
-| nvdiffrast CI build | 🔄 фикс `609b201`, проверить workflow |
+| nvdiffrast missing | ✅ в Dockerfile |
+| nvdiffrast CI build | ✅ `609b201` |
+| diff_gaussian_rasterization missing | 🔄 Dockerfile 6.8, push + CI + New Release |
 | 5090 / 48GB GPU | ⚠️ убрать в UI (RO всё ещё v6 с 5090 первым) |
 | EU-CZ-1 capacity | ⚠️ `throttled` 1–2 мин — терпимо, не баг |
 
@@ -213,6 +220,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-09 | Pedrokita | Multi-endpoint fallback, watch_endpoint, CZ Release #13, support ticket | Digest fix |
 | 2026-07-10 | Pedrokita | Digest fix; FlexiCubes+kaolin; CI tags; 5090 unhealthy; throttled CZ; nvdiffrast missing | Rebuild, GPU list, retest |
 | 2026-07-13 | Pedrokita | Commit+push nvdiffrast; CI EGL fix `609b201`; memory-bank update | CI green → RunPod release → COMPLETED |
+| 2026-07-13 | Pedrokita | Dockerfile 6.8: diff_gaussian_rasterization (mip-splatting submodule) | push → CI → New Release → retest |
 
 ---
 

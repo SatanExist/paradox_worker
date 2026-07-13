@@ -56,6 +56,12 @@ RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
     TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9" pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
     rm -rf /tmp/nvdiffrast
 
+# 6.8. diff_gaussian_rasterization required by GaussianRenderer / to_glb render_multiview
+# Official TRELLIS setup.sh --mipgaussian: clone mip-splatting, pip install its submodule
+RUN git clone https://github.com/autonomousvision/mip-splatting.git /tmp/mip-splatting && \
+    TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9" pip install --no-cache-dir --no-build-isolation /tmp/mip-splatting/submodules/diff-gaussian-rasterization/ && \
+    rm -rf /tmp/mip-splatting
+
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"
 
