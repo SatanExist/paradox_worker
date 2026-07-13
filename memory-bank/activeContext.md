@@ -14,7 +14,7 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | `docs: AI_MESH platform roadmap` (после push) |
+| Коммит | `4346660` — docs: add AI_MESH platform roadmap to memory-bank |
 
 ---
 
