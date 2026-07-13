@@ -21,7 +21,7 @@
 ## Критерии успеха
 
 - При cold start веса грузятся с network volume (не качаются заново каждый job)
-- Тест через `test_req.py` (`/runsync`) возвращает `status: success` + `model_base64`
+- Тест через `test_req.py` (`/run` + polling) возвращает `status: success` + `model_base64`
 - Docker-образ собирается и работает на RunPod с CUDA 11.8
 
 ## Вне scope (пока)
@@ -34,4 +34,4 @@
 
 - GitHub: `https://github.com/SatanExist/paradox_worker`
 - Модель TRELLIS: `JeffreyXiang/TRELLIS-image-large`
-- Тестовая картинка: лиса из примеров Microsoft TRELLIS
+- Тестовая картинка: `https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.png` (fox.png — 404)

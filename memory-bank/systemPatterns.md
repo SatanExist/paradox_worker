@@ -76,6 +76,9 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026-07-10 | Не pin digest вручную в RunPod UI | Обрезанный SHA-256 (63 chars) ломает pull; симптом = IN_QUEUE / Initializing loop |
 | 2026-07-10 | Docker, не RunPod Flash | TRELLIS + CUDA 11.8 + vendored код — только кастомный образ |
 | 2026-07-10 | MaxtirError FlexiCubes + kaolin in Docker | nv-tlabs fork uses `from tables import *` → `dmc_table` NameError in serverless |
+| 2026-07-10 | Только 24GB Ampere/Ada GPU на endpoint | CUDA 11.8 образ несовместим с RTX 5090 / Blackwell |
+| 2026-07-13 | nvdiffrast в Docker с EGL + no-build-isolation | GLB export требует MeshRenderer; CI падал без libegl-dev |
+| 2026-07-13 | Smoke test URL → T.png | fox.png в TRELLIS repo 404 |
 
 ## Будущее (когда будет сайт)
 
@@ -121,6 +124,16 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 Связка с Multi-endpoint:
 - Multi-endpoint решает **capacity** (где есть свободный GPU).
 - Controlled rollout решает **надёжность релизов** (не ломаем всё сразу).
+
+## Диагностика «IN_QUEUE» на RunPod
+
+Три разных корневые причины с похожим симптомом:
+
+| Симптом в health | Причина | Что делать |
+|------------------|---------|------------|
+| `initializing` мигает, `running=0` | Битый digest / pull fail | Тег вместо `@sha256:...`, проверить 64 hex |
+| `throttled > 0`, долго `inQueue` | Capacity региона | Ждать 1–2 мин; fallback RO; расширить GPU list (24GB) |
+| `unhealthy > 0` | Crash при старте/inference | Логи воркера; убрать 5090; проверить deps в образе |
 
 ## Конвенции кода
 

@@ -117,8 +117,9 @@ TRELLIS inference работает **только внутри Docker на RunPo
 | Тег | Когда |
 |-----|--------|
 | `:latest` | CI на каждый push в `main`; dev и экстренная починка |
-| `:v2026-07-10-1` | Immutable релиз (пример) |
-| `:stable` | Прод primary — обновляется только после теста на secondary |
+| `:v2026-07-13-1` | Immutable date-based релиз (пример) |
+| `:sha-abc1234` | Immutable по коммиту |
+| `:stable` | Прод primary — `workflow_dispatch` promote после теста |
 
 Процесс:
 - GitHub Actions (`.github/workflows/build.yml`) пушит `latest` в GHCR.
@@ -128,6 +129,7 @@ TRELLIS inference работает **только внутри Docker на RunPo
 ### Env на endpoint (важно)
 
 - **Не задавать** `RUNPOD_SOURCE_PATH` для кастомного Docker с `CMD ["python", "-u", "/app/worker.py"]`
+- Рекомендуется: `RUNPOD_INIT_TIMEOUT=900` (cold start с загрузкой весов)
 - Model field: пусто
 
 ## Сборка Docker — важное
@@ -135,8 +137,26 @@ TRELLIS inference работает **только внутри Docker на RunPo
 - `spconv-cu118` строго под CUDA 11.8
 - FlexiCubes: **MaxtirError/FlexiCubes** @ `f97beb0` (TRELLIS submodule fork), не nv-tlabs
 - `kaolin` для torch 2.0.1 + cu118 (FlexiCubes dependency)
+- **nvdiffrast** (MeshRenderer / GLB export):
+  - Системные пакеты: `libegl1-mesa-dev`, `libgl1-mesa-dev`, `libgles2-mesa-dev`, `libglvnd-dev`, …
+  - `ENV PYOPENGL_PLATFORM=egl`
+  - `pip install --no-build-isolation` (иначе ABI mismatch с torch)
+  - `TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9"` для CI buildx (3090/4090/A5000/L4)
 - Зафиксированы: `xformers==0.0.20`, `numpy==1.26.4`, `transformers==4.40.2`
-- Первый cold start долгий (~15 GB весов на network volume)
+- Первый cold start долгий (~15 GB весов на network volume) → `RUNPOD_INIT_TIMEOUT=900` на endpoint
+
+## GPU на RunPod endpoint
+
+Образ **CUDA 11.8** — совместим только с **Ampere/Ada 24GB**:
+
+| GPU | Статус |
+|-----|--------|
+| RTX 3090, 4090, A5000, L4 | ✅ оставить |
+| PRO 6000 MIG 24GB | ✅ fallback |
+| RTX 5090, B300 MIG 34GB | ❌ отключить (Blackwell, CUDA 12.x+) |
+| A40, RTX A6000 (48GB) | ❌ отключить |
+
+Tier gpuIds: только `AMPERE_24`, `ADA_24` — без `ADA_32_PRO`, `AMPERE_48`.
 
 ## Секреты
 
