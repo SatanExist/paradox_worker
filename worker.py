@@ -1,4 +1,5 @@
 ﻿import os
+import time
 import urllib.request
 import tempfile
 import base64
@@ -16,6 +17,28 @@ os.environ["HF_HOME"] = "/runpod-volume/huggingface_cache"
 
 # Ленивая инициализация
 pipeline = None
+
+
+def _runpod_billing_metadata(handler_ms: dict) -> dict:
+    """GPU info for downstream cost estimation (parsed from RunPod worker env)."""
+    gpu_pool = os.environ.get("RUNPOD_GPU_SIZE")
+    gpu_type = None
+    for key in (
+        "RUNPOD_WEBHOOK_POST_OUTPUT",
+        "RUNPOD_WEBHOOK_GET_JOB",
+        "RUNPOD_WEBHOOK_PING",
+    ):
+        url = os.environ.get(key, "")
+        if "?gpu=" in url:
+            gpu_type = url.split("?gpu=", 1)[1].split("&", 1)[0].replace("+", " ")
+            break
+    return {
+        "gpu_type": gpu_type,
+        "gpu_pool": gpu_pool,
+        "datacenter": os.environ.get("RUNPOD_DC_ID"),
+        "worker_id": os.environ.get("RUNPOD_POD_ID"),
+        "handler_ms": handler_ms,
+    }
 
 
 def load_model():
@@ -55,7 +78,12 @@ def handler(job):
         return {"error": "Вы не передали ссылку на картинку (image_url)"}
 
     try:
+        t0 = time.perf_counter()
+        handler_ms = {}
+
+        t_load = time.perf_counter()
         load_model()
+        handler_ms["model_load_ms"] = int((time.perf_counter() - t_load) * 1000)
 
         print(f"Скачиваем изображение: {image_url}")
         req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -68,10 +96,12 @@ def handler(job):
         image = Image.open(img_path).convert("RGB")
 
         print("Начинаем генерацию 3D (это может занять время)...")
+        t_infer = time.perf_counter()
         outputs = pipeline.run(
             image,
             seed=1,
         )
+        handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
 
         from trellis.utils import postprocessing_utils
 
@@ -79,6 +109,7 @@ def handler(job):
         glb_path = glb_temp.name
         glb_temp.close()
 
+        t_glb = time.perf_counter()
         glb = postprocessing_utils.to_glb(
             outputs['gaussian'][0],
             outputs['mesh'][0],
@@ -87,6 +118,8 @@ def handler(job):
             verbose=True,
         )
         glb.export(glb_path)
+        handler_ms["glb_export_ms"] = int((time.perf_counter() - t_glb) * 1000)
+        handler_ms["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
         with open(glb_path, "rb") as glb_file:
             glb_base64 = base64.b64encode(glb_file.read()).decode('utf-8')
@@ -97,7 +130,8 @@ def handler(job):
         return {
             "status": "success",
             "message": "3D-модель успешно сгенерирована!",
-            "model_base64": glb_base64
+            "model_base64": glb_base64,
+            "billing": _runpod_billing_metadata(handler_ms),
         }
 
     except Exception as e:

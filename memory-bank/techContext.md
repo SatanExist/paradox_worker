@@ -85,9 +85,46 @@
 {
   "status": "success",
   "message": "3D-модель успешно сгенерирована!",
-  "model_base64": "<base64 GLB>"
+  "model_base64": "<base64 GLB>",
+  "billing": {
+    "gpu_type": "NVIDIA GeForce RTX 3090",
+    "gpu_pool": "AMPERE_24",
+    "datacenter": "EU-RO-1",
+    "worker_id": "...",
+    "handler_ms": {
+      "model_load_ms": 0,
+      "inference_ms": 95000,
+      "glb_export_ms": 120000,
+      "total_ms": 215000
+    }
+  }
 }
 ```
+
+### Оценка стоимости (через API)
+
+RunPod **не отдаёт** точную цену в `/status/{job_id}` — только `delayTime` и `executionTime` (мс).
+
+Модуль `runpod_billing.py`:
+
+```python
+from runpod_billing import estimate_from_status_payload
+
+estimate = estimate_from_status_payload(
+    status_payload,          # GET /v2/{endpoint}/status/{job_id}
+    endpoint_id=ENDPOINT_ID,
+    api_key=RUNPOD_API_KEY,
+)
+# estimate["cost_usd"], estimate["billable_sec"], estimate["gpu_type"], ...
+```
+
+Формула (estimate): `(delayTime + executionTime) / 1000 + idleTimeout` секунд × тариф GPU ($/сек).
+
+- `idleTimeout` — из `GET https://rest.runpod.io/v1/endpoints/{id}`
+- Тариф GPU — по `output.billing.gpu_type` из worker или по пулу endpoint'а
+- Сверка с реальным счётом: `GET https://rest.runpod.io/v1/billing/endpoints` (агрегаты по часам, не per job)
+
+`test_req.py` печатает оценку после `COMPLETED` / `FAILED`.
 
 **Ошибка**:
 

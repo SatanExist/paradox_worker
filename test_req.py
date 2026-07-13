@@ -3,6 +3,8 @@ import requests
 import time
 from dotenv import load_dotenv
 
+from runpod_billing import estimate_from_status_payload
+
 # Эта команда заставит Python найти файл .env и загрузить из него данные
 load_dotenv()
 
@@ -66,6 +68,29 @@ def wait_until_not_in_queue(endpoint_id: str, job_id: str, *, poll_interval_s: f
             return False
         time.sleep(poll_interval_s)
 
+def print_cost_estimate(endpoint_id: str, status_payload: dict) -> None:
+    """Print estimated USD cost from completed RunPod status payload."""
+    try:
+        estimate = estimate_from_status_payload(
+            status_payload,
+            endpoint_id=endpoint_id,
+            api_key=API_KEY,
+        )
+        print("💰 Оценка стоимости генерации:")
+        print(f"   {estimate['cost_usd_formatted']} USD")
+        print(f"   GPU: {estimate.get('gpu_type') or estimate.get('gpu_pool') or 'unknown'}")
+        print(
+            f"   Billed ~{estimate['billable_sec']}s "
+            f"(delay {estimate['delay_sec']}s + exec {estimate['execution_sec']}s + idle {estimate['idle_timeout_sec']}s)"
+        )
+        print(f"   Rate: ${estimate['rate_usd_per_sec']}/s ({estimate['rate_source']})")
+        if estimate.get("handler_timing_ms"):
+            print(f"   Handler breakdown (ms): {estimate['handler_timing_ms']}")
+        print(f"   Note: {estimate['note']}")
+    except Exception as exc:
+        print(f"⚠️ Не удалось оценить стоимость: {exc}")
+
+
 def cancel_job(endpoint_id: str, job_id: str) -> None:
     url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
     try:
@@ -111,12 +136,14 @@ try:
             final_payload = wait_for_terminal_status(ENDPOINT_ID_SECONDARY, job_id2, max_wait_s=20 * 60)
             print("✅ Финальный статус получен:")
             print(final_payload)
+            print_cost_estimate(ENDPOINT_ID_SECONDARY, final_payload)
             raise SystemExit(0)
 
     print(f"⏳ Waiting for completion (job {job_id})...")
     final_payload = wait_for_terminal_status(ENDPOINT_ID_PRIMARY, job_id, max_wait_s=20 * 60)
     print("✅ Финальный статус получен:")
     print(final_payload)
+    print_cost_estimate(ENDPOINT_ID_PRIMARY, final_payload)
 
 except Exception as e:
     print(f"❌ Ошибка: {e}")
