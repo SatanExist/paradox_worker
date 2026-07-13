@@ -14,15 +14,15 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | `609b201` — fix: EGL deps + nvdiffrast Docker build flags |
+| Коммит | `ebc2d3c` — fix: verify diff_gaussian_rasterization in Docker build and fail fast in worker |
 
 ---
 
 ## Текущий фокус
 
-**Фаза:** образ почти готов → **дождаться зелёного CI** → New Release на RunPod → первый `COMPLETED` на `test_req.py`.
+**Фаза:** worker стабильно генерит GLB → зафиксировать биллинг/UX → дальше тестировать другие модели (кроме TRELLIS) для качества.
 
-**Ближайшая цель:** задеплоить образ с FlexiCubes + kaolin + nvdiffrast, убрать 5090/48GB GPU с обоих endpoint'ов, прогнать smoke test.
+**Ближайшая цель:** убрать дорогие/несовместимые GPU (5090/48GB), снизить `idleTimeout`, начать R&D по качеству (multi-image, другие нейросети).
 
 ---
 
@@ -31,9 +31,9 @@
 | Роль | Имя | ID | Регион | Volume | Версия (API) |
 |------|-----|-----|--------|--------|--------------|
 | Primary (CZ) | mushy_fuchsia_shark | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` → `/runpod-volume` | v14 |
-| Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` → `/runpod-volume` | v6 |
+| Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` → `/runpod-volume` | v6/v9 (обновлялось) |
 
-**Образ (целевой):** `ghcr.io/satanexist/paradox_worker:latest` (или свежий `v2026-07-13-XX` после CI).
+**Образ (целевой):** предпочтительно immutable tag (`:sha-<short>` или `:v2026-07-13-XX`), не `:latest` для прод.
 
 **CI** (`.github/workflows/build.yml`): на push в `main` → `:latest`, `:vYYYY-MM-DD-<run_number>`, `:sha-<short>`.  
 **Прод:** `workflow_dispatch` → promote тега в `:stable`.
@@ -97,6 +97,11 @@ Inference доходит до GLB export, но в образе не было nvd
 
 **Фикс:** Dockerfile 6.8 — `git clone autonomousvision/mip-splatting` + `pip install .../submodules/diff-gaussian-rasterization/` (как `setup.sh --mipgaussian`).
 
+### 9. Первый `COMPLETED` + сохранение GLB локально (2026-07-13)
+
+Сгенерирован `COMPLETED` на RO (`88djlbwtw4sjlv`). GLB можно скачать без копирования base64 через скрипт:
+`scripts/save_glb_from_status.py` → сохраняет `model.glb`.
+
 ---
 
 ## Сделано
@@ -115,12 +120,10 @@ Inference доходит до GLB export, но в образе не было nvd
 
 ## В работе (прямо сейчас)
 
-- [ ] **CI зелёный** после diff_gaussian_rasterization (Dockerfile 6.8)
-- [ ] **RunPod:** убрать 5090/B300/A40/A6000 с CZ и RO → New Release
-- [ ] **RunPod:** CZ + RO на свежий тег образа
-- [ ] `test_req.py` → `COMPLETED` + `model_base64`
-- [ ] Прод: `:stable` после успешного теста
-- [ ] Интеграция с сайтом (`AI_MESH`)
+- [ ] **RunPod:** убрать 5090/B300/A40/A6000 с CZ и RO (только 24GB Ampere/Ada)
+- [ ] **RunPod:** снизить `idleTimeout` с 180s до 5–10s (экономия на idle)
+- [ ] Зафиксировать “канареечный” immutable тег образа для прод (`:stable` позже)
+- [ ] R&D качества: multi-image, seeds/best-of-N, другие нейросети кроме TRELLIS
 
 ---
 
@@ -193,7 +196,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | FlexiCubes `dmc_table` | ✅ в образе |
 | nvdiffrast missing | ✅ в Dockerfile |
 | nvdiffrast CI build | ✅ `609b201` |
-| diff_gaussian_rasterization missing | 🔄 Dockerfile 6.8, push + CI + New Release |
+| diff_gaussian_rasterization missing | ✅ фикс в образе (mip-splatting submodule) |
+| Качество mesh слабое (single-image) | 🔄 R&D: multi-image + альтернативные модели |
 | 5090 / 48GB GPU | ⚠️ убрать в UI (RO всё ещё v6 с 5090 первым) |
 | EU-CZ-1 capacity | ⚠️ `throttled` 1–2 мин — терпимо, не баг |
 

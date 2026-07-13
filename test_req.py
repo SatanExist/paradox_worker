@@ -37,6 +37,23 @@ def get_status(endpoint_id: str, job_id: str) -> dict:
     r.raise_for_status()
     return r.json()
 
+def sanitize_status_payload(payload: dict) -> dict:
+    """
+    Avoid printing huge model_base64 blobs to stdout.
+    Keeps the shape but replaces the value with a short placeholder.
+    """
+    try:
+        out = payload.get("output")
+        if isinstance(out, dict) and isinstance(out.get("model_base64"), str):
+            b64_len = len(out["model_base64"])
+            out = dict(out)
+            out["model_base64"] = f"<omitted base64, len={b64_len}>"
+            payload = dict(payload)
+            payload["output"] = out
+    except Exception:
+        pass
+    return payload
+
 def wait_for_terminal_status(endpoint_id: str, job_id: str, *, poll_interval_s: float = 5.0, max_wait_s: float = 15 * 60) -> dict:
     deadline = time.time() + max_wait_s
 
@@ -135,14 +152,14 @@ try:
             print(f"⏳ Waiting for completion (secondary job {job_id2})...")
             final_payload = wait_for_terminal_status(ENDPOINT_ID_SECONDARY, job_id2, max_wait_s=20 * 60)
             print("✅ Финальный статус получен:")
-            print(final_payload)
+            print(sanitize_status_payload(final_payload))
             print_cost_estimate(ENDPOINT_ID_SECONDARY, final_payload)
             raise SystemExit(0)
 
     print(f"⏳ Waiting for completion (job {job_id})...")
     final_payload = wait_for_terminal_status(ENDPOINT_ID_PRIMARY, job_id, max_wait_s=20 * 60)
     print("✅ Финальный статус получен:")
-    print(final_payload)
+    print(sanitize_status_payload(final_payload))
     print_cost_estimate(ENDPOINT_ID_PRIMARY, final_payload)
 
 except Exception as e:
