@@ -3,12 +3,21 @@ FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
 
 WORKDIR /app
 
-# 1. Системные пакеты
+# 1. Системные пакеты (+ EGL/GL headers required by nvdiffrast OpenGL rasterizer)
 RUN apt-get update && apt-get install -y \
     git \
     libgl1-mesa-glx \
     libglib2.0-0 \
     build-essential \
+    libglvnd0 \
+    libgl1 \
+    libglx0 \
+    libegl1 \
+    libgles2 \
+    libglvnd-dev \
+    libgl1-mesa-dev \
+    libegl1-mesa-dev \
+    libgles2-mesa-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Обновляем инструменты установки
@@ -42,8 +51,9 @@ RUN rm -rf /app/TRELLIS/trellis/representations/mesh/flexicubes && \
 RUN pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.1_cu118.html
 
 # 6.7. nvdiffrast required by MeshRenderer / render_glb export
+ENV PYOPENGL_PLATFORM=egl
 RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
-    pip install --no-cache-dir /tmp/nvdiffrast && \
+    TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9" pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
     rm -rf /tmp/nvdiffrast
 
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
