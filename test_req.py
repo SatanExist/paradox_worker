@@ -76,7 +76,7 @@ def cancel_job(endpoint_id: str, job_id: str) -> None:
 # Отправляем тестовую картинку лисы (стандартный тест TRELLIS)
 data = {
     "input": {
-        "image_url": "https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_images/fox.png"
+        "image_url": "https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.png"
     }
 }
 

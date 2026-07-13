@@ -41,6 +41,11 @@ RUN rm -rf /app/TRELLIS/trellis/representations/mesh/flexicubes && \
 # 6.6. Kaolin required by FlexiCubes (check_tensor, mesh extraction)
 RUN pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.1_cu118.html
 
+# 6.7. nvdiffrast required by MeshRenderer / render_glb export
+RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
+    pip install --no-cache-dir /tmp/nvdiffrast && \
+    rm -rf /tmp/nvdiffrast
+
 # 7. МАГИЯ: Указываем Python, где искать исходники TRELLIS
 ENV PYTHONPATH="/app/TRELLIS"
 
