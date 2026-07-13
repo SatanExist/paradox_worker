@@ -13,7 +13,7 @@ worker.py
     ├─ load_model()          [лениво, один раз на lifetime воркера]
     ├─ скачать картинку        [urllib + User-Agent]
     ├─ pipeline.run(image)   [TRELLIS, seed=1]
-    ├─ render_utils.render_glb(outputs, path)
+    ├─ postprocessing_utils.to_glb(gaussian, mesh) → .export(path)
     └─ return model_base64
 ```
 

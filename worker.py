@@ -73,13 +73,20 @@ def handler(job):
             seed=1,
         )
 
-        from trellis.utils import render_utils
+        from trellis.utils import postprocessing_utils
 
         glb_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
         glb_path = glb_temp.name
         glb_temp.close()
 
-        render_utils.render_glb(outputs, glb_path)
+        glb = postprocessing_utils.to_glb(
+            outputs['gaussian'][0],
+            outputs['mesh'][0],
+            simplify=0.95,
+            texture_size=1024,
+            verbose=True,
+        )
+        glb.export(glb_path)
 
         with open(glb_path, "rb") as glb_file:
             glb_base64 = base64.b64encode(glb_file.read()).decode('utf-8')
