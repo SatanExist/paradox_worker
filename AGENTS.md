@@ -25,6 +25,7 @@ docker build -t paradox .  # сборка образа worker
 | Файл | Назначение |
 |------|------------|
 | `memory-bank/projectbrief.md` | Зачем существует проект |
+| `memory-bank/platformRoadmap.md` | **План AI_MESH: 4 фичи, модели, фазы, economics** |
 | `memory-bank/techContext.md` | Стек, API, секреты |
 | `memory-bank/systemPatterns.md` | Pipeline, решения |
 | `memory-bank/activeContext.md` | **Обновлять каждую сессию + push** |

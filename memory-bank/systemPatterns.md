@@ -86,7 +86,27 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 - **Большие модели**: S3 presigned URL вместо base64, если GLB > ~5 MB
 - **Async**: RunPod `/run` + polling или webhooks вместо `/runsync`
 - **Multi-endpoint (HA на serverless)**: 2 endpoint'а в разных регионах + fallback по времени в `IN_QUEUE`
-- **Несколько воркеров**: отдельные endpoint'ы под 3D, текстуры, анимации
+- **Несколько воркеров**: отдельные endpoint'ы под generate, retopo, texture, rig/anim — см. `platformRoadmap.md`
+
+## Паттерн: Multi-worker pipeline (AI_MESH)
+
+Платформа = **4 инструмента на сайте**, каждый — отдельный RunPod endpoint (не один fat Docker):
+
+| task_type | Worker | Модель (open-source) | VRAM |
+|-----------|--------|----------------------|------|
+| `generate` (quality) | paradox_worker → v2 | TRELLIS.2 | 24 GB |
+| `generate` (fast) | paradox-sf3d | SF3D / TripoSR | 6–8 GB |
+| `retopo` | paradox-retopo | FastMesh, PartUV | 16–24 GB |
+| `texture` | paradox-texture | TRELLIS paint | ~8 GB |
+| `rig` / `animate` | paradox-rig | UniRig + motion presets | ~9 GB |
+
+Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOINT_ID`.
+
+**Экономика:** self-host COGS ~$0.01–0.12/job; SaaS API $0.30–1.20/job — core только self-host.
+
+**EU:** MIT/Apache модели; Hunyuan (EU license ban) — не в prod pipeline.
+
+Детали, фазы, pricing: `@memory-bank/platformRoadmap.md`.
 
 ## Паттерн: Multi-endpoint fallback (serverless HA)
 

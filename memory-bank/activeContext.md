@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-13**
+Последнее обновление: **2026-07-13** (вечер — зафиксирован platform roadmap)
 
 ---
 
@@ -14,15 +14,23 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | `ebc2d3c` — fix: verify diff_gaussian_rasterization in Docker build and fail fast in worker |
+| Коммит | `docs: AI_MESH platform roadmap` (после push) |
 
 ---
 
 ## Текущий фокус
 
-**Фаза:** worker стабильно генерит GLB → зафиксировать биллинг/UX → дальше тестировать другие модели (кроме TRELLIS) для качества.
+**Фаза:** worker стабильно генерит GLB → **стратегия платформы зафиксирована** → POC TRELLIS.2 + RunPod hygiene.
 
-**Ближайшая цель:** убрать дорогие/несовместимые GPU (5090/48GB), снизить `idleTimeout`, начать R&D по качеству (multi-image, другие нейросети).
+**Ближайшая цель:** RunPod GPU list + idleTimeout; затем TRELLIS.2 Docker (CUDA 12.4).
+
+**Полный план (4 фичи сайта, модели, economics):** `@memory-bank/platformRoadmap.md`
+
+**Ключевые решения сессии 2026-07-13:**
+- Core AI_MESH = **self-host RunPod**, не Tripo/Meshy/fal API (unit economics)
+- Следующий quality tier: **TRELLIS.2** (MIT, EU)
+- **Hunyuan** — не EU prod (лицензия Tencent)
+- Сайт: generate → retopo → texture → rig/anim — **отдельные workers по фазам**
 
 ---
 
@@ -123,7 +131,9 @@ Inference доходит до GLB export, но в образе не было nvd
 - [ ] **RunPod:** убрать 5090/B300/A40/A6000 с CZ и RO (только 24GB Ampere/Ada)
 - [ ] **RunPod:** снизить `idleTimeout` с 180s до 5–10s (экономия на idle)
 - [ ] Зафиксировать “канареечный” immutable тег образа для прод (`:stable` позже)
-- [ ] R&D качества: multi-image, seeds/best-of-N, другие нейросети кроме TRELLIS
+- [ ] **Фаза 0 roadmap:** тюнинг TRELLIS v1 (simplify, texture, multi-image, seeds)
+- [ ] **Фаза 1 roadmap:** POC TRELLIS.2 (CUDA 12.4 Docker)
+- [ ] Retopo / texture / rig workers — после стабильного generate (см. `platformRoadmap.md`)
 
 ---
 
@@ -225,6 +235,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-10 | Pedrokita | Digest fix; FlexiCubes+kaolin; CI tags; 5090 unhealthy; throttled CZ; nvdiffrast missing | Rebuild, GPU list, retest |
 | 2026-07-13 | Pedrokita | Commit+push nvdiffrast; CI EGL fix `609b201`; memory-bank update | CI green → RunPod release → COMPLETED |
 | 2026-07-13 | Pedrokita | Dockerfile 6.8: diff_gaussian_rasterization (mip-splatting submodule) | push → CI → New Release → retest |
+| 2026-07-13 | Pedrokita | Исследование моделей (TRELLIS.2, Hunyuan EU, API pricing); **platformRoadmap.md** | commit+push memory-bank → TRELLIS.2 POC |
 
 ---
 
@@ -232,6 +243,9 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-07-13 | **platformRoadmap.md** — 4 фичи AI_MESH, модели, фазы, API vs self-host | Сессия стратегии |
+| 2026-07-13 | Core = self-host, не SaaS API | Unit economics |
+| 2026-07-13 | TRELLIS.2 next; Hunyuan off EU prod | MIT + license |
 | 2026-07-13 | nvdiffrast: EGL deps + `--no-build-isolation` + `TORCH_CUDA_ARCH_LIST` | Официальный рецепт NVlabs для Docker |
 | 2026-07-13 | Smoke test image → `T.png` | fox.png 404 |
 | 2026-07-10 | Не использовать 5090/B300 с CUDA 11.8 | Только 24GB Ampere/Ada |

@@ -10,7 +10,18 @@
 |------|-------------|--------|
 | RunPod Serverless worker (картинка → 3D) | `paradox_worker` (этот репо) | Рабочий MVP |
 | Веб-фронт + API-шлюз | Планируется (`AI_MESH` или отдельный репо) | Не начато |
-| Текстуры / анимации | Будущие RunPod-воркеры | Не начато |
+| Ретопо / текстуры / анимации | Будущие RunPod-воркеры | Не начато |
+
+**Полный план платформы (4 фичи на сайте, модели, фазы, экономика):** `@memory-bank/platformRoadmap.md`
+
+### Целевые инструменты на сайте AI_MESH
+
+1. **3D генерация** — image/text → GLB (этот worker → TRELLIS.2)
+2. **ИИ ретопология** — FastMesh, PartUV
+3. **ИИ текстурирование** — TRELLIS paint / rebake
+4. **ИИ анимирование** — UniRig + preset motions
+
+Core inference — **self-host на RunPod** (не перепродажа Tripo/Meshy API).
 
 ## MVP (этот репозиторий)
 
