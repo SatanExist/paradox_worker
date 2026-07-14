@@ -14,7 +14,7 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | *(после push)* — worker tuning + cleanup script |
+| Коммит | `4dd1f7f` — worker tuning + cleanup_endpoints.py |
 
 ---
 
