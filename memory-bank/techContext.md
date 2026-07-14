@@ -6,7 +6,8 @@
 |-----------|------------|
 | GPU runtime | RunPod Serverless |
 | Базовый образ | `runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04` |
-| 3D-модель | TRELLIS-image-large (`JeffreyXiang/TRELLIS-image-large`) |
+| 3D-модель | TRELLIS-image-large (`JeffreyXiang/TRELLIS-image-large`) — **legacy v1** |
+| Quality tier (POC) | TRELLIS.2-4B (`microsoft/TRELLIS.2-4B`) — CUDA 12.4, отдельный образ |
 | Worker SDK | `runpod` Python SDK |
 | Inference | PyTorch + CUDA, ленивая загрузка pipeline |
 | Формат выхода | GLB (base64 в JSON) |
@@ -15,11 +16,19 @@
 
 | Файл | Назначение |
 |------|------------|
-| `worker.py` | RunPod handler: скачать картинку → TRELLIS → GLB → base64 |
-| `Dockerfile` | Сборка контейнера: deps, копия TRELLIS, фикс FlexiCubes |
-| `test_req.py` | Локальный тест RunPod API: async `/run` + polling + fallback |
-| `scripts/watch_endpoint.py` | Мониторинг `/health` (queue, workers, throttled) |
-| `TRELLIS/` | Исходники TRELLIS в репо (`PYTHONPATH=/app/TRELLIS`) |
+| `worker.py` | RunPod handler v1: картинка → TRELLIS → GLB → base64 |
+| `worker_trellis2.py` | RunPod handler quality: TRELLIS.2 → PBR GLB |
+| `Dockerfile` | v1 контейнер (CUDA 11.8) |
+| `Dockerfile.trellis2` | quality контейнер (CUDA 12.4, torch 2.6) |
+| `test_req.py` | Smoke test v1 endpoint |
+| `test_req_trellis2.py` | Smoke test quality endpoint (`RUNPOD_ENDPOINT_ID_TRELLIS2`) |
+| `scripts/batch_seeds.py` | Best-of-N: несколько seeds → отдельные GLB |
+| `scripts/save_glb_from_status.py` | Скачать GLB по job id без base64 в терминале |
+| `scripts/view_model.html` | Локальный GLB viewer (python -m http.server) |
+| `scripts/rerun_workflow.py` | Re-run failed GitHub Actions (нужен `GITHUB_TOKEN`) |
+| `scripts/cleanup_endpoints.py` | Audit/fix GPU list + idleTimeout |
+| `docker/trellis2_install.sh` | Deps для TRELLIS.2 внутри Docker build |
+| `TRELLIS/` | Исходники TRELLIS v1 (`PYTHONPATH=/app/TRELLIS`) |
 
 ## Настройка RunPod
 
@@ -30,15 +39,17 @@
 |------|-----|--------|--------|
 | Primary CZ | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` |
 | Secondary RO | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` |
+| Quality T2 | `RUNPOD_ENDPOINT_ID_TRELLIS2` | *(создать)* | отдельный volume для `trellis2-weights` |
 
-- **Docker image** (GHCR): `ghcr.io/satanexist/paradox_worker`
-  - Сейчас (починка): `:latest`
-  - Прод (план): `:stable` или `:vX.Y.Z`
+- **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
+  - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
+  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>`
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
 - **Network volume** (должен быть примонтирован к endpoint):
   - `/runpod-volume/huggingface_cache` — кэш HF (`HF_HOME`)
-  - `/runpod-volume/trellis-weights` — веса модели через `snapshot_download`
+  - `/runpod-volume/trellis-weights` — веса TRELLIS v1
+  - `/runpod-volume/trellis2-weights` — веса TRELLIS.2-4B (quality worker)
 
 ### Multi-endpoint (вариант B)
 

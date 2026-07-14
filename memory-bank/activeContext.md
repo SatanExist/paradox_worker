@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-14** (RunPod cleanup + worker tuning)
+Последнее обновление: **2026-07-14** (retest v1 + старт POC TRELLIS.2)
 
 ---
 
@@ -14,17 +14,23 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | `4dd1f7f` — worker tuning + cleanup_endpoints.py |
+| Ветка | `feat/trellis2-poc` |
+| Коммит | `feat/trellis2-poc` — TRELLIS.2 POC + memory-bank session update |
 
 ---
 
 ## Текущий фокус
 
-**Фаза 0:** RunPod hygiene ✅ → **New Release свежего образа** → retest COMPLETED → потом TRELLIS.2.
+**Фаза 0 (v1):** RO ✅ свежий образ, CZ ⚠️ **всё ещё stale** (`render_glb` error). Нужен **New Release** на CZ.
 
-**Блокер retest 2026-07-14:** CZ job `FAILED` — `render_glb` missing → на endpoint **старый Docker**, не текущий `main` (`to_glb` уже в коде с `ec0e3af`).
+**Фаза 1 (quality):** **POC TRELLIS.2** — ветка `feat/trellis2-poc`:
+- `Dockerfile.trellis2`, `worker_trellis2.py`, CI `build-trellis2.yml`
+- Образ: `ghcr.io/satanexist/paradox_worker:trellis2-sha-<short>`
+- Отдельный RunPod endpoint (24GB, CUDA 12.4) — **ещё не создан**
 
-**После push:** CI → `ghcr.io/satanexist/paradox_worker:sha-<short>` → **New Release** на CZ + RO (не `:latest` вслепую).
+**v1 retest 2026-07-14:** RO COMPLETED (дракон seed 42, сундук, best-of-N seeds 1/7/123). CZ FAILED на том же коде.
+
+**Качество v1:** props (сундук) — рабочий MVP; creatures (дракон) — слабо; чёрные дыры на UV bake — лимит `to_glb` v1, не баг воркера.
 
 **Полный план (4 фичи сайта, модели, economics):** `@memory-bank/platformRoadmap.md`
 
@@ -40,13 +46,15 @@
 
 | Роль | Имя | ID | Регион | Volume | Версия (API) |
 |------|-----|-----|--------|--------|--------------|
-| Primary (CZ) | mushy_fuchsia_shark | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` → `/runpod-volume` | v14 |
-| Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` → `/runpod-volume` | v6/v9 (обновлялось) |
+| Primary (CZ) | mushy_fuchsia_shark | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` → `/runpod-volume` | v16 (GPU+idle) — **образ stale** |
+| Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` → `/runpod-volume` | v12 — **свежий образ, COMPLETED** |
+| Quality (T2) | *(создать)* | — | EU-RO/CZ | отдельный volume | `trellis2-sha-...` |
 
-**Образ (целевой):** предпочтительно immutable tag (`:sha-<short>` или `:v2026-07-13-XX`), не `:latest` для прод.
+**Образ v1 (целевой):** immutable `:sha-4dd1f7f` или `:stable` после promote.
 
-**CI** (`.github/workflows/build.yml`): на push в `main` → `:latest`, `:vYYYY-MM-DD-<run_number>`, `:sha-<short>`.  
-**Прод:** `workflow_dispatch` → promote тега в `:stable`.
+**CI v1** (`build.yml`): `:latest`, `:vYYYY-MM-DD-<run>`, `:sha-<short>`.  
+**CI v2** (`build-trellis2.yml`): `:trellis2-latest`, `:trellis2-sha-<short>`.  
+**Прод:** `workflow_dispatch` → promote в `:stable` (только v1 пока).
 
 **RunPod Flash** (Deploy with Flash в UI) — **не используем**. **FlashBoot** — можно оставить ON.
 
@@ -134,10 +142,11 @@ Inference доходит до GLB export, но в образе не было nvd
 - [x] **RunPod:** `idleTimeout` → **10s** (было 180 CZ / 40 RO)
 - [x] **Worker tuning:** `simplify=0.98`, `texture_size=2048`, `seed` в input
 - [x] `scripts/cleanup_endpoints.py` — audit + `--apply`
-- [ ] **New Release** свежего GHCR tag на CZ + RO (образ сейчас stale → `render_glb` error)
-- [ ] Retest: 3× COMPLETED подряд после release
-- [ ] Promote `:stable` после стабильных тестов
-- [ ] **Фаза 1 roadmap:** POC TRELLIS.2 — **после** стабильного тила
+- [ ] **New Release** на **CZ** (RO уже OK)
+- [ ] Promote `:stable` v1 после стабильных тестов
+- [x] **POC scaffold TRELLIS.2** — Dockerfile, worker, CI (ветка `feat/trellis2-poc`)
+- [ ] CI green `build-trellis2` → deploy quality endpoint
+- [ ] A/B: сундук v1 vs TRELLIS.2
 
 ---
 
@@ -240,6 +249,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-13 | Pedrokita | Commit+push nvdiffrast; CI EGL fix `609b201`; memory-bank update | CI green → RunPod release → COMPLETED |
 | 2026-07-13 | Pedrokita | Dockerfile 6.8: diff_gaussian_rasterization (mip-splatting submodule) | push → CI → New Release → retest |
 | 2026-07-14 | Pedrokita | RunPod PATCH cleanup (GPU+idle); worker tuning; retest FAILED stale image | CI → New Release → retest |
+| 2026-07-14 | Pedrokita | RO retest OK (дракон, сундук, 3 seeds); CZ stale; POC TRELLIS.2 scaffold | CI trellis2 → quality endpoint → A/B |
 
 ---
 
@@ -249,6 +259,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 |------|-----|---------|
 | 2026-07-13 | **platformRoadmap.md** — 4 фичи AI_MESH, модели, фазы, API vs self-host | Сессия стратегии |
 | 2026-07-13 | Core = self-host, не SaaS API | Unit economics |
+| 2026-07-14 | POC TRELLIS.2: отдельный Docker/worker/CI, xformers POC | Параллельно v1, не ломать legacy |
 | 2026-07-13 | TRELLIS.2 next; Hunyuan off EU prod | MIT + license |
 | 2026-07-13 | nvdiffrast: EGL deps + `--no-build-isolation` + `TORCH_CUDA_ARCH_LIST` | Официальный рецепт NVlabs для Docker |
 | 2026-07-13 | Smoke test image → `T.png` | fox.png 404 |

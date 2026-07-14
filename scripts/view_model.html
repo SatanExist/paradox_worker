@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>paradox_worker — GLB viewer</title>
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #12121f; }
+    #host { width: 100%; height: 100%; }
+    model-viewer { width: 100%; height: 100%; }
+    .bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1;
+      padding: 10px 16px; background: rgba(0, 0, 0, 0.55); color: #e8e8f0;
+      font: 14px/1.4 system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="bar">Drag = rotate · Scroll = zoom · <code id="src"></code></div>
+  <div id="host"></div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const modelPath = params.get("model") || "/model.glb";
+    const cacheBust = params.get("v") || String(Date.now());
+    const src = `${modelPath}${modelPath.includes("?") ? "&" : "?"}_=${cacheBust}`;
+
+    document.getElementById("src").textContent = modelPath;
+    document.title = `GLB: ${modelPath.split("/").pop()}`;
+
+    const viewer = document.createElement("model-viewer");
+    viewer.setAttribute("camera-controls", "");
+    viewer.setAttribute("auto-rotate", "");
+    viewer.setAttribute("shadow-intensity", "1");
+    viewer.setAttribute("exposure", "1.1");
+    viewer.setAttribute("environment-image", "neutral");
+    viewer.setAttribute("src", src);
+    document.getElementById("host").appendChild(viewer);
+  </script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+# TRELLIS.2 quality tier — CUDA 12.4, PyTorch 2.6, separate from v1 Dockerfile.
+# Tags: ghcr.io/satanexist/paradox_worker:trellis2-sha-<short>
+#
+# Build (local):
+#   docker build -f Dockerfile.trellis2 -t paradox-trellis2 .
+
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+
+WORKDIR /app
+
+# TRELLIS.2 requires torch 2.6 + cu124 (setup.sh default).
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+      torch==2.6.0 torchvision==0.21.0 \
+      --index-url https://download.pytorch.org/whl/cu124
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    libjpeg-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libglvnd0 \
+    libgl1 \
+    libglx0 \
+    libegl1 \
+    libgles2 \
+    libglvnd-dev \
+    libgl1-mesa-dev \
+    libegl1-mesa-dev \
+    libgles2-mesa-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub
+
+# Official TRELLIS.2 source (not vendored — separate from TRELLIS v1 submodule).
+RUN git clone -b main --recursive --depth 1 \
+    https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2
+
+ENV PYTHONPATH=/app/TRELLIS.2
+ENV OPENCV_IO_ENABLE_OPENEXR=1
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ENV ATTN_BACKEND=xformers
+ENV HF_HOME=/runpod-volume/huggingface_cache
+ENV TRELLIS2_HDRI=/app/TRELLIS.2/assets/hdri/forest.exr
+
+COPY docker/trellis2_install.sh /tmp/trellis2_install.sh
+RUN chmod +x /tmp/trellis2_install.sh && bash /tmp/trellis2_install.sh
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=trellis2
+
+COPY worker_trellis2.py /app/worker_trellis2.py
+COPY runpod_billing.py /app/runpod_billing.py
+
+CMD ["python", "-u", "/app/worker_trellis2.py"]
