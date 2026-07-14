@@ -41,6 +41,59 @@ def _runpod_billing_metadata(handler_ms: dict) -> dict:
     }
 
 
+DEFAULT_SIMPLIFY = 0.98
+DEFAULT_TEXTURE_SIZE = 2048
+DEFAULT_SEED = 1
+
+
+def _coerce_float(value, default: float, *, min_val: float, max_val: float) -> float:
+    if value is None:
+        return default
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_val, min(max_val, out))
+
+
+def _coerce_int(value, default: int, *, min_val: int, max_val: int) -> int:
+    if value is None:
+        return default
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_val, min(max_val, out))
+
+
+def _generation_params(job_input: dict) -> dict:
+    """Parse optional tuning knobs from RunPod job input."""
+    simplify = _coerce_float(
+        job_input.get("simplify"),
+        DEFAULT_SIMPLIFY,
+        min_val=0.90,
+        max_val=0.999,
+    )
+    texture_size = _coerce_int(
+        job_input.get("texture_size"),
+        DEFAULT_TEXTURE_SIZE,
+        min_val=512,
+        max_val=2048,
+    )
+    # TRELLIS to_glb uses 512-step slider in app; snap to supported sizes.
+    if texture_size not in (512, 1024, 2048):
+        texture_size = min((512, 1024, 2048), key=lambda x: abs(x - texture_size))
+
+    seed = _coerce_int(job_input.get("seed"), DEFAULT_SEED, min_val=0, max_val=2**31 - 1)
+    verbose = bool(job_input.get("verbose", True))
+    return {
+        "simplify": simplify,
+        "texture_size": texture_size,
+        "seed": seed,
+        "verbose": verbose,
+    }
+
+
 def load_model():
     global pipeline
     build_sha = os.environ.get("PARADOX_BUILD_SHA", "unknown")
@@ -84,6 +137,7 @@ def handler(job):
     """
     job_input = job.get('input', {})
     image_url = job_input.get('image_url')
+    gen_params = _generation_params(job_input)
 
     if not image_url:
         return {"error": "Вы не передали ссылку на картинку (image_url)"}
@@ -95,6 +149,13 @@ def handler(job):
         t_load = time.perf_counter()
         load_model()
         handler_ms["model_load_ms"] = int((time.perf_counter() - t_load) * 1000)
+
+        print(
+            "Generation params: "
+            f"simplify={gen_params['simplify']}, "
+            f"texture_size={gen_params['texture_size']}, "
+            f"seed={gen_params['seed']}"
+        )
 
         print(f"Скачиваем изображение: {image_url}")
         req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -110,7 +171,7 @@ def handler(job):
         t_infer = time.perf_counter()
         outputs = pipeline.run(
             image,
-            seed=1,
+            seed=gen_params["seed"],
         )
         handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
 
@@ -124,9 +185,9 @@ def handler(job):
         glb = postprocessing_utils.to_glb(
             outputs['gaussian'][0],
             outputs['mesh'][0],
-            simplify=0.95,
-            texture_size=1024,
-            verbose=True,
+            simplify=gen_params["simplify"],
+            texture_size=gen_params["texture_size"],
+            verbose=gen_params["verbose"],
         )
         glb.export(glb_path)
         handler_ms["glb_export_ms"] = int((time.perf_counter() - t_glb) * 1000)
@@ -142,6 +203,7 @@ def handler(job):
             "status": "success",
             "message": "3D-модель успешно сгенерирована!",
             "model_base64": glb_base64,
+            "generation": gen_params,
             "billing": _runpod_billing_metadata(handler_ms),
         }
 

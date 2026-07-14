@@ -58,10 +58,22 @@
 ```json
 {
   "input": {
-    "image_url": "https://example.com/image.png"
+    "image_url": "https://example.com/image.png",
+    "simplify": 0.98,
+    "texture_size": 2048,
+    "seed": 1
   }
 }
 ```
+
+Опциональные поля `input`:
+
+| Поле | Default | Диапазон | Описание |
+|------|---------|----------|----------|
+| `simplify` | `0.98` | 0.90–0.999 | Mesh decimation (выше = детальнее) |
+| `texture_size` | `2048` | 512 / 1024 / 2048 | Texture bake resolution |
+| `seed` | `1` | 0 … 2³¹−1 | TRELLIS random seed |
+| `verbose` | `true` | bool | GLB export logs |
 
 Ответ содержит `id`, который нужно опрашивать.
 
@@ -86,6 +98,12 @@
   "status": "success",
   "message": "3D-модель успешно сгенерирована!",
   "model_base64": "<base64 GLB>",
+  "generation": {
+    "simplify": 0.98,
+    "texture_size": 2048,
+    "seed": 1,
+    "verbose": true
+  },
   "billing": {
     "gpu_type": "NVIDIA GeForce RTX 3090",
     "gpu_pool": "AMPERE_24",

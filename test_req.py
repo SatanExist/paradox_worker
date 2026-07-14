@@ -1,4 +1,5 @@
-﻿import os
+﻿import argparse
+import os
 import requests
 import time
 from dotenv import load_dotenv
@@ -15,6 +16,10 @@ ENDPOINT_ID_SECONDARY = os.getenv("RUNPOD_ENDPOINT_ID_SECONDARY")
 
 # Теперь скрипт сам подтянет настоящий ключ из безопасного места!
 API_KEY = os.getenv("RUNPOD_API_KEY")
+
+DEFAULT_IMAGE_URL = (
+    "https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.png"
+)
 
 # Небольшая проверка, чтобы сразу понять, если что-то пошло не так
 if not API_KEY:
@@ -103,6 +108,8 @@ def print_cost_estimate(endpoint_id: str, status_payload: dict) -> None:
         print(f"   Rate: ${estimate['rate_usd_per_sec']}/s ({estimate['rate_source']})")
         if estimate.get("handler_timing_ms"):
             print(f"   Handler breakdown (ms): {estimate['handler_timing_ms']}")
+        if status_payload.get("output", {}).get("generation"):
+            print(f"   Generation params: {status_payload['output']['generation']}")
         print(f"   Note: {estimate['note']}")
     except Exception as exc:
         print(f"⚠️ Не удалось оценить стоимость: {exc}")
@@ -115,14 +122,22 @@ def cancel_job(endpoint_id: str, job_id: str) -> None:
     except Exception:
         pass
 
-# Отправляем тестовую картинку лисы (стандартный тест TRELLIS)
-data = {
-    "input": {
-        "image_url": "https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.png"
-    }
-}
 
-try:
+def build_job_input(args: argparse.Namespace) -> dict:
+    job_input = {"image_url": args.image_url}
+    if args.simplify is not None:
+        job_input["simplify"] = args.simplify
+    if args.texture_size is not None:
+        job_input["texture_size"] = args.texture_size
+    if args.seed is not None:
+        job_input["seed"] = args.seed
+    return job_input
+
+
+def run_test(args: argparse.Namespace) -> int:
+    data = {"input": build_job_input(args)}
+    print(f"📦 Job input: {data['input']}")
+
     print(f"🚀 Submit async job to primary endpoint: {ENDPOINT_ID_PRIMARY}")
     result = post_run(ENDPOINT_ID_PRIMARY, data)
     print("✅ Ответ от облака получен:")
@@ -154,13 +169,39 @@ try:
             print("✅ Финальный статус получен:")
             print(sanitize_status_payload(final_payload))
             print_cost_estimate(ENDPOINT_ID_SECONDARY, final_payload)
-            raise SystemExit(0)
+            return 0 if final_payload.get("status") == "COMPLETED" else 1
 
     print(f"⏳ Waiting for completion (job {job_id})...")
     final_payload = wait_for_terminal_status(ENDPOINT_ID_PRIMARY, job_id, max_wait_s=20 * 60)
     print("✅ Финальный статус получен:")
     print(sanitize_status_payload(final_payload))
     print_cost_estimate(ENDPOINT_ID_PRIMARY, final_payload)
+    return 0 if final_payload.get("status") == "COMPLETED" else 1
 
-except Exception as e:
-    print(f"❌ Ошибка: {e}")
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="RunPod TRELLIS smoke test (async + fallback).")
+    parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL, help="Public image URL for image-to-3D.")
+    parser.add_argument(
+        "--simplify",
+        type=float,
+        default=0.98,
+        help="GLB mesh simplify ratio (default: 0.98, higher = more detail).",
+    )
+    parser.add_argument(
+        "--texture-size",
+        type=int,
+        default=2048,
+        choices=[512, 1024, 2048],
+        help="Texture bake resolution (default: 2048).",
+    )
+    parser.add_argument("--seed", type=int, default=1, help="Random seed (default: 1).")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(run_test(parse_args()))
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        raise SystemExit(1)

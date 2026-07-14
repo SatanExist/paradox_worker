@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-13** (вечер — зафиксирован platform roadmap)
+Последнее обновление: **2026-07-14** (RunPod cleanup + worker tuning)
 
 ---
 
@@ -14,15 +14,17 @@
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Коммит | `4346660` — docs: add AI_MESH platform roadmap to memory-bank |
+| Коммит | *(после push)* — worker tuning + cleanup script |
 
 ---
 
 ## Текущий фокус
 
-**Фаза:** worker стабильно генерит GLB → **стратегия платформы зафиксирована** → POC TRELLIS.2 + RunPod hygiene.
+**Фаза 0:** RunPod hygiene ✅ → **New Release свежего образа** → retest COMPLETED → потом TRELLIS.2.
 
-**Ближайшая цель:** RunPod GPU list + idleTimeout; затем TRELLIS.2 Docker (CUDA 12.4).
+**Блокер retest 2026-07-14:** CZ job `FAILED` — `render_glb` missing → на endpoint **старый Docker**, не текущий `main` (`to_glb` уже в коде с `ec0e3af`).
+
+**После push:** CI → `ghcr.io/satanexist/paradox_worker:sha-<short>` → **New Release** на CZ + RO (не `:latest` вслепую).
 
 **Полный план (4 фичи сайта, модели, economics):** `@memory-bank/platformRoadmap.md`
 
@@ -128,12 +130,14 @@ Inference доходит до GLB export, но в образе не было nvd
 
 ## В работе (прямо сейчас)
 
-- [ ] **RunPod:** убрать 5090/B300/A40/A6000 с CZ и RO (только 24GB Ampere/Ada)
-- [ ] **RunPod:** снизить `idleTimeout` с 180s до 5–10s (экономия на idle)
-- [ ] Зафиксировать “канареечный” immutable тег образа для прод (`:stable` позже)
-- [ ] **Фаза 0 roadmap:** тюнинг TRELLIS v1 (simplify, texture, multi-image, seeds)
-- [ ] **Фаза 1 roadmap:** POC TRELLIS.2 (CUDA 12.4 Docker)
-- [ ] Retopo / texture / rig workers — после стабильного generate (см. `platformRoadmap.md`)
+- [x] **RunPod:** GPU list → только 4090/A5000/L4/3090 (PATCH API, v16/v12)
+- [x] **RunPod:** `idleTimeout` → **10s** (было 180 CZ / 40 RO)
+- [x] **Worker tuning:** `simplify=0.98`, `texture_size=2048`, `seed` в input
+- [x] `scripts/cleanup_endpoints.py` — audit + `--apply`
+- [ ] **New Release** свежего GHCR tag на CZ + RO (образ сейчас stale → `render_glb` error)
+- [ ] Retest: 3× COMPLETED подряд после release
+- [ ] Promote `:stable` после стабильных тестов
+- [ ] **Фаза 1 roadmap:** POC TRELLIS.2 — **после** стабильного тила
 
 ---
 
@@ -235,7 +239,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-10 | Pedrokita | Digest fix; FlexiCubes+kaolin; CI tags; 5090 unhealthy; throttled CZ; nvdiffrast missing | Rebuild, GPU list, retest |
 | 2026-07-13 | Pedrokita | Commit+push nvdiffrast; CI EGL fix `609b201`; memory-bank update | CI green → RunPod release → COMPLETED |
 | 2026-07-13 | Pedrokita | Dockerfile 6.8: diff_gaussian_rasterization (mip-splatting submodule) | push → CI → New Release → retest |
-| 2026-07-13 | Pedrokita | Исследование моделей (TRELLIS.2, Hunyuan EU, API pricing); **platformRoadmap.md** | commit+push memory-bank → TRELLIS.2 POC |
+| 2026-07-14 | Pedrokita | RunPod PATCH cleanup (GPU+idle); worker tuning; retest FAILED stale image | CI → New Release → retest |
 
 ---
 
