@@ -15,7 +15,7 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка | `feat/trellis2-poc` |
-| Коммит | `25a461a` — TRELLIS.2 POC + memory-bank session update |
+| Коммит | `bdac09f` (feature `25a461a`) — TRELLIS.2 POC + memory-bank |
 
 ---
 
