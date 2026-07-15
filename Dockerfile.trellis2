@@ -5,7 +5,7 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64 \
     MAX_JOBS=2 \
     PYOPENGL_PLATFORM=egl \
     PYTHONPATH=/app/TRELLIS.2 \
@@ -60,7 +60,7 @@ RUN pip install --no-cache-dir \
     kornia timm plyfile filelock safetensors "triton>=3.2.0" && \
     pip install --no-cache-dir \
       git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
-    pip install --no-cache-dir --no-deps xformers \
+    pip install --no-cache-dir xformers==0.0.29.post3 \
       --index-url https://download.pytorch.org/whl/cu124
 
 RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
@@ -87,6 +87,7 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
 
 RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-voxel
 
+# Build-time check only: pip wheels + compiled .so present (no GPU import).
 COPY docker/smoke_trellis2_imports.py /tmp/smoke_trellis2_imports.py
 RUN python /tmp/smoke_trellis2_imports.py
 
