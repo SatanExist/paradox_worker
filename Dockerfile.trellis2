@@ -5,12 +5,15 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     MAX_JOBS=2 \
     PYOPENGL_PLATFORM=egl \
     PYTHONPATH=/app/TRELLIS.2 \
     OPENCV_IO_ENABLE_OPENEXR=1 \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     ATTN_BACKEND=sdpa \
+    SPARSE_ATTN_BACKEND=xformers \
+    SPARSE_CONV_BACKEND=flex_gemm \
     HF_HOME=/runpod-volume/huggingface_cache \
     TRELLIS2_HDRI=/app/TRELLIS.2/assets/hdri/forest.exr \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
@@ -54,9 +57,11 @@ RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/
 RUN pip install --no-cache-dir \
     imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
     "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
-    kornia timm plyfile filelock "triton>=3.2.0" && \
+    kornia timm plyfile filelock safetensors "triton>=3.2.0" && \
     pip install --no-cache-dir \
-      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
+    pip install --no-cache-dir --no-deps xformers \
+      --index-url https://download.pytorch.org/whl/cu124
 
 RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
     pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
@@ -82,7 +87,8 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
 
 RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-voxel
 
-RUN python -c "import cumesh; import flex_gemm; import o_voxel; import trellis2; print('trellis2 imports OK')"
+COPY docker/smoke_trellis2_imports.py /tmp/smoke_trellis2_imports.py
+RUN python /tmp/smoke_trellis2_imports.py
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}

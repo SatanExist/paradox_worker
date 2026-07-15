@@ -21,6 +21,8 @@ from PIL import Image
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("ATTN_BACKEND", "sdpa")
+os.environ.setdefault("SPARSE_ATTN_BACKEND", "xformers")
+os.environ.setdefault("SPARSE_CONV_BACKEND", "flex_gemm")
 os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface_cache")
 
 pipeline = None
