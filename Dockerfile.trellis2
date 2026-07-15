@@ -6,6 +6,11 @@
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_HOME=/usr/local/cuda \
+    MAX_JOBS=4 \
+    PYOPENGL_PLATFORM=egl
+
 WORKDIR /app
 
 # TRELLIS.2 requires torch 2.6 + cu124 (setup.sh default).
@@ -16,7 +21,11 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    cmake \
+    ninja-build \
+    pkg-config \
     libjpeg-dev \
+    libpng-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libglvnd0 \
@@ -34,8 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub
 
 # Official TRELLIS.2 source (not vendored — separate from TRELLIS v1 submodule).
-RUN git clone -b main --recursive --depth 1 \
-    https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2
+# o-voxel CUDA build requires third_party/eigen (git submodule).
+RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2 && \
+    git -C /app/TRELLIS.2/o-voxel submodule update --init --recursive third_party/eigen
 
 ENV PYTHONPATH=/app/TRELLIS.2
 ENV OPENCV_IO_ENABLE_OPENEXR=1

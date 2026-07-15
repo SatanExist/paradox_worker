@@ -5,20 +5,27 @@ set -euo pipefail
 
 TRELLIS2_ROOT="${TRELLIS2_ROOT:-/app/TRELLIS.2}"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6;8.9+PTX}"
+export MAX_JOBS="${MAX_JOBS:-4}"
 
 cd "${TRELLIS2_ROOT}"
+
+if [ ! -f "${TRELLIS2_ROOT}/o-voxel/third_party/eigen/Eigen/Core" ]; then
+  echo "ERROR: eigen submodule missing under o-voxel/third_party/eigen"
+  exit 1
+fi
 
 echo "==> Basic Python deps"
 pip install --no-cache-dir \
   imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
-  transformers gradio==6.0.1 tensorboard pandas lpips zstandard \
-  kornia timm
+  "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
+  kornia timm plyfile filelock
 
 pip install --no-cache-dir \
   git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
 
-echo "==> xformers (ATTN_BACKEND=xformers; skip flash-attn compile in POC)"
-pip install --no-cache-dir xformers
+echo "==> xformers (PyTorch cu124 index; ATTN_BACKEND=xformers)"
+pip install --no-cache-dir xformers \
+  --index-url https://download.pytorch.org/whl/cu124
 
 echo "==> nvdiffrast"
 git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast
@@ -40,14 +47,16 @@ git clone --recursive --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tm
 pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM
 rm -rf /tmp/FlexGEMM
 
-echo "==> o-voxel (from TRELLIS.2 submodule)"
+echo "==> o-voxel (from TRELLIS.2 tree; cumesh/flex_gemm already installed)"
 rm -rf /tmp/o-voxel
 cp -r "${TRELLIS2_ROOT}/o-voxel" /tmp/o-voxel
-pip install --no-cache-dir --no-build-isolation /tmp/o-voxel
+pip install --no-cache-dir --no-build-isolation --no-deps /tmp/o-voxel
 rm -rf /tmp/o-voxel
 
 echo "==> Import smoke test"
 python - <<'PY'
+import cumesh
+import flex_gemm
 import o_voxel
 import trellis2
 print("trellis2 import OK")
