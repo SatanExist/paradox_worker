@@ -104,38 +104,49 @@ def _generation_params(job_input: dict) -> dict:
     }
 
 
-def _rewrite_dinov3_local_path(model_path: str) -> None:
-    """Point TRELLIS.2 image encoder at a local HF DINOv3 folder (bypass gated Hub)."""
+def _rewrite_pipeline_json(model_path: str) -> None:
+    """Rewrite TRELLIS.2 pipeline.json for RunPod: local DINOv3 + non-gated rembg."""
     import json
     from pathlib import Path
 
+    pipeline_json = Path(model_path) / "pipeline.json"
+    if not pipeline_json.is_file():
+        print(f"pipeline.json not found under {model_path}; skip rewrites")
+        return
+
+    data = json.loads(pipeline_json.read_text(encoding="utf-8"))
+    args = data.get("args") or data
+    changed = False
+
+    # DINOv3: Meta/HF gated — use converted local weights on the network volume.
     dinov3_path = os.environ.get(
         "TRELLIS2_DINOV3_PATH",
         "/runpod-volume/dinov3-vitl16-pretrain-lvd1689m",
     )
     root = Path(dinov3_path)
-    if not (root / "config.json").is_file():
-        print(f"DINOv3 local path missing or incomplete: {root}")
-        print("Set TRELLIS2_DINOV3_PATH to a converted HF folder on the network volume.")
-        return
-
-    pipeline_json = Path(model_path) / "pipeline.json"
-    if not pipeline_json.is_file():
-        print(f"pipeline.json not found under {model_path}; skip DINOv3 rewrite")
-        return
-
-    data = json.loads(pipeline_json.read_text(encoding="utf-8"))
-    args = data.get("args") or data
     image_cond = args.get("image_cond_model")
-    if not isinstance(image_cond, dict):
-        print("pipeline.json has no image_cond_model; skip DINOv3 rewrite")
-        return
+    if isinstance(image_cond, dict) and (root / "config.json").is_file():
+        image_args = image_cond.setdefault("args", {})
+        old = image_args.get("model_name")
+        image_args["model_name"] = str(root)
+        print(f"DINOv3 model_name: {old!r} -> {root}")
+        changed = True
+    elif isinstance(image_cond, dict):
+        print(f"DINOv3 local path missing or incomplete: {root}")
 
-    image_args = image_cond.setdefault("args", {})
-    old = image_args.get("model_name")
-    image_args["model_name"] = str(root)
-    pipeline_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    print(f"DINOv3 model_name: {old!r} -> {root}")
+    # rembg: briaai/RMBG-2.0 is gated + CC BY-NC — prefer public BiRefNet for POC/commercial.
+    rembg_model = args.get("rembg_model")
+    rembg_id = os.environ.get("TRELLIS2_REMBG_MODEL", "ZhengPeng7/BiRefNet")
+    if isinstance(rembg_model, dict):
+        rembg_args = rembg_model.setdefault("args", {})
+        old_rembg = rembg_args.get("model_name")
+        if old_rembg != rembg_id:
+            rembg_args["model_name"] = rembg_id
+            print(f"rembg model_name: {old_rembg!r} -> {rembg_id!r}")
+            changed = True
+
+    if changed:
+        pipeline_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def load_model():
@@ -155,7 +166,7 @@ def load_model():
         model_id,
         local_dir="/runpod-volume/trellis2-weights",
     )
-    _rewrite_dinov3_local_path(model_path)
+    _rewrite_pipeline_json(model_path)
 
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_path)
     pipeline.cuda()
