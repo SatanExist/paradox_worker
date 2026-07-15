@@ -1,3 +1,7 @@
 ﻿.venv/
 .env
 .env.*
+weights/
+*.pth
+*.glb
+__pycache__/

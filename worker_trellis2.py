@@ -104,6 +104,40 @@ def _generation_params(job_input: dict) -> dict:
     }
 
 
+def _rewrite_dinov3_local_path(model_path: str) -> None:
+    """Point TRELLIS.2 image encoder at a local HF DINOv3 folder (bypass gated Hub)."""
+    import json
+    from pathlib import Path
+
+    dinov3_path = os.environ.get(
+        "TRELLIS2_DINOV3_PATH",
+        "/runpod-volume/dinov3-vitl16-pretrain-lvd1689m",
+    )
+    root = Path(dinov3_path)
+    if not (root / "config.json").is_file():
+        print(f"DINOv3 local path missing or incomplete: {root}")
+        print("Set TRELLIS2_DINOV3_PATH to a converted HF folder on the network volume.")
+        return
+
+    pipeline_json = Path(model_path) / "pipeline.json"
+    if not pipeline_json.is_file():
+        print(f"pipeline.json not found under {model_path}; skip DINOv3 rewrite")
+        return
+
+    data = json.loads(pipeline_json.read_text(encoding="utf-8"))
+    args = data.get("args") or data
+    image_cond = args.get("image_cond_model")
+    if not isinstance(image_cond, dict):
+        print("pipeline.json has no image_cond_model; skip DINOv3 rewrite")
+        return
+
+    image_args = image_cond.setdefault("args", {})
+    old = image_args.get("model_name")
+    image_args["model_name"] = str(root)
+    pipeline_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    print(f"DINOv3 model_name: {old!r} -> {root}")
+
+
 def load_model():
     global pipeline
     build_sha = os.environ.get("PARADOX_BUILD_SHA", "unknown")
@@ -121,6 +155,7 @@ def load_model():
         model_id,
         local_dir="/runpod-volume/trellis2-weights",
     )
+    _rewrite_dinov3_local_path(model_path)
 
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_path)
     pipeline.cuda()
