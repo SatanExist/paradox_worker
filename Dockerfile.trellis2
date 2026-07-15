@@ -1,19 +1,22 @@
 # TRELLIS.2 quality tier — CUDA 12.4, PyTorch 2.6, separate from v1 Dockerfile.
 # Tags: ghcr.io/satanexist/paradox_worker:trellis2-sha-<short>
-#
-# Build (local):
-#   docker build -f Dockerfile.trellis2 -t paradox-trellis2 .
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
-    MAX_JOBS=4 \
-    PYOPENGL_PLATFORM=egl
+    MAX_JOBS=2 \
+    PYOPENGL_PLATFORM=egl \
+    PYTHONPATH=/app/TRELLIS.2 \
+    OPENCV_IO_ENABLE_OPENEXR=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+    ATTN_BACKEND=sdpa \
+    HF_HOME=/runpod-volume/huggingface_cache \
+    TRELLIS2_HDRI=/app/TRELLIS.2/assets/hdri/forest.exr \
+    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
 
 WORKDIR /app
 
-# TRELLIS.2 requires torch 2.6 + cu124 (setup.sh default).
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
       torch==2.6.0 torchvision==0.21.0 \
@@ -42,20 +45,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub
 
-# Official TRELLIS.2 source (not vendored — separate from TRELLIS v1 submodule).
-# o-voxel CUDA build requires third_party/eigen (git submodule).
+# Shallow clone; init eigen manually (submodule update is flaky in CI).
 RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2 && \
-    git -C /app/TRELLIS.2/o-voxel submodule update --init --recursive third_party/eigen
+    rm -rf /app/TRELLIS.2/o-voxel/third_party/eigen && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /app/TRELLIS.2/o-voxel/third_party/eigen
 
-ENV PYTHONPATH=/app/TRELLIS.2
-ENV OPENCV_IO_ENABLE_OPENEXR=1
-ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-ENV ATTN_BACKEND=xformers
-ENV HF_HOME=/runpod-volume/huggingface_cache
-ENV TRELLIS2_HDRI=/app/TRELLIS.2/assets/hdri/forest.exr
+RUN pip install --no-cache-dir \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
+    "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
+    kornia timm plyfile filelock "triton>=3.2.0" && \
+    pip install --no-cache-dir \
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
 
-COPY docker/trellis2_install.sh /tmp/trellis2_install.sh
-RUN chmod +x /tmp/trellis2_install.sh && bash /tmp/trellis2_install.sh
+RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
+    pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
+    rm -rf /tmp/nvdiffrast
+
+RUN git clone -b renderutils --depth 1 https://github.com/JeffreyXiang/nvdiffrec.git /tmp/nvdiffrec && \
+    pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrec && \
+    rm -rf /tmp/nvdiffrec
+
+# CuMesh needs cubvh@trellis.2 + eigen (nested submodules fail with --depth 1).
+RUN git clone --depth 1 https://github.com/JeffreyXiang/CuMesh.git /tmp/CuMesh && \
+    rm -rf /tmp/CuMesh/third_party/cubvh && \
+    git clone --depth 1 --branch trellis.2 https://github.com/JeffreyXiang/cubvh.git /tmp/CuMesh/third_party/cubvh && \
+    rm -rf /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
+    pip install --no-cache-dir --no-build-isolation /tmp/CuMesh && \
+    rm -rf /tmp/CuMesh
+
+RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGEMM && \
+    pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
+    rm -rf /tmp/FlexGEMM
+
+RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-voxel
+
+RUN python -c "import cumesh; import flex_gemm; import o_voxel; import trellis2; print('trellis2 imports OK')"
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}

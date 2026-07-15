@@ -6,7 +6,6 @@ on:
     paths:
       - "Dockerfile.trellis2"
       - "worker_trellis2.py"
-      - "docker/trellis2_install.sh"
       - ".github/workflows/build-trellis2.yml"
   workflow_dispatch:
 
