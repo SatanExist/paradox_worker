@@ -46,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub
+RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub boto3
 
 # Shallow clone; init eigen manually (submodule update is flaky in CI).
 RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2 && \

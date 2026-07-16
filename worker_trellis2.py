@@ -1,5 +1,5 @@
 """
-RunPod handler: image URL -> TRELLIS.2 -> GLB base64 (quality tier).
+RunPod handler: image URL -> TRELLIS.2 -> GLB on volume (optional R2 URL / base64).
 
 Separate from worker.py (TRELLIS v1 / CUDA 11.8).
 Deploy via Dockerfile.trellis2 on a dedicated 24GB+ endpoint.
@@ -8,11 +8,14 @@ Deploy via Dockerfile.trellis2 on a dedicated 24GB+ endpoint.
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
+import shutil
 import tempfile
 import time
 import traceback
 import urllib.request
+from pathlib import Path
 
 import runpod
 import torch
@@ -32,6 +35,9 @@ DEFAULT_TEXTURE_SIZE = 2048
 DEFAULT_DECIMATION_TARGET = 500_000
 DEFAULT_SEED = 1
 NVDIFFRAST_FACE_LIMIT = 16_777_216
+DEFAULT_OUTPUT_DIR = "/runpod-volume/outputs"
+# Keep JSON responses under typical RunPod status payload limits.
+DEFAULT_BASE64_MAX_BYTES = 5 * 1024 * 1024
 
 VALID_PIPELINE_TYPES = frozenset({"512", "1024", "1024_cascade", "1536_cascade"})
 VALID_TEXTURE_SIZES = frozenset({1024, 2048, 4096})
@@ -203,10 +209,97 @@ def _mesh_to_glb(mesh, gen_params: dict):
     )
 
 
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _upload_r2(local_path: str, object_key: str) -> str | None:
+    """Upload to Cloudflare R2 (S3 API). Returns public URL or None if not configured."""
+    endpoint = os.environ.get("R2_ENDPOINT_URL", "").strip()
+    bucket = os.environ.get("R2_BUCKET", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    public_base = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not all([endpoint, bucket, access_key, secret_key, public_base]):
+        return None
+
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError:
+        print("boto3 not installed; skip R2 upload")
+        return None
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=os.environ.get("R2_REGION", "auto"),
+        config=Config(signature_version="s3v4"),
+    )
+    extra = {"ContentType": "model/gltf-binary"}
+    client.upload_file(local_path, bucket, object_key, ExtraArgs=extra)
+    url = f"{public_base}/{object_key}"
+    print(f"Uploaded GLB to R2: {url}")
+    return url
+
+
+def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dict:
+    """
+    Persist GLB off the JSON hot path:
+      1) always copy to network volume
+      2) optional R2 -> model_url
+      3) optional base64 only when small enough for RunPod status API
+    """
+    output_dir = Path(os.environ.get("TRELLIS2_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in job_id) or "job"
+    dest = output_dir / f"{safe_id}.glb"
+    shutil.copy2(temp_glb_path, dest)
+
+    size = dest.stat().st_size
+    sha = _sha256_file(str(dest))
+    object_key = f"trellis2/{safe_id}.glb"
+    model_url = _upload_r2(str(dest), object_key)
+
+    delivery = {
+        "model_path": str(dest),
+        "model_bytes": size,
+        "model_sha256": sha,
+        "model_url": model_url,
+        "delivery": "r2" if model_url else "volume",
+    }
+
+    max_b64 = int(os.environ.get("TRELLIS2_BASE64_MAX_BYTES", str(DEFAULT_BASE64_MAX_BYTES)))
+    include_b64 = return_base64 or (model_url is None and size <= max_b64)
+    if include_b64 and size <= max_b64:
+        with open(dest, "rb") as handle:
+            delivery["model_base64"] = base64.b64encode(handle.read()).decode("utf-8")
+    elif return_base64 and size > max_b64:
+        delivery["base64_omitted"] = (
+            f"GLB is {size} bytes; exceeds TRELLIS2_BASE64_MAX_BYTES={max_b64}. "
+            "Use model_url (R2) or model_path on the network volume."
+        )
+    elif model_url is None and size > max_b64:
+        delivery["base64_omitted"] = (
+            f"GLB is {size} bytes; skipped base64 to keep RunPod status payload small. "
+            "Configure R2_* env for model_url, or copy model_path from the volume."
+        )
+
+    return delivery
+
+
 def handler(job):
     job_input = job.get("input", {})
     image_url = job_input.get("image_url")
     gen_params = _generation_params(job_input)
+    return_base64 = bool(job_input.get("return_base64", False))
+    job_id = str(job.get("id") or f"local-{int(time.time())}")
 
     if not image_url:
         return {"error": "Missing image_url in job input"}
@@ -253,17 +346,18 @@ def handler(job):
         glb_temp.close()
         glb.export(glb_path, extension_webp=True)
         handler_ms["glb_export_ms"] = int((time.perf_counter() - t_glb) * 1000)
-        handler_ms["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
-        with open(glb_path, "rb") as glb_file:
-            glb_base64 = base64.b64encode(glb_file.read()).decode("utf-8")
+        t_deliver = time.perf_counter()
+        delivery = _deliver_glb(glb_path, job_id, return_base64=return_base64)
+        handler_ms["deliver_ms"] = int((time.perf_counter() - t_deliver) * 1000)
+        handler_ms["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
         return {
             "status": "success",
             "message": "TRELLIS.2 model generated successfully",
-            "model_base64": glb_base64,
             "generation": gen_params,
             "billing": _runpod_billing_metadata(handler_ms),
+            **delivery,
         }
 
     except Exception as exc:
