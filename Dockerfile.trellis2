@@ -57,7 +57,7 @@ RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/
 RUN pip install --no-cache-dir \
     imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
     "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
-    kornia timm plyfile filelock safetensors "triton>=3.2.0" && \
+    kornia timm plyfile filelock safetensors einops "triton>=3.2.0" && \
     pip install --no-cache-dir \
       git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
     pip install --no-cache-dir xformers==0.0.29.post3 \
