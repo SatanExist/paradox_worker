@@ -145,15 +145,71 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 - Multi-endpoint решает **capacity** (где есть свободный GPU).
 - Controlled rollout решает **надёжность релизов** (не ломаем всё сразу).
 
+## Конспект T2 POC: кто что делает (2026-07-17)
+
+Цепочка: **клиент → RunPod → GPU worker → volume + R2 → клиент качает GLB**.
+
+| Кто | Роль | Что делает | Чего НЕ делает |
+|-----|------|------------|----------------|
+| **Пользователь / Pedrokita** | заказчик, ops | смотрит GLB, крутит seed/params, UI RunPod (FlashBoot, max workers), ротация ключей | не Terminate'ит воркеры вручную в проде |
+| **Клиент сейчас** (`test_req_trellis2.py`) | отправка job + watchdog | submit `/run`, poll status/health, перед submit — DELETE EXITED ghosts, zombie → cancel/heal/retry, скачать по `model_url` | не считает 3D |
+| **Клиент позже** (AI_MESH Studio backend) | то же, что тест | встроить `runpod_queue_watchdog` + `RUNPOD_API_KEY` на сервере | не в браузере пользователя |
+| **GPU worker** (`worker_trellis2.py`) | инференс | картинка → BiRefNet → TRELLIS.2 → remesh/GLB → copy volume + upload R2 → ответ `model_url` / `model_path` | не чистит очередь RunPod, не Terminate себя |
+| **RunPod Serverless** | оркестратор | очередь, scale workers, billing | иногда врёт health (`ready` при EXITED) — zombie |
+| **Network volume** `paradox-trellis2` | кэш + бэкап GLB | веса, DINOv3, `outputs/*.glb` | не для скачивания с ПК (S3 stall) |
+| **Cloudflare R2** | публичная доставка | `model_url` для Studio/ПК | не считает 3D |
+| **Heal-скрипт** (`scripts/heal_t2_endpoint.py`) | ops / cron | purge queue + DELETE EXITED | не генерация |
+
+**Статус кода (важно):**
+- T2 full + R2 + smoke/full GLB локально — **работает**
+- Watchdog/heal — **в рабочей копии, ещё не в git** (`feat/trellis2-poc`, tip образа `ad1bca9`)
+
+**Zombie одной фразой:** health говорит «worker готов», REST — `desiredStatus=EXITED`, job в `IN_QUEUE` → клиент сносит ghost и ретраит; пользователь в UI для этого не нужен.
+
+## Паттерн: Zombie queue watchdog (FlashBoot / stale idle)
+
+Проблема (2026-07-16/17): health показывает `workers.idle≥1` / `ready≥1`, `jobs.inProgress=0`, job вечно `IN_QUEUE`. Worker «готов» по метрикам, но **не деqueues** — часто после FlashBoot / ночного простоя.
+
+Это **не** capacity (`throttled`) и не битый digest (`initializing`).
+
+Решение на стороне клиента / Studio (не пользователя):
+
+1. Poll `/status` + `/health`.
+2. Если `IN_QUEUE` ≥ ~60–90s **и** `(ready+idle)>0` **и** `inProgress=0` **и** `throttled=0` → **zombie**.
+3. `POST /cancel/{id}`.
+4. **Heal:** `GET .../endpoints/{id}?includeWorkers=true` → `DELETE /v1/pods/{podId}` для `desiredStatus=EXITED` (ghost FlashBoot), опц. `purge-queue`.
+5. Retry submit (до N раз); опц. secondary endpoint (`RUNPOD_ENDPOINT_ID_TRELLIS2_SECONDARY`).
+6. Ops: FlashBoot на T2 — **off** (решение 2026-07-20); `workersMax≥2`; `workersStandby=0` если доступно; клиентский heal остаётся страховкой.
+
+Код:
+- `runpod_queue_watchdog.py` — детект + heal + retry (переиспользовать в AI_MESH)
+- `test_req_trellis2.py` — вызывает watchdog
+- `scripts/heal_t2_endpoint.py` — ручной/cron heal без генерации
+- `scripts/diagnose_t2_queue.py` — live probe очереди
+
 ## Диагностика «IN_QUEUE» на RunPod
 
-Три разных корневые причины с похожим симптомом:
+Четыре разных корневые причины с похожим симптомом:
 
 | Симптом в health | Причина | Что делать |
 |------------------|---------|------------|
 | `initializing` мигает, `running=0` | Битый digest / pull fail | Тег вместо `@sha256:...`, проверить 64 hex |
 | `throttled > 0`, долго `inQueue` | Capacity региона | Ждать 1–2 мин; fallback RO; расширить GPU list (24GB) |
 | `unhealthy > 0` | Crash при старте/inference | Логи воркера; убрать 5090; проверить deps в образе |
+| `idle/ready≥1`, `inProgress=0`, job в `IN_QUEUE` | **Zombie worker** (FlashBoot/stale) | `ensure_no_ghost_workers` + cancel/retry; FlashBoot off; max≥2 |
+
+## Качество image→3D: rembg vs «зад»
+
+Не путать два «плагина»:
+
+| Что | Роль | Влияние на невидимую сторону |
+|-----|------|------------------------------|
+| **BiRefNet** (`preprocess_image`) | вырез фона на входе | почти нет |
+| **TRELLIS.2 сама** | додумывает объём/текстуру сзади по одному кадру | да, но это догадка |
+| **seed / best-of-N** | разные догадки | часто лучший рычаг в POC |
+| **multi-view (2–4 фото)** | реальные данные сзади | позже, не в текущем POC |
+
+Отдельного rembg-плагина «нарисуй красивый зад» нет. UX Studio: не обещать «идеальную спину» с одного фото.
 
 ## Конвенции кода
 

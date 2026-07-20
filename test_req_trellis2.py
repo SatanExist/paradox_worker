@@ -1,19 +1,25 @@
-"""Smoke test for TRELLIS.2 RunPod endpoint (quality tier)."""
+"""Smoke test for TRELLIS.2 RunPod endpoint (quality tier).
+
+Uses runpod_queue_watchdog for zombie IN_QUEUE detect → heal ghosts → retry.
+"""
+
+from __future__ import annotations
 
 import argparse
 import base64
 import os
-import time
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
 from runpod_billing import estimate_from_status_payload
+from runpod_queue_watchdog import run_with_zombie_retries
 
 load_dotenv()
 
 ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID_TRELLIS2", "")
+ENDPOINT_ID_SECONDARY = os.getenv("RUNPOD_ENDPOINT_ID_TRELLIS2_SECONDARY", "").strip()
 API_KEY = os.getenv("RUNPOD_API_KEY")
 
 DEFAULT_IMAGE_URL = (
@@ -21,12 +27,13 @@ DEFAULT_IMAGE_URL = (
     "typical_misc_monster_chest.png"
 )
 
+DEFAULT_ZOMBIE_AFTER_S = float(os.getenv("TRELLIS2_ZOMBIE_AFTER_S", "90"))
+DEFAULT_ZOMBIE_RETRIES = int(os.getenv("TRELLIS2_ZOMBIE_RETRIES", "2"))
+
 if not API_KEY:
     raise ValueError("RUNPOD_API_KEY not found in .env")
 if not ENDPOINT_ID:
     raise ValueError("Set RUNPOD_ENDPOINT_ID_TRELLIS2 in .env (dedicated quality endpoint)")
-
-HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
 
 def sanitize(payload: dict) -> dict:
@@ -37,23 +44,6 @@ def sanitize(payload: dict) -> dict:
         job_out["model_base64"] = f"<omitted base64, len={len(job_out['model_base64'])}>"
         out["output"] = job_out
     return out
-
-
-def wait_for_job(endpoint_id: str, job_id: str, *, poll_s: float = 5.0, max_wait_s: float = 30 * 60) -> dict:
-    deadline = time.time() + max_wait_s
-    while time.time() < deadline:
-        response = requests.get(
-            f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}",
-            headers=HEADERS,
-            timeout=60,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        status = payload.get("status")
-        if status in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
-            return payload
-        time.sleep(poll_s)
-    raise TimeoutError(f"Timed out waiting for job {job_id}")
 
 
 def build_input(args: argparse.Namespace) -> dict:
@@ -119,29 +109,67 @@ def main() -> int:
     )
     parser.add_argument("--no-preprocess", action="store_true")
     parser.add_argument("--no-remesh", action="store_true")
+    parser.add_argument(
+        "--zombie-after",
+        type=float,
+        default=DEFAULT_ZOMBIE_AFTER_S,
+        help="Seconds of IN_QUEUE+idle/ready before heal/retry (default 90)",
+    )
+    parser.add_argument(
+        "--zombie-retries",
+        type=int,
+        default=DEFAULT_ZOMBIE_RETRIES,
+        help="Extra submit attempts after zombie detect (default 2)",
+    )
+    parser.add_argument(
+        "--no-zombie-watch",
+        action="store_true",
+        help="Disable zombie detect/heal (wait until max timeout only)",
+    )
+    parser.add_argument(
+        "--purge-on-heal",
+        action="store_true",
+        help="Also POST purge-queue when healing ghosts",
+    )
     args = parser.parse_args()
 
-    payload = {"input": build_input(args)}
+    job_input = build_input(args)
     print(f"Endpoint: {ENDPOINT_ID}")
-    print(f"Job input: {payload['input']}")
+    if ENDPOINT_ID_SECONDARY:
+        print(f"Secondary: {ENDPOINT_ID_SECONDARY}")
+    print(f"Job input: {job_input}")
 
-    response = requests.post(
-        f"https://api.runpod.ai/v2/{ENDPOINT_ID}/run",
-        json=payload,
-        headers=HEADERS,
-        timeout=60,
-    )
-    response.raise_for_status()
-    job = response.json()
-    job_id = job["id"]
-    print(f"Submitted job {job_id} status={job.get('status')}")
+    if args.no_zombie_watch:
+        from runpod_queue_watchdog import submit_job, wait_for_job
 
-    final = wait_for_job(ENDPOINT_ID, job_id)
+        job_id = submit_job(ENDPOINT_ID, API_KEY, job_input)
+        final = wait_for_job(
+            ENDPOINT_ID,
+            job_id,
+            API_KEY,
+            zombie_after_s=1e9,
+            max_wait_s=30 * 60,
+        )
+        endpoint_used = ENDPOINT_ID
+    else:
+        endpoint_used, final = run_with_zombie_retries(
+            ENDPOINT_ID,
+            API_KEY,
+            job_input,
+            secondary_endpoint_id=ENDPOINT_ID_SECONDARY or None,
+            zombie_after_s=args.zombie_after,
+            zombie_retries=args.zombie_retries,
+            max_wait_s=30 * 60,
+            heal=True,
+            purge_on_heal=args.purge_on_heal,
+        )
+
+    print(f"Final endpoint: {endpoint_used}")
     print("Final status:")
     print(sanitize(final))
 
     if final.get("status") == "COMPLETED":
-        estimate = estimate_from_status_payload(final, endpoint_id=ENDPOINT_ID, api_key=API_KEY)
+        estimate = estimate_from_status_payload(final, endpoint_id=endpoint_used, api_key=API_KEY)
         print(f"Cost estimate: {estimate['cost_usd_formatted']} USD")
         output = final.get("output") or {}
         if isinstance(output, dict):

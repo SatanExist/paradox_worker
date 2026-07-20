@@ -10,24 +10,29 @@
 | Quality tier (POC) | TRELLIS.2-4B (`microsoft/TRELLIS.2-4B`) — CUDA 12.4, отдельный образ |
 | Worker SDK | `runpod` Python SDK |
 | Inference | PyTorch + CUDA, ленивая загрузка pipeline |
-| Формат выхода | GLB (base64 в JSON) |
+| Формат выхода | GLB: v1 — base64 в JSON; **T2** — volume + **R2 `model_url`** (настроено); base64 только если маленький |
 
 ## Ключевые файлы
 
 | Файл | Назначение |
 |------|------------|
 | `worker.py` | RunPod handler v1: картинка → TRELLIS → GLB → base64 |
-| `worker_trellis2.py` | RunPod handler quality: TRELLIS.2 → PBR GLB |
+| `worker_trellis2.py` | Quality: TRELLIS.2 → GLB на volume / R2 / base64 (cap) |
 | `Dockerfile` | v1 контейнер (CUDA 11.8) |
-| `Dockerfile.trellis2` | quality контейнер (CUDA 12.4, torch 2.6) |
+| `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
 | `test_req.py` | Smoke test v1 endpoint |
-| `test_req_trellis2.py` | Smoke test quality endpoint (`RUNPOD_ENDPOINT_ID_TRELLIS2`) |
-| `scripts/batch_seeds.py` | Best-of-N: несколько seeds → отдельные GLB |
+| `runpod_queue_watchdog.py` | Zombie IN_QUEUE detect + DELETE ghost pods + retry |
+| `test_req_trellis2.py` | Smoke T2 + watchdog/heal; R2 download |
+| `scripts/heal_t2_endpoint.py` | Ручной heal ghost workers / purge-queue |
+| `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
+| `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
+| `scripts/batch_seeds.py` | Best-of-N seeds → GLB |
 | `scripts/save_glb_from_status.py` | Скачать GLB по job id без base64 в терминале |
-| `scripts/view_model.html` | Локальный GLB viewer (python -m http.server) |
+| `scripts/view_model.html` | Локальный GLB viewer (`python -m http.server` + `?model=/file.glb`) |
+| `scripts/download_volume_glb.py` | S3 API volume→ПК (часто stall из РФ; предпочитать R2) |
 | `scripts/rerun_workflow.py` | Re-run failed GitHub Actions (нужен `GITHUB_TOKEN`) |
 | `scripts/cleanup_endpoints.py` | Audit/fix GPU list + idleTimeout |
-| `docker/trellis2_install.sh` | Deps для TRELLIS.2 внутри Docker build |
+| `scripts/fetch_ci_log.py` | Скачать лог GitHub Actions job (нужен `GITHUB_TOKEN`) |
 | `TRELLIS/` | Исходники TRELLIS v1 (`PYTHONPATH=/app/TRELLIS`) |
 
 ## Настройка RunPod
@@ -39,17 +44,33 @@
 |------|-----|--------|--------|
 | Primary CZ | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` |
 | Secondary RO | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` |
-| Quality T2 | `RUNPOD_ENDPOINT_ID_TRELLIS2` | *(создать)* | отдельный volume для `trellis2-weights` |
+| Quality T2 | `ynpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` |
 
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
-  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>`
+  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ad1bca9`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
-- **Network volume** (должен быть примонтирован к endpoint):
+- **Network volume** (mount `/runpod-volume` на Pod часто как `/workspace`):
   - `/runpod-volume/huggingface_cache` — кэш HF (`HF_HOME`)
   - `/runpod-volume/trellis-weights` — веса TRELLIS v1
-  - `/runpod-volume/trellis2-weights` — веса TRELLIS.2-4B (quality worker)
+  - `/runpod-volume/trellis2-weights` — веса TRELLIS.2-4B
+  - `/runpod-volume/dinov3-vitl16-pretrain-lvd1689m` — локальный DINOv3 (Meta, не gated HF)
+  - `/runpod-volume/outputs/` — GLB quality tier
+
+### TRELLIS.2 env (endpoint)
+
+| Key | Назначение |
+|-----|------------|
+| `HF_TOKEN` | HF для TRELLIS.2-4B / BiRefNet и т.п. |
+| `TRELLIS2_DINOV3_PATH` | локальная HF-папка DINOv3 |
+| `TRELLIS2_REMBG_MODEL` | default `ZhengPeng7/BiRefNet` |
+| `TRELLIS2_OUTPUT_DIR` | default `/runpod-volume/outputs` |
+| `R2_ENDPOINT_URL` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `R2_BUCKET` | `ai-mesh-models` |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 **Account API token** (S3 client creds, не `cfat_`) |
+| `R2_PUBLIC_BASE_URL` | `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev` |
+| `R2_REGION` | `auto` |
 
 ### Multi-endpoint (вариант B)
 
