@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-22** — clay-first generate (`texture_mode`) + T2-friendly text prompts
+Последнее обновление: **2026-07-22** — clay Release OK + Studio clay viewer shader
 
 ---
 
@@ -15,9 +15,9 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Коммит | clay `texture_mode` + studio_bridge (push 2026-07-22) |
-| Фокус | **Clay default** в T2 worker + Studio; polish/text2image под T2 |
-| POLY_LAB | clay UI + Text prompts — push вместе |
+| Коммит worker | `6d763fa` clay `texture_mode` + studio_bridge (Release OK) |
+| POLY_LAB | clay viewer shader + toggle (push 2026-07-22) |
+| Фокус | **Clay default** generate; viewer shader в Studio (не в GLB) |
 
 ---
 
@@ -30,9 +30,9 @@
 | `texture_mode: clay` (default) | remesh/simplify, **без** UV/bake | gray GLB |
 | `texture_mode: textured` | legacy `o_voxel.to_glb` bake | textured GLB |
 
-**Studio:** default clay; checkbox «Textured (legacy bake)»; Text→3D auto-polish + T2 suffix (no numerals/logos).
+**Studio:** default clay; checkbox «Textured (legacy bake)»; Text→3D auto-polish + T2 suffix (no numerals/logos). **Viewer:** clay shader в `POLY_LAB` (`viewerMaterials.ts`) — превью only, GLB download без изменений.
 
-**Release:** нужен новый Docker `Dockerfile.trellis2` + RunPod Release на `ynzpzjvcbfl656` (иначе live всё ещё старый textured-only handler).
+**Release:** ✅ `ghcr.io/satanexist/paradox_worker:trellis2-sha-6d763fa` на `ynzpzjvcbfl656`; smoke clay OK (~243k verts, no texture maps in GLB).
 
 ```powershell
 # smoke after Release:
@@ -41,10 +41,9 @@ python test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model
 
 **Следующие шаги:**
 
-1. Build/push trellis2 image + RunPod Release  
-2. Live smoke clay  
-3. Texture worker (TRELLIS paint) — later  
-4. Warm economics / workersMin
+1. Warm economics / workersMin (~45 с warm)
+2. Texture worker (TRELLIS paint) — later
+3. Library UX polish в Studio
 
 **Конспект:** `@memory-bank/systemPatterns.md` · **План:** `@memory-bank/platformRoadmap.md`
 
@@ -294,6 +293,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-20 | Pedrokita | warm 366s→40s; seeds 1/7/42; A/B v1 vs T2 Full; unit economics canvas; Studio defaults | Визуальный A/B; мост AI_MESH contract |
 | 2026-07-20 | Pedrokita | Уточнили scope: сейчас только image→3D; обсудили варианты text→3D | Выбрать MVP-путь text→image→T2 |
 | 2026-07-20 веч | Pedrokita | POLY_LAB live E2E (пистолет); proxy-glb CORS; watchdog в Studio; Meshy Workspace notes | Commit POLY_LAB; warm; library UX |
+| 2026-07-22 | Pedrokita | Clay Release `6d763fa` + smoke; POLY_LAB clay viewer shader | Warm economics; texture worker later |
 
 ---
 
@@ -301,7 +301,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
-| 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release Docker ещё нужен |
+| 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |
+| 2026-07-22 | POLY_LAB clay viewer shader (`viewerMaterials.ts`) — preview toggle, не в GLB | Warm economics |
 | 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |
 | 2026-07-20 | Text→3D: в текущем worker отсутствует; MVP-вариант = text→image→T2 | отдельный text2mesh endpoint — позже |
 | 2026-07-20 | Studio tiers: preview=`512`/1024, quality=`1024_cascade`/2048 | ETA cold/warm в UX |
