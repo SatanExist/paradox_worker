@@ -41,6 +41,8 @@ DEFAULT_BASE64_MAX_BYTES = 5 * 1024 * 1024
 
 VALID_PIPELINE_TYPES = frozenset({"512", "1024", "1024_cascade", "1536_cascade"})
 VALID_TEXTURE_SIZES = frozenset({1024, 2048, 4096})
+VALID_TEXTURE_MODES = frozenset({"clay", "textured"})
+DEFAULT_TEXTURE_MODE = "clay"
 
 
 def _runpod_billing_metadata(handler_ms: dict) -> dict:
@@ -79,14 +81,20 @@ def _generation_params(job_input: dict) -> dict:
     if pipeline_type not in VALID_PIPELINE_TYPES:
         pipeline_type = DEFAULT_PIPELINE_TYPE
 
-    texture_size = _coerce_int(
-        job_input.get("texture_size"),
-        DEFAULT_TEXTURE_SIZE,
-        min_val=1024,
-        max_val=4096,
-    )
-    if texture_size not in VALID_TEXTURE_SIZES:
-        texture_size = min(VALID_TEXTURE_SIZES, key=lambda x: abs(x - texture_size))
+    texture_mode = str(job_input.get("texture_mode") or DEFAULT_TEXTURE_MODE).strip().lower()
+    if texture_mode not in VALID_TEXTURE_MODES:
+        texture_mode = DEFAULT_TEXTURE_MODE
+
+    texture_size = DEFAULT_TEXTURE_SIZE
+    if texture_mode == "textured":
+        texture_size = _coerce_int(
+            job_input.get("texture_size"),
+            DEFAULT_TEXTURE_SIZE,
+            min_val=1024,
+            max_val=4096,
+        )
+        if texture_size not in VALID_TEXTURE_SIZES:
+            texture_size = min(VALID_TEXTURE_SIZES, key=lambda x: abs(x - texture_size))
 
     decimation_target = _coerce_int(
         job_input.get("decimation_target"),
@@ -101,6 +109,7 @@ def _generation_params(job_input: dict) -> dict:
 
     return {
         "pipeline_type": pipeline_type,
+        "texture_mode": texture_mode,
         "texture_size": texture_size,
         "decimation_target": decimation_target,
         "seed": seed,
@@ -187,10 +196,114 @@ def _download_image(image_url: str) -> str:
         return temp_img.name
 
 
-def _mesh_to_glb(mesh, gen_params: dict):
-    import o_voxel
+def _mesh_to_clay_glb(mesh, gen_params: dict):
+    """Remesh/simplify without UV unwrap or texture bake — solid gray clay GLB."""
+    import cumesh
+    import numpy as np
+    import trimesh
 
+    verbose = gen_params["verbose"]
+    remesh = gen_params["remesh"]
+    decimation_target = gen_params["decimation_target"]
+    aabb = torch.tensor(
+        [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+        dtype=torch.float32,
+        device=mesh.vertices.device if hasattr(mesh.vertices, "device") else "cuda",
+    )
+
+    vertices = mesh.vertices.cuda()
+    faces = mesh.faces.cuda()
+    cm = cumesh.CuMesh()
+    cm.init(vertices, faces)
+    cm.fill_holes(max_hole_perimeter=3e-2)
+    if verbose:
+        print(f"Clay after fill_holes: {cm.num_vertices} verts, {cm.num_faces} faces")
+
+    if remesh:
+        voxel_size = mesh.voxel_size
+        if isinstance(voxel_size, float):
+            voxel_size_t = torch.tensor(
+                [voxel_size, voxel_size, voxel_size],
+                dtype=torch.float32,
+                device=vertices.device,
+            )
+        elif not isinstance(voxel_size, torch.Tensor):
+            voxel_size_t = torch.tensor(
+                voxel_size, dtype=torch.float32, device=vertices.device
+            )
+        else:
+            voxel_size_t = voxel_size.to(device=vertices.device, dtype=torch.float32)
+        grid_size = ((aabb[1] - aabb[0]) / voxel_size_t).round().int()
+        verts_now, faces_now = cm.read()
+        bvh = cumesh.cuBVH(verts_now, faces_now)
+        remesh_band = 1.0
+        remesh_project = 0.0
+        center = aabb.mean(dim=0)
+        scale = (aabb[1] - aabb[0]).max().item()
+        resolution = grid_size.max().item()
+        cm.init(
+            *cumesh.remeshing.remesh_narrow_band_dc(
+                verts_now,
+                faces_now,
+                center=center,
+                scale=(resolution + 3 * remesh_band) / resolution * scale,
+                resolution=resolution,
+                band=remesh_band,
+                project_back=remesh_project,
+                verbose=verbose,
+                bvh=bvh,
+            )
+        )
+        if verbose:
+            print(f"Clay after remesh: {cm.num_vertices} verts, {cm.num_faces} faces")
+        cm.simplify(decimation_target, verbose=verbose)
+    else:
+        cm.simplify(decimation_target * 3, verbose=verbose)
+        cm.remove_duplicate_faces()
+        cm.repair_non_manifold_edges()
+        cm.remove_small_connected_components(1e-5)
+        cm.fill_holes(max_hole_perimeter=3e-2)
+        cm.simplify(decimation_target, verbose=verbose)
+        cm.remove_duplicate_faces()
+        cm.repair_non_manifold_edges()
+        cm.remove_small_connected_components(1e-5)
+        cm.fill_holes(max_hole_perimeter=3e-2)
+        cm.unify_face_orientations()
+
+    if verbose:
+        print(f"Clay final: {cm.num_vertices} verts, {cm.num_faces} faces")
+
+    out_vertices, out_faces = cm.read()
+    vertices_np = out_vertices.detach().cpu().numpy()
+    faces_np = out_faces.detach().cpu().numpy()
+    # Same Y/Z swap as o_voxel.to_glb for GLB orientation
+    vertices_np = vertices_np.copy()
+    vertices_np[:, 1], vertices_np[:, 2] = (
+        vertices_np[:, 2].copy(),
+        -vertices_np[:, 1].copy(),
+    )
+
+    material = trimesh.visual.material.PBRMaterial(
+        baseColorFactor=np.array([180, 180, 180, 255], dtype=np.uint8),
+        metallicFactor=0.0,
+        roughnessFactor=0.85,
+        doubleSided=False if remesh else True,
+    )
+    return trimesh.Trimesh(
+        vertices=vertices_np,
+        faces=faces_np,
+        process=False,
+        visual=trimesh.visual.TextureVisuals(material=material),
+    )
+
+
+def _mesh_to_glb(mesh, gen_params: dict):
     mesh.simplify(NVDIFFRAST_FACE_LIMIT)
+
+    if gen_params.get("texture_mode", DEFAULT_TEXTURE_MODE) == "clay":
+        return _mesh_to_clay_glb(mesh, gen_params)
+
+    import o_voxel
 
     return o_voxel.postprocess.to_glb(
         vertices=mesh.vertices,
@@ -318,6 +431,7 @@ def handler(job):
         print(
             "TRELLIS.2 params: "
             f"pipeline_type={gen_params['pipeline_type']}, "
+            f"texture_mode={gen_params['texture_mode']}, "
             f"texture_size={gen_params['texture_size']}, "
             f"decimation_target={gen_params['decimation_target']}, "
             f"seed={gen_params['seed']}"
@@ -344,7 +458,10 @@ def handler(job):
         glb_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
         glb_path = glb_temp.name
         glb_temp.close()
-        glb.export(glb_path, extension_webp=True)
+        if gen_params["texture_mode"] == "clay":
+            glb.export(glb_path)
+        else:
+            glb.export(glb_path, extension_webp=True)
         handler_ms["glb_export_ms"] = int((time.perf_counter() - t_glb) * 1000)
 
         t_deliver = time.perf_counter()

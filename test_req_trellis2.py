@@ -50,11 +50,13 @@ def build_input(args: argparse.Namespace) -> dict:
     job_input = {
         "image_url": args.image_url,
         "pipeline_type": args.pipeline_type,
-        "texture_size": args.texture_size,
+        "texture_mode": args.texture_mode,
         "seed": args.seed,
         "decimation_target": args.decimation_target,
         "return_base64": args.return_base64,
     }
+    if args.texture_mode == "textured":
+        job_input["texture_size"] = args.texture_size
     if args.no_preprocess:
         job_input["preprocess_image"] = False
     if args.no_remesh:
@@ -99,6 +101,12 @@ def main() -> int:
         choices=["512", "1024", "1024_cascade", "1536_cascade"],
     )
     parser.add_argument("--texture-size", type=int, default=2048, choices=[1024, 2048, 4096])
+    parser.add_argument(
+        "--texture-mode",
+        default="clay",
+        choices=["clay", "textured"],
+        help="clay = gray mesh without bake (default); textured = legacy UV bake",
+    )
     parser.add_argument("--decimation-target", type=int, default=500_000)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--save", help="Save GLB to this path on COMPLETED")

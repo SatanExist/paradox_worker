@@ -102,7 +102,7 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 
 Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOINT_ID`.
 
-**Экономика:** self-host COGS ~$0.01–0.12/job; SaaS API $0.30–1.20/job — core только self-host.
+**Экономика (измерено 2026-07-20):** T2 preview cold ~$0.13 / warm ~$0.03; T2 Full cold ~$0.16 / warm ~$0.08; v1 ~$0.04. API Meshy/Tripo ~$0.30–0.60 — core только self-host. Доля warm = ключ к blended COGS.
 
 **EU:** MIT/Apache модели; Hunyuan (EU license ban) — не в prod pipeline.
 
@@ -154,7 +154,7 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 | **Пользователь / Pedrokita** | заказчик, ops | смотрит GLB, крутит seed/params, UI RunPod (FlashBoot, max workers), ротация ключей | не Terminate'ит воркеры вручную в проде |
 | **Клиент сейчас** (`test_req_trellis2.py`) | отправка job + watchdog | submit `/run`, poll status/health, перед submit — DELETE EXITED ghosts, zombie → cancel/heal/retry, скачать по `model_url` | не считает 3D |
 | **Клиент позже** (AI_MESH Studio backend) | то же, что тест | встроить `runpod_queue_watchdog` + `RUNPOD_API_KEY` на сервере | не в браузере пользователя |
-| **GPU worker** (`worker_trellis2.py`) | инференс | картинка → BiRefNet → TRELLIS.2 → remesh/GLB → copy volume + upload R2 → ответ `model_url` / `model_path` | не чистит очередь RunPod, не Terminate себя |
+| **GPU worker** (`worker_trellis2.py`) | инференс | картинка → BiRefNet → TRELLIS.2 → remesh → **clay GLB** (default) или textured bake → volume + R2 | не чистит очередь RunPod |
 | **RunPod Serverless** | оркестратор | очередь, scale workers, billing | иногда врёт health (`ready` при EXITED) — zombie |
 | **Network volume** `paradox-trellis2` | кэш + бэкап GLB | веса, DINOv3, `outputs/*.glb` | не для скачивания с ПК (S3 stall) |
 | **Cloudflare R2** | публичная доставка | `model_url` для Studio/ПК | не считает 3D |

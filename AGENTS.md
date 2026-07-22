@@ -19,7 +19,8 @@ Quality tier (POC): **TRELLIS.2** — отдельный `Dockerfile.trellis2` /
 python test_req.py                    # тест v1 endpoint (async + fallback)
 python test_req_trellis2.py           # тест quality endpoint (TRELLIS.2)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
-python scripts/watch_endpoint.py      # мониторинг /health
+python scripts/studio_smoke.py --mode image --tier preview
+python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image

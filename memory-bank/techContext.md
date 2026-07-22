@@ -27,6 +27,9 @@
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/batch_seeds.py` | Best-of-N seeds → GLB |
+| `scripts/studio_api.py` | POC HTTP API: `POST/GET /api/jobs` для Studio |
+| `scripts/studio_smoke.py` | Smoke без HTTP (image/text → RunPod poll) |
+| `studio_bridge/` | Tier mapping + normalize status + text2image hook |
 | `scripts/save_glb_from_status.py` | Скачать GLB по job id без base64 в терминале |
 | `scripts/view_model.html` | Локальный GLB viewer (`python -m http.server` + `?model=/file.glb`) |
 | `scripts/download_volume_glb.py` | S3 API volume→ПК (часто stall из РФ; предпочитать R2) |
@@ -44,7 +47,7 @@
 |------|-----|--------|--------|
 | Primary CZ | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` |
 | Secondary RO | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` |
-| Quality T2 | `ynpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` |
+| Quality T2 | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` |
 
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
@@ -103,7 +106,8 @@
 | Поле | Default | Диапазон | Описание |
 |------|---------|----------|----------|
 | `simplify` | `0.98` | 0.90–0.999 | Mesh decimation (выше = детальнее) |
-| `texture_size` | `2048` | 512 / 1024 / 2048 | Texture bake resolution |
+| `texture_mode` | `clay` | `clay` / `textured` | **Default clay** = gray mesh, skip UV/bake; `textured` = legacy bake |
+| `texture_size` | `2048` | 1024 / 2048 / 4096 | Only for `texture_mode=textured` |
 | `seed` | `1` | 0 … 2³¹−1 | TRELLIS random seed |
 | `verbose` | `true` | bool | GLB export logs |
 
@@ -112,6 +116,117 @@
 **Статус** (`GET https://api.runpod.ai/v2/{ENDPOINT_ID}/status/{id}`).
 
 Для отладки можно использовать `/runsync`, но в проде лучше `/run` + polling/webhook.
+
+### AI_MESH Studio — tier mapping (2026-07-20)
+
+| UI tier | Endpoint | `input` ключи | Delivery | ETA UX |
+|---------|----------|---------------|----------|--------|
+| **preview** | T2 `ynzpzjvcbfl656` | `pipeline_type: "512"`, `texture_mode: "clay"`, `return_base64: false` | R2 `model_url` | cold ~6 мин / warm ~40 с |
+| **quality** | T2 | `pipeline_type: "1024_cascade"`, `texture_mode: "clay"` | R2 `model_url` | cold ~8 мин / warm ~4 мин |
+| legacy textured | T2 | + `texture_mode: "textured"`, `texture_size` 1024/2048 | R2 | bake UV (opt-in) |
+| legacy fast | v1 RO `88djlbwtw4sjlv` | `simplify`, `texture_size`, `seed` | base64 (мелкие GLB) | ~2 мин |
+
+**Studio backend обязан:**
+1. `POST /run` → poll `/status/{id}` до terminal
+2. На T2 читать `output.model_url`, не `model_base64`
+3. Встроить `runpod_queue_watchdog.run_with_zombie_retries` (ghost heal)
+4. ETA: если endpoint cold → показывать cold; если недавний job на том же endpoint → warm
+5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
+
+**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `return_base64`; `texture_size` только при `textured`.
+
+**Clay release checklist:**
+1. Push `worker_trellis2.py` → CI `build-trellis2.yml` (или `docker build -f Dockerfile.trellis2`)
+2. New RunPod Release on `ynzpzjvcbfl656` with new image tag
+3. Smoke: `python test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model-clay.glb`
+
+### Studio Bridge API (POC, 2026-07-20)
+
+Локально: `python scripts/studio_api.py` → `http://127.0.0.1:8787` (Swagger `/docs`).  
+Код: `studio_bridge/`, smoke: `scripts/studio_smoke.py`.
+
+**Base URL (dev):** `http://127.0.0.1:8787`
+
+#### `GET /health`
+```json
+{ "status": "ok" }
+```
+
+#### `POST /api/jobs`
+Создать async job. RunPod ключ **только на сервере**, не в браузере.
+
+Request:
+```json
+{
+  "mode": "image",
+  "tier": "preview",
+  "imageUrl": "https://example.com/photo.png",
+  "seed": 1
+}
+```
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `mode` | `"image"` \| `"text"` | нет (default `image`) | `text` — позже, нужен `OPENAI_API_KEY` на бэке |
+| `tier` | `"preview"` \| `"quality"` | нет (default `preview`) | preview=512/tex1024; quality=1024_cascade/tex2048 |
+| `imageUrl` | string | да для `mode=image` | Публичный https URL картинки |
+| `prompt` | string | да для `mode=text` | Текстовый prompt |
+| `seed` | int | нет (default 1) | Seed генерации |
+
+Response `200`:
+```json
+{
+  "jobId": "bb74f5b8-e081-4e04-b8e4-b166a8d9fb95-e1",
+  "mode": "image",
+  "tier": "preview",
+  "endpointId": "ynzpzjvcbfl656",
+  "imageUrl": "https://...",
+  "prompt": null,
+  "etaSecondsCold": 360,
+  "etaSecondsWarm": 45,
+  "status": "queued"
+}
+```
+
+Ошибки: `400` (нет imageUrl/prompt), `501` (text mode не настроен), `500`.
+
+#### `GET /api/jobs/{jobId}?tier=preview`
+Poll статуса. **Параметр `tier` обязателен совпадать с тем, что был при POST.**
+
+Response:
+```json
+{
+  "jobId": "...",
+  "status": "queued | running | ready | failed",
+  "runpodStatus": "IN_QUEUE | IN_PROGRESS | COMPLETED | ...",
+  "modelUrl": "https://pub-....r2.dev/trellis2/{jobId}.glb",
+  "delivery": "r2",
+  "error": null,
+  "etaSecondsCold": 360,
+  "etaSecondsWarm": 45,
+  "isWarm": false,
+  "handlerMs": { "model_load_ms": 0, "inference_ms": 61972, ... },
+  "delayTimeMs": 152142,
+  "executionTimeMs": 245657
+}
+```
+
+**Маппинг для UI:**
+
+| `status` | Показать пользователю |
+|----------|------------------------|
+| `queued` | «В очереди…» |
+| `running` | «Генерируем 3D…» |
+| `ready` | Открыть `modelUrl` в viewer |
+| `failed` | Ошибка + retry |
+
+**ETA:** до первого poll показывать `etaSecondsCold`; если недавно был job на том же tier — `etaSecondsWarm`. После `ready`: `isWarm === true` → warm был фактически.
+
+**Poll interval:** 3–5 с, timeout UI ~10–15 мин (preview cold до ~6 мин).
+
+**Viewer:** GLB по `modelUrl` (Three.js / model-viewer). Не ждать base64.
+
+**Фронт не вызывает RunPod напрямую** — только эти 2 ручки (или их копия в Next.js API routes).
 
 **Запрос (sync, debug)** (`POST https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync`):
 

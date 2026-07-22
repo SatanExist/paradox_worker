@@ -2,7 +2,7 @@
 
 > **Назначение:** стратегический план платформы (4 фичи на сайте, модели, фазы, экономика).
 > **Связанные файлы:** `projectbrief.md`, `systemPatterns.md`, `activeContext.md`.
-> Последнее обновление: **2026-07-13**
+> Последнее обновление: **2026-07-20** (фазы 0/1 синхронизированы с фактом)
 
 ---
 
@@ -12,7 +12,7 @@
 
 | # | Инструмент на сайте | Что делает | Статус |
 |---|---------------------|------------|--------|
-| 1 | **3D генерация** | Image/text → textured mesh (GLB) | 🟡 MVP (`paradox_worker`, TRELLIS v1) |
+| 1 | **3D генерация** | **Image → textured mesh (GLB)**; text→3D как отдельный путь | 🟡 MVP (`paradox_worker`, TRELLIS v1/T2) |
 | 2 | **ИИ ретопология** | High-poly → game-ready low-poly / quads | ⚪ не начато |
 | 3 | **ИИ текстурирование** | Mesh + prompt/image → новые PBR-текстуры | ⚪ не начато |
 | 4 | **ИИ анимирование** | Auto-rig + preset motion → animated GLB/FBX | ⚪ не начато |
@@ -87,6 +87,18 @@
 - `simplify=0.98`, `texture_size=2048`
 - Multi-image input (`image_urls[]`)
 - Best-of-N seeds
+
+### Text → 3D: варианты реализации (2026-07-20)
+
+1. **MVP bridge (рекомендовано):** text → image (LLM image model) → текущий T2 image→3D.
+   - Плюсы: почти без изменений worker, быстрый запуск в Studio.
+   - Минусы: качество ограничено этапом text→image.
+2. **Отдельный text2mesh endpoint:** прямой text→3D worker.
+   - Плюсы: нативный text→3D.
+   - Минусы: новый стек, выше COGS, больше R&D/лицензионных рисков.
+3. **Hybrid:** preview через bridge, quality через text2mesh позже.
+
+**Решение на сейчас:** MVP делать через вариант 1; вариант 2 — после стабилизации Studio image→3D флоу.
 
 ---
 
@@ -212,6 +224,20 @@ Tripo, Meshy, Rodin, CSM, Luma — свои модели; API **$0.30–1.20/job
 | Texture | TRELLIS paint | $0.05–0.10 |
 | Rig | UniRig | $0.05–0.08 |
 
+**Измерено 2026-07-20 (4090, paradox_worker T2 endpoint):**
+
+| Tier | Cold | Warm | Примечание |
+|------|------|------|------------|
+| T2 preview `512` | ~$0.13 | ~$0.03 | wall 366s / 40s |
+| T2 Full `1024_cascade` | ~$0.16 | ~$0.08 | warm = оценка (exec − model_load) |
+| v1 RO | ~$0.04 | ~$0.01 | legacy fast |
+
+Blended COGS Full при 40% warm ≈ **$0.13**; при 70% warm ≈ **$0.10**. Операционно: очередь + не гасить GPU в пик.
+
+**Конкуренты (цена для юзера, не их COGS):** Meshy Pro ~$0.40/job (20 cr), Meshy API ~$0.60, fal/Tripo ~$0.30–0.50.
+
+**Вердикт:** monetization viable на self-host; не перепродавать API; не позиционировать как «дешёвый Meshy 1:1» — ниша + preview/quality + честный ETA.
+
 **Вывод:** AI_MESH monetization viable только на **своих workers**. API — POC/hero-tier only.
 
 ### Пример pricing для пользователя (self-host)
@@ -227,31 +253,37 @@ Tripo, Meshy, Rodin, CSM, Luma — свои модели; API **$0.30–1.20/job
 
 ## Фазы разработки
 
-### Фаза 0 — сейчас (1–2 нед)
+> Статус фаз обновлён **2026-07-20** (факт vs план 07-13).
 
-- [ ] Стабильный **generate** (TRELLIS v1 → COMPLETED стабильно)
-- [ ] RunPod: убрать 5090/48GB, `idleTimeout` 5–10s, immutable tags
-- [ ] Тюнинг: simplify, texture_size, multi-image, seeds
-- [ ] `scripts/save_glb_from_status.py`, billing в ответе
+### Фаза 0 — foundation worker — ✅ essentially done
 
-**На сайте:** только генерация (когда будет frontend).
+- [x] Стабильный generate (v1 RO COMPLETED; CZ stale — не blocker)
+- [x] RunPod GPU list / idleTimeout / immutable tags / FlashBoot off T2
+- [x] T2 quality endpoint + R2 `model_url` + watchdog
+- [x] Замеры cold/warm, seeds, A/B T2 vs v1
+- [ ] SF3D fast tier — **отложено** (preview = T2 `512`)
 
-### Фаза 1 — MVP платформы (1–2 мес)
+### Фаза 1 — MVP платформы — 🟡 in progress (~70%)
 
-- [ ] Backend: jobs, storage GLB (S3/R2), auth, credits
-- [ ] Frontend: viewer + upload + job status
-- [ ] POC **TRELLIS.2** (CUDA 12.4 Docker)
-- [ ] Optional **SF3D** fast endpoint
+- [x] Frontend PolyLab (`POLY_LAB`): landing + `/generate` + viewer
+- [x] Live image→3D: R2 upload → T2 → proxy-glb; zombie watchdog в Next
+- [x] Persist jobs / **asset library** (JSON `.data/jobs.json` MVP)
+- [ ] Auth + credits/billing
+- [x] Text→3D hybrid (text→image→T2) + polish
+- [x] Preview/Quality в UI + ETA/cost CTA
+- [x] **Clay-first generate** (`texture_mode: clay|textured` в worker; Studio default clay)
+- [ ] Docker/Release clay worker на `ynzpzjvcbfl656`
 
-**На сайте:** п.1 «3D генерация» (quality + preview).
+**На сайте сейчас:** п.1 «3D генерация» = **clay mesh** (как Meshy); textured bake = legacy opt-in.
 
-### Фаза 2 — post-process (2–3 мес)
+### Фаза 2 — post-process (2–3 мес) — ⚪ не начато
 
 - [ ] Worker **retopo** (FastMesh + PartUV)
-- [ ] Worker **retexture** (TRELLIS paint)
+- [ ] Worker **retexture / PBR** (TRELLIS paint) — **отдельная фича после clay generate**
 - [ ] Pipeline: one-click «оптимизировать» / «перетекстурировать» из результата gen
 
-**На сайте:** п.1 + п.2 + п.3.
+**Продукт:** Generate (clay) → [опц.] Texture (PBR) → [опц.] Retopo → Export.  
+Не обещать photoreal мелкий текст на single-view bake.
 
 ### Фаза 3 — animation (3–4 мес)
 

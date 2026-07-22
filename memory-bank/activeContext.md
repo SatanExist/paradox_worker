@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-17** (full quality R2 OK + zombie heal + quality notes)
+Последнее обновление: **2026-07-22** — clay-first generate (`texture_mode`) + T2-friendly text prompts
 
 ---
 
@@ -13,40 +13,40 @@
 | Поле | Значение |
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
-| ПК | Windows (`D:\AI_HUB\paradox_worker`) |
-| Ветка | `feat/trellis2-poc` |
-| Коммит | `ad1bca9` — GLB delivery volume/R2; образ `trellis2-sha-ad1bca9` (watchdog ещё локально) |
+| ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
+| Ветка worker | `feat/trellis2-poc` |
+| Коммит | clay `texture_mode` + studio_bridge (push 2026-07-22) |
+| Фокус | **Clay default** в T2 worker + Studio; polish/text2image под T2 |
+| POLY_LAB | clay UI + Text prompts — push вместе |
 
 ---
 
 ## Текущий фокус
 
-**Фаза 1 (quality) — TRELLIS.2 + R2 + watchdog OK:**
-- Endpoint `ynpzjvcbfl656` (EU-RO-1), volume `paradox-trellis2` (`netu72a8j2`)
-- Образ: `ghcr.io/satanexist/paradox_worker:trellis2-sha-ad1bca9`
-- R2 bucket `ai-mesh-models`, pub: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev`
-- Smoke `512`/1024 → `model-v2-r2.glb` (~3.5 MB), job `5717f49f-…-e2`
-- **Full** `1024_cascade`/2048 → `model-v2-full.glb` (~16.7 MB), job `08f458cc-9412-45b6-88fc-ccab2c3eab07-e2`, ~$0.13, `delivery: r2`
-- Zombie: ghost `EXITED` блокировал очередь → `heal_t2_endpoint.py --purge` + `runpod_queue_watchdog` (DELETE ghosts + cancel/retry)
-- Визуально: лицо/шипы ок; **невидимая сторона** слабее (нормально для single-image)
+**Generate = clay (серый меш).** PBR texture = отдельная фича (фаза 2), не bake в generate.
 
-**Качество / «допы» (не путать):**
-- **BiRefNet** (`preprocess_image`) = вырез фона, **не** «додумать зад»
-- Зад додумывает сама TRELLIS.2; рычаги POC: `seed` / best-of-N, ракурс фото, pipeline/texture
-- Отдельного плагина «красивый зад» нет; multi-view — позже (не POC)
+| Input | Worker | Output |
+|-------|--------|--------|
+| `texture_mode: clay` (default) | remesh/simplify, **без** UV/bake | gray GLB |
+| `texture_mode: textured` | legacy `o_voxel.to_glb` bake | textured GLB |
 
-**Фаза 0 (v1):** RO OK; CZ stale — не блокер T2.
+**Studio:** default clay; checkbox «Textured (legacy bake)»; Text→3D auto-polish + T2 suffix (no numerals/logos).
+
+**Release:** нужен новый Docker `Dockerfile.trellis2` + RunPod Release на `ynzpzjvcbfl656` (иначе live всё ещё старый textured-only handler).
+
+```powershell
+# smoke after Release:
+python test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model-clay.glb
+```
 
 **Следующие шаги:**
-1. Endpoint ops: FlashBoot **off** ✅; `workersMax=2` ✅; `workersStandby` всё ещё **2** (если в UI есть — поставь 0)
-2. **Ротация R2 API token** (светился в чате) + обновить env
-3. Batch seeds на сундуке (сравнить зад) и/или A/B v1 vs T2
-4. Commit+push: watchdog/heal + memory-bank (когда попросит Pedrokita)
-5. В AI_MESH Studio: встроить `runpod_queue_watchdog` при создании job
 
-**Конспект «кто что делает»:** `@memory-bank/systemPatterns.md` → раздел «Конспект T2 POC».
+1. Build/push trellis2 image + RunPod Release  
+2. Live smoke clay  
+3. Texture worker (TRELLIS paint) — later  
+4. Warm economics / workersMin
 
-**Полный план:** `@memory-bank/platformRoadmap.md`
+**Конспект:** `@memory-bank/systemPatterns.md` · **План:** `@memory-bank/platformRoadmap.md`
 
 ---
 
@@ -56,9 +56,9 @@
 |------|-----|-----|--------|--------|--------|
 | Primary (CZ) | mushy_fuchsia_shark | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` | v1, образ **stale** |
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
-| Quality (T2) | paradox-trellis2_endpoint | `ynpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** (`ad1bca9`) |
+| Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** (`ad1bca9`) |
 
-**`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynpzjvcbfl656`  
+**`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
 
 **Env на T2 endpoint (обязательные для delivery):**
@@ -69,7 +69,7 @@
 **Volume T2 содержит:** `trellis2-weights/`, `dinov3-vitl16-pretrain-lvd1689m/`, `outputs/`, `huggingface_cache/`
 
 **CI v2** (`build-trellis2.yml`): `:trellis2-latest`, `:trellis2-sha-<short>`.  
-**RunPod Flash** (no-Docker product) — не используем. **FlashBoot** на T2 — **оставляем on**; zombie лечим watchdog + `workersMax>=2`.
+**RunPod Flash** (no-Docker product) — не используем. **FlashBoot** на T2 — **off** (2026-07-20); zombie лечим watchdog + `workersMax=2`.
 
 **Заметка сеть:** прямой GET с ПК на RunPod volume S3 (`s3api-eu-ro-1`) у нас **stall** (~5–9 KB) — для скачивания использовать `model_url` (R2), не volume S3.
 
@@ -170,7 +170,7 @@ Health: `ready/idle>=1`, `inProgress=0`, job вечно `IN_QUEUE`. REST: worker
 - [x] Full `1024_cascade`/2048 COMPLETED + локальный `model-v2-full.glb` через R2
 - [x] R2 `model_url` на T2 endpoint
 - [x] Zombie watchdog + heal scripts (локально, ждать commit)
-- [ ] FlashBoot off / workersMax>=2 на T2
+- [x] FlashBoot off / workersMax>=2 на T2
 - [ ] Ротация R2 token
 - [ ] A/B: сундук v1 vs TRELLIS.2; batch seeds для зада
 - [ ] Commit+push watchdog + memory-bank
@@ -248,7 +248,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | **DINOv3 gated HF (RU)** | ✅ обход: Meta portal → `.pth` → HF-папка на volume |
 | **RMBG-2.0 gated + CC BY-NC** | ✅ rembg → `ZhengPeng7/BiRefNet` (+ `einops`) |
 | Huge GLB base64 → пустой `output` | ✅ delivery volume/R2 (`ad1bca9`) |
-| Zombie EXITED ghost / FlashBoot | ✅ клиентский heal; ops FlashBoot off ещё TODO |
+| Zombie EXITED ghost / FlashBoot | ✅ heal + FlashBoot off + max=2; ghosts всё ещё бывают → watchdog |
 | Качество mesh v1 (creatures) | 🔄 A/B vs TRELLIS.2 |
 | CZ v1 stale image | ⚠️ New Release |
 | EU-CZ-1 capacity | ⚠️ `throttled` — терпимо |
@@ -291,6 +291,9 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-15/16 | Pedrokita | T2 endpoint+volume; DINOv3 Meta; BiRefNet; volume GLB delivery; full 1024_cascade OK | Download GLB; R2; A/B vs v1 |
 | 2026-07-16 | Pedrokita | R2 bucket+env на T2; smoke `delivery:r2` + local download; volume S3 с ПК не тянет | Full quality + rotate R2 token; A/B |
 | 2026-07-17 | Pedrokita | Zombie watchdog; heal ghost; full `08f458cc` R2; rembg≠зад notes | FlashBoot off; rotate R2; seeds; commit |
+| 2026-07-20 | Pedrokita | warm 366s→40s; seeds 1/7/42; A/B v1 vs T2 Full; unit economics canvas; Studio defaults | Визуальный A/B; мост AI_MESH contract |
+| 2026-07-20 | Pedrokita | Уточнили scope: сейчас только image→3D; обсудили варианты text→3D | Выбрать MVP-путь text→image→T2 |
+| 2026-07-20 веч | Pedrokita | POLY_LAB live E2E (пистолет); proxy-glb CORS; watchdog в Studio; Meshy Workspace notes | Commit POLY_LAB; warm; library UX |
 
 ---
 
@@ -298,6 +301,12 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release Docker ещё нужен |
+| 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |
+| 2026-07-20 | Text→3D: в текущем worker отсутствует; MVP-вариант = text→image→T2 | отдельный text2mesh endpoint — позже |
+| 2026-07-20 | Studio tiers: preview=`512`/1024, quality=`1024_cascade`/2048 | ETA cold/warm в UX |
+| 2026-07-20 веч | POLY_LAB live + zombie watchdog (client); Release не нужен; wall≠cold | meshyWorkspace.md |
+| 2026-07-20 | Warm T2 `512`: load 0 → wall ~40 с (vs cold ~6 мин) | Studio ETA: cold vs warm честно |
 | 2026-07-17 | rembg (BiRefNet) ≠ додумывание зада; зад = модель + seed/multi-view later | UX: не ждать «плагин спины» в POC |
 | 2026-07-17 | Watchdog: proactive DELETE EXITED ghosts + heal после zombie | клиент/Studio, не GPU handler |
 | 2026-07-17 | Zombie queue watchdog (idle/ready + IN_QUEUE) | `runpod_queue_watchdog` + heal script |
@@ -330,7 +339,14 @@ $env:PYTHONUTF8=1
 .\.venv\Scripts\python.exe test_req.py
 ```
 
-**TRELLIS.2 (full quality + R2):**
+**TRELLIS.2 (clay / textured):**
+```powershell
+cd D:\AI_HUB\paradox_worker
+$env:PYTHONUTF8=1
+.\.venv\Scripts\python.exe test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model-clay.glb
+# legacy bake:
+.\.venv\Scripts\python.exe test_req_trellis2.py --pipeline-type 512 --texture-mode textured --texture-size 1024 --save model-tex.glb
+```
 ```powershell
 .\.venv\Scripts\python.exe test_req_trellis2.py --pipeline-type 1024_cascade --texture-size 2048 --save model-v2-full.glb
 # ожидание: delivery=r2, model_url=https://pub-….r2.dev/trellis2/<job>.glb
