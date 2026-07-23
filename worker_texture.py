@@ -165,38 +165,56 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _upload_r2(local_path: str, object_key: str) -> str | None:
+def _upload_r2(local_path: str, object_key: str) -> tuple[str | None, str | None]:
+    """Upload to R2. Returns (public_url, skip_or_error_reason)."""
     endpoint = os.environ.get("R2_ENDPOINT_URL", "").strip()
     bucket = os.environ.get("R2_BUCKET", "").strip()
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
     public_base = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if not all([endpoint, bucket, access_key, secret_key, public_base]):
-        return None
+    required = {
+        "R2_ENDPOINT_URL": endpoint,
+        "R2_BUCKET": bucket,
+        "R2_ACCESS_KEY_ID": access_key,
+        "R2_SECRET_ACCESS_KEY": secret_key,
+        "R2_PUBLIC_BASE_URL": public_base,
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        reason = f"missing env: {', '.join(missing)}"
+        print(f"R2 skip: {reason}")
+        return None, reason
+
     try:
         import boto3
         from botocore.config import Config
     except ImportError:
-        print("boto3 not installed; skip R2 upload")
-        return None
+        reason = "boto3 not installed"
+        print(f"R2 skip: {reason}")
+        return None, reason
 
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=os.environ.get("R2_REGION", "auto"),
-        config=Config(signature_version="s3v4"),
-    )
-    client.upload_file(
-        local_path,
-        bucket,
-        object_key,
-        ExtraArgs={"ContentType": "model/gltf-binary"},
-    )
-    url = f"{public_base}/{object_key}"
-    print(f"Uploaded textured GLB to R2: {url}")
-    return url
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=os.environ.get("R2_REGION", "auto"),
+            config=Config(signature_version="s3v4"),
+        )
+        client.upload_file(
+            local_path,
+            bucket,
+            object_key,
+            ExtraArgs={"ContentType": "model/gltf-binary"},
+        )
+        url = f"{public_base}/{object_key}"
+        print(f"Uploaded textured GLB to R2: {url}")
+        return url, None
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"R2 upload failed: {reason}")
+        return None, reason
 
 
 def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dict:
@@ -209,7 +227,7 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
     size = dest.stat().st_size
     sha = _sha256_file(str(dest))
     object_key = f"trellis2-texture/{safe_id}.glb"
-    model_url = _upload_r2(str(dest), object_key)
+    model_url, r2_error = _upload_r2(str(dest), object_key)
 
     delivery = {
         "model_path": str(dest),
@@ -219,6 +237,8 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
         "delivery": "r2" if model_url else "volume",
         "worker_variant": "trellis2-texture",
     }
+    if r2_error:
+        delivery["r2_error"] = r2_error
 
     max_b64 = int(os.environ.get("TRELLIS2_BASE64_MAX_BYTES", str(DEFAULT_BASE64_MAX_BYTES)))
     include_b64 = return_base64 or (model_url is None and size <= max_b64)
@@ -263,6 +283,19 @@ def handler(job):
             f"resolution={params['resolution']}, "
             f"texture_size={params['texture_size']}, "
             f"seed={params['seed']}"
+        )
+        print(
+            "R2 env present: "
+            + ", ".join(
+                f"{key}={bool(os.environ.get(key, '').strip())}"
+                for key in (
+                    "R2_ENDPOINT_URL",
+                    "R2_BUCKET",
+                    "R2_ACCESS_KEY_ID",
+                    "R2_SECRET_ACCESS_KEY",
+                    "R2_PUBLIC_BASE_URL",
+                )
+            )
         )
 
         mesh_path = _download(str(mesh_url), ".glb")

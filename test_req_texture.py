@@ -77,10 +77,30 @@ def save_output(final: dict, save_path: Path) -> None:
         print(f"Saved from model_base64 -> {save_path.resolve()} bytes={save_path.stat().st_size}")
         return
 
+    model_path = output.get("model_path")
+    if isinstance(model_path, str) and model_path.startswith("/runpod-volume/"):
+        key = model_path[len("/runpod-volume/") :]
+        print(f"No model_url (r2_error={output.get('r2_error')!r}); trying volume S3 key={key}")
+        import subprocess
+        import sys
+
+        code = subprocess.call(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "scripts" / "download_volume_glb.py"),
+                "--key",
+                key,
+                "--out",
+                str(save_path),
+            ]
+        )
+        if code == 0 and save_path.is_file():
+            return
+
     raise RuntimeError(
         "No downloadable artifact in output. "
         f"model_path={output.get('model_path')!r} model_url={model_url!r} "
-        f"hint={output.get('base64_omitted')!r}."
+        f"r2_error={output.get('r2_error')!r} hint={output.get('base64_omitted')!r}."
     )
 
 
