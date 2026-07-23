@@ -19,7 +19,9 @@
 | 4b | Image Enhancement toggle (2D preprocess) | ✅ POLY_LAB (`imageEnhance.ts`) |
 | 5 | Library UX | ✅ POLY_LAB (`JobHistory` filters) |
 | 6 | Auth + credits mock | ✅ POLY_LAB (Guest wallet, 402 on low balance) |
-| next | Clerk/Stripe or Texture worker | ⬜ |
+| T0 | Texture pass UI (legacy bake from parent image) | ✅ POLY_LAB |
+| T1 | Mesh→PBR worker | ⬜ следующий |
+| next | Clerk/Stripe | ⬜ |
 
 **Seed:** не «лучшее зерно мира». Best-of-N = N стохастических прогонов **одного** T2 на одном входе. Между моделями seed не переносится. UX проще: «Ещё вариант».
 
@@ -303,13 +305,14 @@ Blended COGS Full при 40% warm ≈ **$0.13**; при 70% warm ≈ **$0.10**. 
 
 ---
 
-### Фаза 2 — post-process (2–3 мес) — ⚪ не начато
+### Фаза 2 — post-process (2–3 мес) — 🟡 started (Texture v0)
 
 - [ ] Worker **retopo** (FastMesh + PartUV)
-- [ ] Worker **retexture / PBR** (TRELLIS paint) — **отдельная фича после clay generate**
+- [x] Studio **texture pass v0** — parent clay → legacy `texture_mode=textured` (не mesh paint)
+- [ ] Worker **retexture / PBR** (TRELLIS paint) — **v1**
 - [ ] Pipeline: one-click «оптимизировать» / «перетекстурировать» из результата gen
 
-**Продукт:** Generate (clay) → [опц.] Texture (PBR) → [опц.] Retopo → Export.  
+**Продукт:** Generate (clay) → [опц.] Texture (v0 bake / v1 paint) → [опц.] Retopo → Export.  
 Не обещать photoreal мелкий текст на single-view bake.
 
 ### Фаза 3 — animation (3–4 мес)

@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-23** — Auth + credits mock (#6)
+Последнее обновление: **2026-07-23** — Texture job v0 (Studio)
 
 ---
 
@@ -16,39 +16,34 @@
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
 | T2 image | `trellis2-sha-6d763fa` |
-| Фокус | Credits mock done; фаза 1 Studio почти закрыта |
+| Фокус | **Texture v0** в Studio (legacy bake); v1 mesh paint — next |
 
 ---
 
 ## Текущий фокус
 
-**Generate = clay.** Качество снаружи T2: картинка + industry recipes + **upload hints**.
+**Generate = clay.** Texture = отдельный шаг.
 
-| Слой | Рычаги |
-|------|--------|
-| Text→3D | `polishExtra` + `t2iExtra` по отрасли |
-| Image→3D | hints + **Image Enhancement** + rembg + tier |
-| Worker | `decimation_target`, `remesh`; seed = воспроизводимость |
-| Позже | library UX, multi-view, texture worker |
+| Версия | Что |
+|--------|-----|
+| **v0 (сейчас)** | Studio: clay → «Наложить текстуру» → `texture_mode=textured` с тем же `image_url` (legacy bake, 6 cr) |
+| **v1 (план)** | Mesh paint / TRELLIS paint на clay GLB или voxel с volume — отдельный worker |
 
-**Seed:** только same model + same image. Best-of-N отложен. UX: «Ещё вариант» / seed=1.
+**Seed:** only same model+image. Best-of-N отложен.
 
-**Release:** ✅ `trellis2-sha-6d763fa` на `ynzpzjvcbfl656`.
+**Release T2:** ✅ `trellis2-sha-6d763fa` (clay+textured modes уже в worker).
 
 ---
 
-## Очередь спринта (по порядку)
+## Очередь спринта
 
 | # | Задача | Репо | Статус |
 |---|--------|------|--------|
-| 1 | **Industry Quality Recipes** | POLY_LAB | ✅ |
-| 2 | Warm timing script + ETA 35s (повторный ops-прогон — later) | worker + Studio | ✅ код; ops later |
-| 3 | Best-of-N seeds UI | POLY_LAB | ⏸ отложено (см. seed выше) |
-| 4 | Upload quality hints | POLY_LAB | ✅ |
-| 4b | Image Enhancement (Meshy-like) | POLY_LAB | ✅ |
-| 5 | Library UX | POLY_LAB | ✅ |
-| 6 | Auth + credits mock | POLY_LAB | ✅ |
-| next | Clerk/Stripe **или** Texture worker (фаза 2) | — | ⬜ |
+| 1–6 | Recipes → credits mock | POLY_LAB | ✅ |
+| T0 | Texture job UI/API (legacy bake) | POLY_LAB | ✅ |
+| T1 | Mesh→PBR worker | paradox_worker | ⬜ **следующий большой** |
+| — | Clerk/Stripe | POLY_LAB | ⬜ |
+| — | Warm ops `workersMin` | RunPod | ⬜ |
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
 
@@ -312,6 +307,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Image Enhancement toggle (`imageEnhance.ts`) — 2D preprocess | Library UX |
 | 2026-07-23 | Pedrokita | Library UX: All/Clay/Tex/Фото/Текст filters + badges | Auth + credits mock |
 | 2026-07-23 | Pedrokita | Credits mock + demo auth; job charges 4/12 cr | Clerk or Texture фаза 2 |
+| 2026-07-23 | Pedrokita | Texture v0: Studio action=texture → legacy bake | Mesh paint worker (T1) |
 
 ---
 
