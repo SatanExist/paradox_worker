@@ -148,9 +148,12 @@ def load_model():
 
 
 def _download(url: str, suffix: str) -> str:
+    # R2 (and some CDNs) return 403 for urllib's default User-Agent.
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
-    urllib.request.urlretrieve(url, path)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=180) as response, open(path, "wb") as out:
+        shutil.copyfileobj(response, out)
     return path
 
 
