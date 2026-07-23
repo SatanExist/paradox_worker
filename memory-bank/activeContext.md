@@ -43,8 +43,8 @@
 | 1–6 | Recipes → credits mock | POLY_LAB | ✅ |
 | T0 | Texture job UI/API (legacy bake) | POLY_LAB | ✅ |
 | T1a | Scaffold mesh-paint worker + contract | paradox_worker | ✅ |
-| T1b | Build image + RunPod endpoint + smoke | paradox_worker | ⬜ **следующий** |
-| T1c | Studio switch: v0 → v1 when endpoint set | POLY_LAB | ⬜ |
+| T1b | Build image + **отдельный** RunPod texture endpoint + smoke | paradox_worker | ⬜ **следующий** |
+| T1c | Studio: `task_type=texture` → `RUNPOD_ENDPOINT_ID_TEXTURE` (else v0 bake) | POLY_LAB | ⬜ |
 | — | Clerk/Stripe | POLY_LAB | ⬜ |
 | — | Warm ops `workersMin` | RunPod | ⬜ |
 
@@ -320,6 +320,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-07-23 | **Texture v1 = отдельный endpoint/образ** (не мультитаск на T2) | Задел: generate / texture / retopo / rig — разные Release; Studio роутит по `task_type`. v0 bake на T2 остаётся fallback |
 | 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |
 | 2026-07-22 | Industry Quality Recipes в Studio (presets → polish/T2I/decimation) | Warm economics |
 | 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |

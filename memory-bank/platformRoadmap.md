@@ -309,7 +309,7 @@ Blended COGS Full при 40% warm ≈ **$0.13**; при 70% warm ≈ **$0.10**. 
 
 - [ ] Worker **retopo** (FastMesh + PartUV)
 - [x] Studio **texture pass v0** — parent clay → legacy `texture_mode=textured` (не mesh paint)
-- [ ] Worker **retexture / PBR** (TRELLIS paint) — **v1**
+- [ ] Worker **retexture / PBR** (TRELLIS paint) — **v1** = `worker_texture.py` + **отдельный** endpoint (не вливать в T2 generate)
 - [ ] Pipeline: one-click «оптимизировать» / «перетекстурировать» из результата gen
 
 **Продукт:** Generate (clay) → [опц.] Texture (v0 bake / v1 paint) → [опц.] Retopo → Export.  
