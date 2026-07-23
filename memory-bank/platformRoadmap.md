@@ -18,7 +18,8 @@
 | 4 | Upload quality hints | ✅ POLY_LAB (`imageQuality.ts`) |
 | 4b | Image Enhancement toggle (2D preprocess) | ✅ POLY_LAB (`imageEnhance.ts`) |
 | 5 | Library UX | ✅ POLY_LAB (`JobHistory` filters) |
-| 6 | Auth + credits mock | ⬜ следующий |
+| 6 | Auth + credits mock | ✅ POLY_LAB (Guest wallet, 402 on low balance) |
+| next | Clerk/Stripe or Texture worker | ⬜ |
 
 **Seed:** не «лучшее зерно мира». Best-of-N = N стохастических прогонов **одного** T2 на одном входе. Между моделями seed не переносится. UX проще: «Ещё вариант».
 
@@ -293,8 +294,10 @@ Blended COGS Full при 40% warm ≈ **$0.13**; при 70% warm ≈ **$0.10**. 
 - [x] **Clay-first generate** (`texture_mode: clay|textured` в worker; Studio default clay)
 - [x] Docker/Release clay worker на `ynzpzjvcbfl656` (`6d763fa`)
 - [x] **Industry Quality Recipes** в Studio (prompt + decimation по отрасли)
+- [x] Library UX filters + Image Enhancement + upload hints
+- [x] Auth + credits mock (Guest wallet; Clerk later)
 - [ ] Best-of-N seeds в UI — **отложено** (seed only same model+image)
-- [ ] Auth + credits/billing
+- [ ] Auth + credits/billing — Clerk/Stripe (mock done)
 
 **На сайте сейчас:** п.1 «3D генерация» = **clay mesh** (как Meshy); textured bake = legacy opt-in; отрасль = quality recipe.
 
