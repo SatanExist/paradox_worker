@@ -156,7 +156,8 @@
 
 **Env:** `RUNPOD_ENDPOINT_ID_TEXTURE` (пока не создан — Studio остаётся на v0 bake).  
 **Smoke:** `python test_req_texture.py --mesh-url <url> --image-url <url> --save model-tex.glb`  
-**Build:** `docker build -f Dockerfile.texture -t paradox-texture .`
+**Build:** thin overlay on `:trellis2-latest` → `docker build -f Dockerfile.texture -t paradox-texture .`  
+**CI:** `.github/workflows/build-texture.yml` → `:texture-latest` / `:texture-sha-<short>`
 
 **Studio backend обязан:**
 1. `POST /run` → poll `/status/{id}` до terminal
