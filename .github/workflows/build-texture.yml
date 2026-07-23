@@ -22,6 +22,20 @@ jobs:
       packages: write
 
     steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+            /usr/lib/jvm || true
+          docker system prune -af || true
+          sudo apt-get clean || true
+          echo "After cleanup:"
+          df -h
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -47,12 +61,15 @@ jobs:
           fi
           echo "trellis2_base=${BASE}" >> "$GITHUB_OUTPUT"
 
+      # Thin overlay: only worker_texture.py changes; still pulls multi-GB base.
       - name: Build and push texture image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile.texture
           push: true
+          provenance: false
+          sbom: false
           build-args: |
             PARADOX_BUILD_SHA=${{ github.sha }}
             TRELLIS2_BASE=${{ steps.meta.outputs.trellis2_base }}
