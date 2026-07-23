@@ -15,8 +15,9 @@
 | 1 | Industry Quality Recipes (`industryPresets` → polish, T2I, `decimation_target`) | ✅ POLY_LAB |
 | 2 | Warm ETA + `warm_timing_t2.py` (ops-повтор later) | ✅ |
 | 3 | Best-of-N seeds UI | ⏸ отложено — seed только same model+image |
-| 4 | Upload quality hints | ⬜ кандидат |
-| 5 | Multi-view (2–4 фото) | ⬜ фаза 4 |
+| 4 | Upload quality hints | ✅ POLY_LAB (`imageQuality.ts`) |
+| 4b | Image Enhancement toggle (2D preprocess) | ✅ POLY_LAB (`imageEnhance.ts`) |
+| 5 | Library UX | ⬜ следующий |
 
 **Seed:** не «лучшее зерно мира». Best-of-N = N стохастических прогонов **одного** T2 на одном входе. Между моделями seed не переносится. UX проще: «Ещё вариант».
 
