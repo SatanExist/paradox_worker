@@ -17,7 +17,8 @@
 | 3 | Best-of-N seeds UI | ⏸ отложено — seed только same model+image |
 | 4 | Upload quality hints | ✅ POLY_LAB (`imageQuality.ts`) |
 | 4b | Image Enhancement toggle (2D preprocess) | ✅ POLY_LAB (`imageEnhance.ts`) |
-| 5 | Library UX | ⬜ следующий |
+| 5 | Library UX | ✅ POLY_LAB (`JobHistory` filters) |
+| 6 | Auth + credits mock | ⬜ следующий |
 
 **Seed:** не «лучшее зерно мира». Best-of-N = N стохастических прогонов **одного** T2 на одном входе. Между моделями seed не переносится. UX проще: «Ещё вариант».
 

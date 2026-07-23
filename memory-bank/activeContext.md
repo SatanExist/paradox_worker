@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-23** — Image Enhancement + upload hints
+Последнее обновление: **2026-07-23** — Library UX (#5)
 
 ---
 
@@ -16,7 +16,7 @@
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
 | T2 image | `trellis2-sha-6d763fa` |
-| Фокус | Image Enhancement + hints; next = Library UX |
+| Фокус | Library UX done; next = Auth + credits mock |
 
 ---
 
@@ -46,8 +46,8 @@
 | 3 | Best-of-N seeds UI | POLY_LAB | ⏸ отложено (см. seed выше) |
 | 4 | Upload quality hints | POLY_LAB | ✅ |
 | 4b | Image Enhancement (Meshy-like) | POLY_LAB | ✅ |
-| 5 | Library UX | POLY_LAB | ⬜ **следующий** |
-| 6 | Auth + credits mock | POLY_LAB | ⬜ |
+| 5 | Library UX | POLY_LAB | ✅ |
+| 6 | Auth + credits mock | POLY_LAB | ⬜ **следующий** |
 | 7 | Texture worker (PBR) | worker | ⬜ фаза 2 |
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
@@ -310,6 +310,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Push recipes + warm script; seed UX clarified (same model only) | Upload hints / Library |
 | 2026-07-23 | Pedrokita | Upload quality hints (`imageQuality.ts`) in Studio | Library UX |
 | 2026-07-23 | Pedrokita | Image Enhancement toggle (`imageEnhance.ts`) — 2D preprocess | Library UX |
+| 2026-07-23 | Pedrokita | Library UX: All/Clay/Tex/Фото/Текст filters + badges | Auth + credits mock |
 
 ---
 
