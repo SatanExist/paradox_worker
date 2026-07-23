@@ -316,9 +316,15 @@ def run_with_zombie_retries(
     zombie_retries: int = 2,
     max_wait_s: float = 30 * 60,
     heal: bool = True,
+    heal_before_submit: bool = False,
     purge_on_heal: bool = False,
 ) -> tuple[str, dict[str, Any]]:
-    """Submit + wait; on zombie: cancel, heal ghosts, resubmit (optional secondary)."""
+    """Submit + wait; on zombie: cancel, heal ghosts, resubmit (optional secondary).
+
+    By default does NOT heal before submit — proactive deletes often kill
+    warm/standby workers and force a multi-minute cold model_load. Heal only
+    after a confirmed zombie (or pass heal_before_submit=True for ops scripts).
+    """
     endpoints = [endpoint_id]
     if secondary_endpoint_id and secondary_endpoint_id != endpoint_id:
         endpoints.append(secondary_endpoint_id)
@@ -329,7 +335,7 @@ def run_with_zombie_retries(
         for _ in range(zombie_retries + 1):
             attempt += 1
             print(f"\n--- attempt {attempt} on {ep} ---")
-            if heal:
+            if heal and heal_before_submit:
                 ensure_no_ghost_workers(ep, api_key)
             job_id = submit_job(ep, api_key, job_input)
             try:

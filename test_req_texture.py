@@ -110,6 +110,11 @@ def main() -> int:
         action="store_true",
         help="Also POST purge-queue when healing ghosts",
     )
+    parser.add_argument(
+        "--heal-before-submit",
+        action="store_true",
+        help="Delete EXITED ghosts before each submit (can kill warm workers)",
+    )
     args = parser.parse_args()
 
     if not ENDPOINT_ID:
@@ -148,6 +153,7 @@ def main() -> int:
             zombie_retries=args.zombie_retries,
             max_wait_s=30 * 60,
             heal=True,
+            heal_before_submit=args.heal_before_submit,
             purge_on_heal=args.purge_on_heal,
         )
 

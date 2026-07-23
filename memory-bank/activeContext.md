@@ -46,7 +46,7 @@
 | T1b | Build image + **отдельный** RunPod texture endpoint + smoke | paradox_worker | ⬜ **следующий** |
 | T1c | Studio: `task_type=texture` → `RUNPOD_ENDPOINT_ID_TEXTURE` (else v0 bake) | POLY_LAB | ⬜ |
 | — | Clerk/Stripe | POLY_LAB | ⬜ |
-| — | Warm ops `workersMin` | RunPod | ⬜ |
+| — | Warm ops без `workersMin` (heal policy + idle 60) | RunPod + Studio | 🔄 |
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
 
@@ -56,9 +56,15 @@
 | model_load | 233 с | 0 с |
 | handler | 319 с | 23.4 с |
 
-Endpoint: `workersMin=0`, `workersStandby=2`, `idleTimeout=30`. Первый job после простоя — долгий cold; подряд — **~25–31 с**. Studio warm ETA: **35 с** (было 45).
+Endpoint: `workersMin=0` (без always-on — дорого), `workersStandby=2`, `idleTimeout` цель **60 с**. Первый job после простоя — cold; подряд в окне idle — **~25–31 с**. Studio warm ETA: **35 с**.
 
-**Рекомендация ops:** для пика `workersMin=1` (дороже idle); для POC оставить 0 + `workersStandby=2`. Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
+**Ops без workersMin (2026-07-23):**
+- Не heal’ить перед каждым submit (Studio + smoke) — только на zombie / stuck IN_QUEUE
+- `idleTimeout=60` — дешёвый warm между кликами (`scripts/set_endpoint_idle.py --seconds 60 --apply`)
+- Ручной heal при кошмаре: `python scripts/heal_t2_endpoint.py`
+- FlashBoot **off**, `workersMax≥2`
+
+Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 
 ## RunPod endpoints (карта)
 
