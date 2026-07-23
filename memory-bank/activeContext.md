@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-23** — Texture job v0 (Studio)
+Последнее обновление: **2026-07-23** — Texture v1 scaffold (worker)
 
 ---
 
@@ -16,7 +16,7 @@
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
 | T2 image | `trellis2-sha-6d763fa` |
-| Фокус | **Texture v0** в Studio (legacy bake); v1 mesh paint — next |
+| Фокус | **Texture v1 scaffold** (`worker_texture.py`); Studio пока на v0 bake |
 
 ---
 
@@ -26,12 +26,13 @@
 
 | Версия | Что |
 |--------|-----|
-| **v0 (сейчас)** | Studio: clay → «Наложить текстуру» → `texture_mode=textured` с тем же `image_url` (legacy bake, 6 cr) |
-| **v1 (план)** | Mesh paint / TRELLIS paint на clay GLB или voxel с volume — отдельный worker |
+| **v0 (Studio)** | clay → «Наложить текстуру» → `texture_mode=textured` (legacy bake, 6 cr) |
+| **v1 (scaffold)** | `worker_texture.py` + `Dockerfile.texture` + `test_req_texture.py` — `Trellis2TexturingPipeline` (`mesh_url`+`image_url`) |
 
 **Seed:** only same model+image. Best-of-N отложен.
 
-**Release T2:** ✅ `trellis2-sha-6d763fa` (clay+textured modes уже в worker).
+**Release T2:** ✅ `trellis2-sha-6d763fa` (clay+textured modes уже в worker).  
+**Texture endpoint:** ещё не создан (`RUNPOD_ENDPOINT_ID_TEXTURE` TBD).
 
 ---
 
@@ -41,7 +42,9 @@
 |---|--------|------|--------|
 | 1–6 | Recipes → credits mock | POLY_LAB | ✅ |
 | T0 | Texture job UI/API (legacy bake) | POLY_LAB | ✅ |
-| T1 | Mesh→PBR worker | paradox_worker | ⬜ **следующий большой** |
+| T1a | Scaffold mesh-paint worker + contract | paradox_worker | ✅ |
+| T1b | Build image + RunPod endpoint + smoke | paradox_worker | ⬜ **следующий** |
+| T1c | Studio switch: v0 → v1 when endpoint set | POLY_LAB | ⬜ |
 | — | Clerk/Stripe | POLY_LAB | ⬜ |
 | — | Warm ops `workersMin` | RunPod | ⬜ |
 
@@ -308,6 +311,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Library UX: All/Clay/Tex/Фото/Текст filters + badges | Auth + credits mock |
 | 2026-07-23 | Pedrokita | Credits mock + demo auth; job charges 4/12 cr | Clerk or Texture фаза 2 |
 | 2026-07-23 | Pedrokita | Texture v0: Studio action=texture → legacy bake | Mesh paint worker (T1) |
+| 2026-07-23 | Pedrokita | T1a scaffold: `worker_texture.py`, Dockerfile.texture, test_req_texture | T1b: build+endpoint+smoke |
 
 ---
 

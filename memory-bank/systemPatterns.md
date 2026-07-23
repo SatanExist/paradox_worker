@@ -97,7 +97,7 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | `generate` (quality) | paradox_worker → v2 | TRELLIS.2 | 24 GB |
 | `generate` (fast) | paradox-sf3d | SF3D / TripoSR | 6–8 GB |
 | `retopo` | paradox-retopo | FastMesh, PartUV | 16–24 GB |
-| `texture` | paradox-texture | TRELLIS paint | ~8 GB |
+| `texture` | paradox-texture (`worker_texture.py`) | TRELLIS.2 `Trellis2TexturingPipeline` | ~24 GB (same stack as T2) |
 | `rig` / `animate` | paradox-rig | UniRig + motion presets | ~9 GB |
 
 Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOINT_ID`.

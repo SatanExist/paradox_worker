@@ -1,7 +1,8 @@
 # paradox_worker — точка входа для агента
 
 RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.  
-Quality tier (POC): **TRELLIS.2** — отдельный `Dockerfile.trellis2` / `worker_trellis2.py`.
+Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`.  
+Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`.
 
 ## С чего начать
 
@@ -18,12 +19,14 @@ Quality tier (POC): **TRELLIS.2** — отдельный `Dockerfile.trellis2` /
 .\scripts\sync-end.ps1     # перед push: статус + чеклист
 python test_req.py                    # тест v1 endpoint (async + fallback)
 python test_req_trellis2.py           # тест quality endpoint (TRELLIS.2)
+python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier preview
 python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
+docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
 ```
 
 ## Memory bank

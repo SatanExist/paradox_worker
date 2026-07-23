@@ -18,11 +18,14 @@
 |------|------------|
 | `worker.py` | RunPod handler v1: картинка → TRELLIS → GLB → base64 |
 | `worker_trellis2.py` | Quality: TRELLIS.2 → GLB на volume / R2 / base64 (cap) |
+| `worker_texture.py` | Texture v1: mesh+image → `Trellis2TexturingPipeline` → GLB |
 | `Dockerfile` | v1 контейнер (CUDA 11.8) |
 | `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
+| `Dockerfile.texture` | mesh paint (тот же стек, CMD → `worker_texture.py`) |
 | `test_req.py` | Smoke test v1 endpoint |
 | `runpod_queue_watchdog.py` | Zombie IN_QUEUE detect + DELETE ghost pods + retry |
 | `test_req_trellis2.py` | Smoke T2 + watchdog/heal; R2 download |
+| `test_req_texture.py` | Smoke Texture v1 (`RUNPOD_ENDPOINT_ID_TEXTURE`) |
 | `scripts/heal_t2_endpoint.py` | Ручной heal ghost workers / purge-queue |
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
@@ -123,8 +126,37 @@
 |---------|----------|---------------|----------|--------|
 | **preview** | T2 `ynzpzjvcbfl656` | `pipeline_type: "512"`, `texture_mode: "clay"`, `return_base64: false` | R2 `model_url` | cold ~6 мин / warm ~40 с |
 | **quality** | T2 | `pipeline_type: "1024_cascade"`, `texture_mode: "clay"` | R2 `model_url` | cold ~8 мин / warm ~4 мин |
-| legacy textured | T2 | + `texture_mode: "textured"`, `texture_size` 1024/2048 | R2 | bake UV (opt-in) |
+| legacy textured (v0) | T2 | + `texture_mode: "textured"`, `texture_size` 1024/2048 | R2 | bake UV (opt-in; Studio Texture button) |
+| **mesh paint (v1)** | Texture endpoint *(TBD)* | `mesh_url` + `image_url` (+ `resolution`, `texture_size`, `seed`) | R2 `trellis2-texture/` | scaffold: `worker_texture.py` |
 | legacy fast | v1 RO `88djlbwtw4sjlv` | `simplify`, `texture_size`, `seed` | base64 (мелкие GLB) | ~2 мин |
+
+### Texture v1 contract (`worker_texture.py`)
+
+```json
+{
+  "input": {
+    "mesh_url": "https://.../clay.glb",
+    "image_url": "https://.../ref.png",
+    "seed": 1,
+    "resolution": 1024,
+    "texture_size": 2048,
+    "return_base64": false,
+    "preprocess_image": true
+  }
+}
+```
+
+| Поле | Default | Описание |
+|------|---------|----------|
+| `mesh_url` / `glb_url` | — | Clay (или любой) GLB |
+| `image_url` | — | Reference image (лучше RGBA / alpha cutout) |
+| `resolution` | `1024` | 512 / 1024 / 1536 (voxel) |
+| `texture_size` | `2048` | 1024 / 2048 / 4096 |
+| `seed` | `1` | Sampler seed |
+
+**Env:** `RUNPOD_ENDPOINT_ID_TEXTURE` (пока не создан — Studio остаётся на v0 bake).  
+**Smoke:** `python test_req_texture.py --mesh-url <url> --image-url <url> --save model-tex.glb`  
+**Build:** `docker build -f Dockerfile.texture -t paradox-texture .`
 
 **Studio backend обязан:**
 1. `POST /run` → poll `/status/{id}` до terminal

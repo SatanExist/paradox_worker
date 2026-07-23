@@ -1,0 +1,102 @@
+# TRELLIS.2 mesh texturing (Texture v1) — same stack as Dockerfile.trellis2.
+# Tags (planned): ghcr.io/satanexist/paradox_worker:texture-sha-<short>
+# Build: docker build -f Dockerfile.texture -t paradox-texture .
+
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_HOME=/usr/local/cuda \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64 \
+    MAX_JOBS=2 \
+    PYOPENGL_PLATFORM=egl \
+    PYTHONPATH=/app/TRELLIS.2 \
+    OPENCV_IO_ENABLE_OPENEXR=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+    ATTN_BACKEND=sdpa \
+    SPARSE_ATTN_BACKEND=xformers \
+    SPARSE_CONV_BACKEND=flex_gemm \
+    HF_HOME=/runpod-volume/huggingface_cache \
+    TRELLIS2_HDRI=/app/TRELLIS.2/assets/hdri/forest.exr \
+    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+      torch==2.6.0 torchvision==0.21.0 \
+      --index-url https://download.pytorch.org/whl/cu124
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libjpeg-dev \
+    libpng-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libglvnd0 \
+    libgl1 \
+    libglx0 \
+    libegl1 \
+    libgles2 \
+    libglvnd-dev \
+    libgl1-mesa-dev \
+    libegl1-mesa-dev \
+    libgles2-mesa-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub boto3
+
+# Shallow clone; init eigen manually (submodule update is flaky in CI).
+RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2 && \
+    rm -rf /app/TRELLIS.2/o-voxel/third_party/eigen && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /app/TRELLIS.2/o-voxel/third_party/eigen
+
+RUN pip install --no-cache-dir \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
+    "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
+    kornia timm plyfile filelock safetensors einops "triton>=3.2.0" && \
+    pip install --no-cache-dir \
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
+    pip install --no-cache-dir xformers==0.0.29.post3 \
+      --index-url https://download.pytorch.org/whl/cu124
+
+RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
+    pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
+    rm -rf /tmp/nvdiffrast
+
+RUN git clone -b renderutils --depth 1 https://github.com/JeffreyXiang/nvdiffrec.git /tmp/nvdiffrec && \
+    pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrec && \
+    rm -rf /tmp/nvdiffrec
+
+# CuMesh needs cubvh@trellis.2 + eigen (nested submodules fail with --depth 1).
+RUN git clone --depth 1 https://github.com/JeffreyXiang/CuMesh.git /tmp/CuMesh && \
+    rm -rf /tmp/CuMesh/third_party/cubvh && \
+    git clone --depth 1 --branch trellis.2 https://github.com/JeffreyXiang/cubvh.git /tmp/CuMesh/third_party/cubvh && \
+    rm -rf /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
+    pip install --no-cache-dir --no-build-isolation /tmp/CuMesh && \
+    rm -rf /tmp/CuMesh
+
+RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGEMM && \
+    pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
+    rm -rf /tmp/FlexGEMM
+
+RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-voxel
+
+# Build-time check only: pip wheels + compiled .so present (no GPU import).
+COPY docker/smoke_trellis2_imports.py /tmp/smoke_trellis2_imports.py
+RUN python /tmp/smoke_trellis2_imports.py
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=trellis2-texture
+
+COPY worker_texture.py /app/worker_texture.py
+COPY runpod_billing.py /app/runpod_billing.py
+
+CMD ["python", "-u", "/app/worker_texture.py"]
