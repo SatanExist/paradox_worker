@@ -26,7 +26,7 @@
 | `scripts/heal_t2_endpoint.py` | Ручной heal ghost workers / purge-queue |
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
-| `scripts/batch_seeds.py` | Best-of-N seeds → GLB |
+| `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
 | `scripts/studio_api.py` | POC HTTP API: `POST/GET /api/jobs` для Studio |
 | `scripts/studio_smoke.py` | Smoke без HTTP (image/text → RunPod poll) |
 | `studio_bridge/` | Tier mapping + normalize status + text2image hook |

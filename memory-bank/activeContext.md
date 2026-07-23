@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-22** — clay Release OK + Studio clay viewer shader
+Последнее обновление: **2026-07-23** — recipes + warm script pushed; seed UX отложен
 
 ---
 
@@ -15,39 +15,55 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Коммит worker | `6d763fa` clay `texture_mode` + studio_bridge (Release OK) |
-| POLY_LAB | clay viewer shader + toggle (push 2026-07-22) |
-| Фокус | **Clay default** generate; viewer shader в Studio (не в GLB) |
+| T2 image | `trellis2-sha-6d763fa` |
+| Фокус | Quality recipes live; warm ETA 35s; **best-of-N seeds — не приоритет** |
 
 ---
 
 ## Текущий фокус
 
-**Generate = clay (серый меш).** PBR texture = отдельная фича (фаза 2), не bake в generate.
+**Generate = clay.** Качество снаружи T2: картинка + industry recipes + tier/decimation.
 
-| Input | Worker | Output |
-|-------|--------|--------|
-| `texture_mode: clay` (default) | remesh/simplify, **без** UV/bake | gray GLB |
-| `texture_mode: textured` | legacy `o_voxel.to_glb` bake | textured GLB |
+| Слой | Рычаги |
+|------|--------|
+| Text→3D | `polishExtra` + `t2iExtra` по отрасли |
+| Image→3D | качество фото, rembg, tier (`pipeline_type`) |
+| Worker | `decimation_target`, `remesh`; seed = воспроизводимость |
+| Позже | upload hints, library UX, multi-view, texture worker |
 
-**Studio:** default clay; checkbox «Textured (legacy bake)»; Text→3D auto-polish + T2 suffix (no numerals/logos). **Viewer:** clay shader в `POLY_LAB` (`viewerMaterials.ts`) — превью only, GLB download без изменений.
+**Seed (важно):** seed имеет смысл **только внутри одной модели + одного входа**.  
+Best-of-N = N стохастических попыток T2 на **том же** фото → выбрать лучшую «догадку» (часто зад/детали).  
+Seed 42 на T2 ≠ seed 42 на другой модели — это не «универсальное зерно».  
+Перенос между моделями бессмысленен. Авто-best-of-3 в UI — **опционально / later**, не следующий шаг.  
+UX проще: «Ещё вариант» (новый seed) или fixed seed=1 для воспроизводимости.
 
-**Release:** ✅ `ghcr.io/satanexist/paradox_worker:trellis2-sha-6d763fa` на `ynzpzjvcbfl656`; smoke clay OK (~243k verts, no texture maps in GLB).
-
-```powershell
-# smoke after Release:
-python test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model-clay.glb
-```
-
-**Следующие шаги:**
-
-1. Warm economics / workersMin (~45 с warm)
-2. Texture worker (TRELLIS paint) — later
-3. Library UX polish в Studio
-
-**Конспект:** `@memory-bank/systemPatterns.md` · **План:** `@memory-bank/platformRoadmap.md`
+**Release:** ✅ `trellis2-sha-6d763fa` на `ynzpzjvcbfl656`.
 
 ---
+
+## Очередь спринта (по порядку)
+
+| # | Задача | Репо | Статус |
+|---|--------|------|--------|
+| 1 | **Industry Quality Recipes** | POLY_LAB | ✅ |
+| 2 | Warm timing script + ETA 35s (повторный ops-прогон — later) | worker + Studio | ✅ код; ops later |
+| 3 | Best-of-N seeds UI | POLY_LAB | ⏸ отложено (см. seed выше) |
+| 4 | Upload quality hints | POLY_LAB | ⬜ **кандидат** |
+| 5 | Library UX | POLY_LAB | ⬜ |
+| 6 | Auth + credits mock | POLY_LAB | ⬜ |
+| 7 | Texture worker (PBR) | worker | ⬜ фаза 2 |
+
+**Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
+
+| | JOB1 (cold) | JOB2–5 warm avg |
+|--|-------------|-----------------|
+| wall | 812 с | **27.3 с** |
+| model_load | 233 с | 0 с |
+| handler | 319 с | 23.4 с |
+
+Endpoint: `workersMin=0`, `workersStandby=2`, `idleTimeout=30`. Первый job после простоя — долгий cold; подряд — **~25–31 с**. Studio warm ETA: **35 с** (было 45).
+
+**Рекомендация ops:** для пика `workersMin=1` (дороже idle); для POC оставить 0 + `workersStandby=2`. Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 
 ## RunPod endpoints (карта)
 
@@ -293,7 +309,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-20 | Pedrokita | warm 366s→40s; seeds 1/7/42; A/B v1 vs T2 Full; unit economics canvas; Studio defaults | Визуальный A/B; мост AI_MESH contract |
 | 2026-07-20 | Pedrokita | Уточнили scope: сейчас только image→3D; обсудили варианты text→3D | Выбрать MVP-путь text→image→T2 |
 | 2026-07-20 веч | Pedrokita | POLY_LAB live E2E (пистолет); proxy-glb CORS; watchdog в Studio; Meshy Workspace notes | Commit POLY_LAB; warm; library UX |
-| 2026-07-22 | Pedrokita | Clay Release `6d763fa` + smoke; POLY_LAB clay viewer shader | Warm economics; texture worker later |
+| 2026-07-22 | Pedrokita | Warm 5× clay: cold 812s wall, warm avg 27.3s; ETA Studio 35s | Best-of-N отложен |
+| 2026-07-23 | Pedrokita | Push recipes + warm script; seed UX clarified (same model only) | Upload hints / Library |
 
 ---
 
@@ -302,7 +319,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | Дата | Что | Заметки |
 |------|-----|---------|
 | 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |
-| 2026-07-22 | POLY_LAB clay viewer shader (`viewerMaterials.ts`) — preview toggle, не в GLB | Warm economics |
+| 2026-07-22 | Industry Quality Recipes в Studio (presets → polish/T2I/decimation) | Warm economics |
 | 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |
 | 2026-07-20 | Text→3D: в текущем worker отсутствует; MVP-вариант = text→image→T2 | отдельный text2mesh endpoint — позже |
 | 2026-07-20 | Studio tiers: preview=`512`/1024, quality=`1024_cascade`/2048 | ETA cold/warm в UX |

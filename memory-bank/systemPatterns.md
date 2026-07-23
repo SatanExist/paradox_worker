@@ -206,7 +206,8 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 |-----|------|------------------------------|
 | **BiRefNet** (`preprocess_image`) | вырез фона на входе | почти нет |
 | **TRELLIS.2 сама** | додумывает объём/текстуру сзади по одному кадру | да, но это догадка |
-| **seed / best-of-N** | разные догадки | часто лучший рычаг в POC |
+| **seed / best-of-N** | N догадок **той же** модели на том же фото | полезно внутри T2; seed ≠ между моделями |
+| **Industry Quality Recipe** | промпт + T2I suffix + `decimation_target` + tier по отрасли | Studio `industryPresets.ts` (не retrain T2) |
 | **multi-view (2–4 фото)** | реальные данные сзади | позже, не в текущем POC |
 
 Отдельного rembg-плагина «нарисуй красивый зад» нет. UX Studio: не обещать «идеальную спину» с одного фото.

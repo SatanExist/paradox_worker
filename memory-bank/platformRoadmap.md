@@ -2,7 +2,25 @@
 
 > **Назначение:** стратегический план платформы (4 фичи на сайте, модели, фазы, экономика).
 > **Связанные файлы:** `projectbrief.md`, `systemPatterns.md`, `activeContext.md`.
-> Последнее обновление: **2026-07-20** (фазы 0/1 синхронизированы с фактом)
+> Последнее обновление: **2026-07-22** (фазы 0/1 + quality sprint)
+
+---
+
+## Quality sprint (2026-07-22)
+
+Улучшение генерации **без retrain TRELLIS.2** — рецепты вокруг пайплайна:
+
+| # | Задача | Статус |
+|---|--------|--------|
+| 1 | Industry Quality Recipes (`industryPresets` → polish, T2I, `decimation_target`) | ✅ POLY_LAB |
+| 2 | Warm ETA + `warm_timing_t2.py` (ops-повтор later) | ✅ |
+| 3 | Best-of-N seeds UI | ⏸ отложено — seed только same model+image |
+| 4 | Upload quality hints | ⬜ кандидат |
+| 5 | Multi-view (2–4 фото) | ⬜ фаза 4 |
+
+**Seed:** не «лучшее зерно мира». Best-of-N = N стохастических прогонов **одного** T2 на одном входе. Между моделями seed не переносится. UX проще: «Ещё вариант».
+
+Промпт влияет на mesh только через **Text→Image→T2**. Single-view: не обещать идеальную «спину».
 
 ---
 
@@ -228,7 +246,7 @@ Tripo, Meshy, Rodin, CSM, Luma — свои модели; API **$0.30–1.20/job
 
 | Tier | Cold | Warm | Примечание |
 |------|------|------|------------|
-| T2 preview `512` | ~$0.13 | ~$0.03 | wall 366s / 40s |
+| T2 preview `512` clay | ~$0.13 | ~$0.02–0.03 | **2026-07-22:** warm wall **27.3 с** avg (5× run); cold wall **812 с** (0 workers at start) |
 | T2 Full `1024_cascade` | ~$0.16 | ~$0.08 | warm = оценка (exec − model_load) |
 | v1 RO | ~$0.04 | ~$0.01 | legacy fast |
 
@@ -268,13 +286,17 @@ Blended COGS Full при 40% warm ≈ **$0.13**; при 70% warm ≈ **$0.10**. 
 - [x] Frontend PolyLab (`POLY_LAB`): landing + `/generate` + viewer
 - [x] Live image→3D: R2 upload → T2 → proxy-glb; zombie watchdog в Next
 - [x] Persist jobs / **asset library** (JSON `.data/jobs.json` MVP)
-- [ ] Auth + credits/billing
 - [x] Text→3D hybrid (text→image→T2) + polish
 - [x] Preview/Quality в UI + ETA/cost CTA
 - [x] **Clay-first generate** (`texture_mode: clay|textured` в worker; Studio default clay)
-- [ ] Docker/Release clay worker на `ynzpzjvcbfl656`
+- [x] Docker/Release clay worker на `ynzpzjvcbfl656` (`6d763fa`)
+- [x] **Industry Quality Recipes** в Studio (prompt + decimation по отрасли)
+- [ ] Best-of-N seeds в UI — **отложено** (seed only same model+image)
+- [ ] Auth + credits/billing
 
-**На сайте сейчас:** п.1 «3D генерация» = **clay mesh** (как Meshy); textured bake = legacy opt-in.
+**На сайте сейчас:** п.1 «3D генерация» = **clay mesh** (как Meshy); textured bake = legacy opt-in; отрасль = quality recipe.
+
+---
 
 ### Фаза 2 — post-process (2–3 мес) — ⚪ не начато
 
