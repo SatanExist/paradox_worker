@@ -154,10 +154,13 @@
 | `texture_size` | `2048` | 1024 / 2048 / 4096 |
 | `seed` | `1` | Sampler seed |
 
-**Env:** `RUNPOD_ENDPOINT_ID_TEXTURE` (пока не создан — Studio остаётся на v0 bake).  
+**Env:** `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s` (TRELLIS_texturing, EU-RO-1, volume `paradox-trellis2`).  
+Studio без этой переменной остаётся на v0 bake.  
 **Smoke:** `python test_req_texture.py --mesh-url <url> --image-url <url> --save model-tex.glb`  
-**Build:** thin overlay on `:trellis2-latest` → `docker build -f Dockerfile.texture -t paradox-texture .`  
-**CI:** `.github/workflows/build-texture.yml` → `:texture-latest` / `:texture-sha-<short>`
+**Build:** thin overlay on `:trellis2-latest` → `docker build -f Dockerfile.texture`  
+**CI:** `.github/workflows/build-texture.yml` → `:texture-latest` / `:texture-sha-<short>`  
+**Image (актуальный):** `ghcr.io/satanexist/paradox_worker:texture-sha-c6fa8b5`  
+**New Release:** только при смене Docker tag; смена env → новый worker без Release.
 
 **Studio backend обязан:**
 1. `POST /run` → poll `/status/{id}` до terminal

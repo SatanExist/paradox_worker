@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-23** — Texture v1 scaffold (worker)
+Последнее обновление: **2026-07-23** — Texture v1 endpoint live + warm ops
 
 ---
 
@@ -16,23 +16,25 @@
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
 | T2 image | `trellis2-sha-6d763fa` |
-| Фокус | **Texture v1 scaffold** (`worker_texture.py`); Studio пока на v0 bake |
+| Texture image | `texture-sha-c6fa8b5` |
+| Фокус | Texture v1 smoke/R2; Studio v0 bake; T1c wiring next |
 
 ---
 
 ## Текущий фокус
 
-**Generate = clay.** Texture = отдельный шаг.
+**Generate = clay.** Texture = отдельный шаг + отдельный endpoint.
 
 | Версия | Что |
 |--------|-----|
 | **v0 (Studio)** | clay → «Наложить текстуру» → `texture_mode=textured` (legacy bake, 6 cr) |
-| **v1 (scaffold)** | `worker_texture.py` + `Dockerfile.texture` + `test_req_texture.py` — `Trellis2TexturingPipeline` (`mesh_url`+`image_url`) |
+| **v1 (live POC)** | endpoint `a968zrhd6hmj7s` + `worker_texture.py` — mesh paint; Studio ещё на v0 |
 
 **Seed:** only same model+image. Best-of-N отложен.
 
-**Release T2:** ✅ `trellis2-sha-6d763fa` (clay+textured modes уже в worker).  
-**Texture endpoint:** ещё не создан (`RUNPOD_ENDPOINT_ID_TEXTURE` TBD).
+**Release T2:** ✅ `trellis2-sha-6d763fa`.  
+**Release texture:** ✅ `texture-sha-c6fa8b5` (User-Agent fix для R2 download).  
+**New Release** нужен только при смене **Docker image**; смена env подхватывается новым worker’ом без Release.
 
 ---
 
@@ -43,10 +45,10 @@
 | 1–6 | Recipes → credits mock | POLY_LAB | ✅ |
 | T0 | Texture job UI/API (legacy bake) | POLY_LAB | ✅ |
 | T1a | Scaffold mesh-paint worker + contract | paradox_worker | ✅ |
-| T1b | Build image + **отдельный** RunPod texture endpoint + smoke | paradox_worker | ⬜ **следующий** |
-| T1c | Studio: `task_type=texture` → `RUNPOD_ENDPOINT_ID_TEXTURE` (else v0 bake) | POLY_LAB | ⬜ |
+| T1b | Texture endpoint + smoke (infer OK; R2 retest) | paradox_worker | 🔄 |
+| T1c | Studio: v1 endpoint если `RUNPOD_ENDPOINT_ID_TEXTURE` else v0 | POLY_LAB | ⬜ |
 | — | Clerk/Stripe | POLY_LAB | ⬜ |
-| — | Warm ops без `workersMin` (heal policy + idle 60) | RunPod + Studio | 🔄 |
+| — | Warm ops без `workersMin` (heal + idle 60) | RunPod + Studio | ✅ |
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
 
@@ -56,13 +58,14 @@
 | model_load | 233 с | 0 с |
 | handler | 319 с | 23.4 с |
 
-Endpoint: `workersMin=0` (без always-on — дорого), `workersStandby=2`, `idleTimeout` цель **60 с**. Первый job после простоя — cold; подряд в окне idle — **~25–31 с**. Studio warm ETA: **35 с**.
+Endpoint: `workersMin=0` (без always-on — дорого), `workersStandby=2`, `idleTimeout=60` (T2 + texture). Первый job после простоя — cold; подряд в окне idle — **~25–31 с**. Studio warm ETA: **35 с**.
 
 **Ops без workersMin (2026-07-23):**
 - Не heal’ить перед каждым submit (Studio + smoke) — только на zombie / stuck IN_QUEUE
-- `idleTimeout=60` — дешёвый warm между кликами (`scripts/set_endpoint_idle.py --seconds 60 --apply`)
-- Ручной heal при кошмаре: `python scripts/heal_t2_endpoint.py`
+- `idleTimeout=60` — `scripts/set_endpoint_idle.py --seconds 60 --apply`
+- Ручной heal: `python scripts/heal_t2_endpoint.py`
 - FlashBoot **off**, `workersMax≥2`
+- Estimate `$0.17` на одном clay = cold + delay/zombie, **не** целевой COGS (warm ~$0.02–0.03)
 
 Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 
@@ -72,22 +75,28 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 |------|-----|-----|--------|--------|--------|
 | Primary (CZ) | mushy_fuchsia_shark | `splmm6w2rblqkp` | EU-CZ-1 | `paradox-models` | v1, образ **stale** |
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
-| Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** (`ad1bca9`) |
+| Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
+| **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
 
-**`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`  
+**`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
 
-**Env на T2 endpoint (обязательные для delivery):**
+**Env на T2 / texture (обязательные для delivery):**
 - `HF_TOKEN`, `TRELLIS2_DINOV3_PATH=/runpod-volume/dinov3-vitl16-pretrain-lvd1689m`
 - `R2_ENDPOINT_URL`, `R2_BUCKET=ai-mesh-models`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
 - `R2_PUBLIC_BASE_URL=https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev`, `R2_REGION=auto`
 
 **Volume T2 содержит:** `trellis2-weights/`, `dinov3-vitl16-pretrain-lvd1689m/`, `outputs/`, `huggingface_cache/`
 
-**CI v2** (`build-trellis2.yml`): `:trellis2-latest`, `:trellis2-sha-<short>`.  
-**RunPod Flash** (no-Docker product) — не используем. **FlashBoot** на T2 — **off** (2026-07-20); zombie лечим watchdog + `workersMax=2`.
+**CI:** `build-trellis2.yml` → `:trellis2-*`; `build-texture.yml` → `:texture-latest` / `:texture-sha-*` (thin overlay на trellis2).  
+**RunPod Flash** — не используем. **FlashBoot** — **off**.
 
-**Заметка сеть:** прямой GET с ПК на RunPod volume S3 (`s3api-eu-ro-1`) у нас **stall** (~5–9 KB) — для скачивания использовать `model_url` (R2), не volume S3.
+**Texture smoke (2026-07-23):**
+- FAIL #1: R2 mesh download 403 без User-Agent → фикс `c6fa8b5`
+- OK infer #2: COMPLETED ~171 с / ~$0.065; `delivery=volume` (worker до R2 env) → GLB с volume S3 `model-tex.glb`
+- Clay для теста: `trellis2/51f69412-180b-4e56-b470-acb248d14341-e1.glb`
+
+**Заметка сеть:** прямой GET volume S3 иногда stall — для продукта нужен `model_url` (R2).
 
 **Zombie queue:** 4-я причина `IN_QUEUE` — см. `systemPatterns.md` (idle/ready + EXITED ghost). Код: `runpod_queue_watchdog.py`, `scripts/heal_t2_endpoint.py`.
 
@@ -319,6 +328,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Texture v0: Studio action=texture → legacy bake | Mesh paint worker (T1) |
 | 2026-07-23 | Pedrokita | T1a scaffold: `worker_texture.py`, Dockerfile.texture, test_req_texture | T1b: build+endpoint+smoke |
 | 2026-07-23 | Pedrokita | Thin texture Dockerfile + `build-texture.yml` → GHCR | Ждать CI; создать RunPod endpoint |
+| 2026-07-23 | Pedrokita | Texture endpoint `a968zrhd6hmj7s`; UA fix; infer smoke OK; warm ops idle=60 / no pre-heal | R2 retest smoke; Studio T1c |
 
 ---
 
@@ -326,7 +336,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
-| 2026-07-23 | **Texture v1 = отдельный endpoint/образ** (не мультитаск на T2) | Задел: generate / texture / retopo / rig — разные Release; Studio роутит по `task_type`. v0 bake на T2 остаётся fallback |
+| 2026-07-23 | **Texture v1 = отдельный endpoint/образ** (не мультитаск на T2) | Endpoint `a968zrhd6hmj7s`; image `texture-sha-c6fa8b5`; volume тот же `paradox-trellis2`. v0 bake = Studio fallback |
+| 2026-07-23 | Warm без `workersMin` | idleTimeout=60; не heal перед submit; always-on слишком дорого для POC |
 | 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |
 | 2026-07-22 | Industry Quality Recipes в Studio (presets → polish/T2I/decimation) | Warm economics |
 | 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |
