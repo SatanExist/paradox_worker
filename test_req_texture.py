@@ -33,9 +33,6 @@ DEFAULT_IMAGE_URL = (
 DEFAULT_ZOMBIE_AFTER_S = float(os.getenv("TEXTURE_ZOMBIE_AFTER_S", "90"))
 DEFAULT_ZOMBIE_RETRIES = int(os.getenv("TEXTURE_ZOMBIE_RETRIES", "2"))
 
-if not API_KEY:
-    raise ValueError("RUNPOD_API_KEY not found in .env")
-
 
 def sanitize(payload: dict) -> dict:
     out = dict(payload)
@@ -101,10 +98,18 @@ def main() -> int:
     parser.add_argument("--return-base64", action="store_true")
     parser.add_argument("--no-preprocess", action="store_true")
     parser.add_argument("--save", type=Path, default=Path("model-textured.glb"))
-    parser.add_argument("--zombie-after-s", type=float, default=DEFAULT_ZOMBIE_AFTER_S)
+    parser.add_argument("--zombie-after", type=float, default=DEFAULT_ZOMBIE_AFTER_S)
     parser.add_argument("--zombie-retries", type=int, default=DEFAULT_ZOMBIE_RETRIES)
-    parser.add_argument("--no-zombie-watch", action="store_true")
-    parser.add_argument("--no-heal", action="store_true")
+    parser.add_argument(
+        "--no-zombie-watch",
+        action="store_true",
+        help="Disable zombie detect/heal (wait until max timeout only)",
+    )
+    parser.add_argument(
+        "--purge-on-heal",
+        action="store_true",
+        help="Also POST purge-queue when healing ghosts",
+    )
     args = parser.parse_args()
 
     if not ENDPOINT_ID:
@@ -115,26 +120,58 @@ def main() -> int:
             "on the generate endpoint (texture_mode=textured)."
         )
         return 2
+    if not API_KEY:
+        raise ValueError("RUNPOD_API_KEY not found in .env")
 
     job_input = build_input(args)
     print(f"Endpoint: {ENDPOINT_ID}")
-    print(f"Input: mesh_url={args.mesh_url[:80]}... image_url={args.image_url[:80]}...")
+    print(f"Job input: {job_input}")
 
-    final = run_with_zombie_retries(
-        endpoint_id=ENDPOINT_ID,
-        api_key=API_KEY,
-        job_input=job_input,
-        zombie_after_s=None if args.no_zombie_watch else args.zombie_after_s,
-        max_retries=0 if args.no_zombie_watch else args.zombie_retries,
-        heal=not args.no_heal,
-        sanitize=sanitize,
-    )
+    if args.no_zombie_watch:
+        from runpod_queue_watchdog import submit_job, wait_for_job
 
-    print("Final:", sanitize(final))
+        job_id = submit_job(ENDPOINT_ID, API_KEY, job_input)
+        final = wait_for_job(
+            ENDPOINT_ID,
+            job_id,
+            API_KEY,
+            zombie_after_s=1e9,
+            max_wait_s=30 * 60,
+        )
+        endpoint_used = ENDPOINT_ID
+    else:
+        endpoint_used, final = run_with_zombie_retries(
+            ENDPOINT_ID,
+            API_KEY,
+            job_input,
+            zombie_after_s=args.zombie_after,
+            zombie_retries=args.zombie_retries,
+            max_wait_s=30 * 60,
+            heal=True,
+            purge_on_heal=args.purge_on_heal,
+        )
+
+    print(f"Final endpoint: {endpoint_used}")
+    print("Final status:")
+    print(sanitize(final))
+
     if final.get("status") != "COMPLETED":
         return 1
 
-    estimate_from_status_payload(final)
+    estimate = estimate_from_status_payload(
+        final, endpoint_id=endpoint_used, api_key=API_KEY
+    )
+    print(f"Cost estimate: {estimate['cost_usd_formatted']} USD")
+    output = final.get("output") or {}
+    if isinstance(output, dict):
+        print(
+            "delivery=",
+            output.get("delivery"),
+            "bytes=",
+            output.get("model_bytes"),
+            "url=",
+            output.get("model_url"),
+        )
     save_output(final, args.save)
     return 0
 

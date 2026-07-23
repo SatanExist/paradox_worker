@@ -89,21 +89,23 @@ def _rewrite_texturing_pipeline_json(model_path: str) -> None:
         return
 
     data = json.loads(pipeline_json.read_text(encoding="utf-8"))
-    args = data.setdefault("args", {})
+    args = data.get("args") or data
     changed = False
 
     dinov3_path = os.environ.get(
         "TRELLIS2_DINOV3_PATH",
         "/runpod-volume/dinov3-vitl16-pretrain-lvd1689m",
     )
+    root = Path(dinov3_path)
     image_cond = args.get("image_cond_model")
-    if isinstance(image_cond, dict):
-        cond_args = image_cond.setdefault("args", {})
-        old = cond_args.get("name")
-        if old != dinov3_path and Path(dinov3_path).is_dir():
-            cond_args["name"] = dinov3_path
-            changed = True
-            print(f"texturing image_cond: {old!r} -> {dinov3_path!r}")
+    if isinstance(image_cond, dict) and (root / "config.json").is_file():
+        image_args = image_cond.setdefault("args", {})
+        old = image_args.get("model_name")
+        image_args["model_name"] = str(root)
+        print(f"texturing DINOv3 model_name: {old!r} -> {root}")
+        changed = True
+    elif isinstance(image_cond, dict):
+        print(f"texturing DINOv3 local path missing or incomplete: {root}")
 
     rembg_model = args.get("rembg_model")
     rembg_id = os.environ.get("TRELLIS2_REMBG_MODEL", "ZhengPeng7/BiRefNet")
@@ -112,8 +114,8 @@ def _rewrite_texturing_pipeline_json(model_path: str) -> None:
         old_rembg = rembg_args.get("model_name")
         if old_rembg != rembg_id:
             rembg_args["model_name"] = rembg_id
+            print(f"texturing rembg model_name: {old_rembg!r} -> {rembg_id!r}")
             changed = True
-            print(f"texturing rembg: {old_rembg!r} -> {rembg_id!r}")
 
     if changed:
         pipeline_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -121,16 +123,21 @@ def _rewrite_texturing_pipeline_json(model_path: str) -> None:
 
 def load_model():
     global pipeline
+    build_sha = os.environ.get("PARADOX_BUILD_SHA", "unknown")
+    print(f"paradox_worker texture image build: {build_sha}")
+
     if pipeline is not None:
         return
 
+    from huggingface_hub import snapshot_download
     from trellis2.pipelines import Trellis2TexturingPipeline
 
-    model_path = os.environ.get(
-        "TRELLIS2_MODEL_PATH",
-        "/runpod-volume/trellis2-weights",
+    model_id = os.environ.get("TRELLIS2_MODEL_ID", "microsoft/TRELLIS.2-4B")
+    print(f"Loading TRELLIS.2 texturing from {model_id} (volume cache)")
+    model_path = snapshot_download(
+        model_id,
+        local_dir="/runpod-volume/trellis2-weights",
     )
-    print(f"Loading TRELLIS.2 texturing from {model_path}")
     _rewrite_texturing_pipeline_json(model_path)
     pipeline = Trellis2TexturingPipeline.from_pretrained(
         model_path,
