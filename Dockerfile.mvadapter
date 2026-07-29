@@ -68,13 +68,15 @@ RUN pip install --no-cache-dir "cvcuda-cu12==0.16.0"
 # ── extra texture helpers ────────────────────────────────────────────
 # pymeshlab pin matches MV-Adapter Percentage API.
 # matplotlib is imported by mvadapter.utils.saving.
-# Install open3d WITH deps (visualization imports dash/plotly at import time).
-# Keep it in its own layer so a heavy resolve cannot poison lighter packages.
+# open3d --no-deps + patch: skip visualization import (dash/plotly) so CI
+# stays lean while UV atlas / t.geometry still work for texture_i2tex.
+COPY docker/patch_open3d_headless.py /tmp/patch_open3d_headless.py
 RUN pip install --no-cache-dir \
         gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless \
         matplotlib && \
     pip install --no-cache-dir "pymeshlab==2022.2.post3" && \
-    pip install --no-cache-dir "open3d==0.18.0"
+    pip install --no-cache-dir --no-deps "open3d==0.18.0" && \
+    python /tmp/patch_open3d_headless.py
 
 # ── checkpoints (RealESRGAN + LaMa inpainter) ───────────────────────
 RUN mkdir -p /app/MV-Adapter/checkpoints && \

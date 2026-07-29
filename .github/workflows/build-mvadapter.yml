@@ -8,6 +8,7 @@ on:
       - "worker_mvadapter.py"
       - "docker/smoke_mvadapter_imports.py"
       - "docker/mvadapter_texture_reqs.txt"
+      - "docker/patch_open3d_headless.py"
       - ".github/workflows/build-mvadapter.yml"
   workflow_dispatch:
 

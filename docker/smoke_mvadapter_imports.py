@@ -20,11 +20,9 @@ PURE_PACKAGES: tuple[str, ...] = (
     "matplotlib",
 )
 
-# pip dist names verified without import (opencv can be finicky on buildx;
-# open3d may touch GUI/OpenGL at import time)
+# pip dist names verified without import (opencv can be finicky on buildx)
 PIP_DIST_PACKAGES: tuple[tuple[str, ...], ...] = (
     ("opencv-python-headless", "opencv_python_headless"),
-    ("open3d",),
 )
 
 # import name -> pip dist candidates (git installs may omit metadata)
@@ -115,6 +113,18 @@ def verify_mvadapter_repo() -> None:
     print("MV-Adapter repo + checkpoints: OK")
 
 
+def verify_open3d_headless() -> None:
+    import open3d as o3d
+
+    init_text = pathlib.Path(o3d.__file__).read_text(encoding="utf-8")
+    if "import open3d.visualization\n" in init_text and "# paradox: skip visualization" not in init_text:
+        raise RuntimeError("open3d visualization import was not patched")
+    if not hasattr(o3d, "core") or not hasattr(o3d, "t"):
+        raise RuntimeError("open3d missing core/t after headless patch")
+    version = getattr(o3d, "__version__", "unknown")
+    print(f"open3d=={version} headless core/t: OK")
+
+
 def main() -> int:
     for dist_names in PIP_DIST_PACKAGES:
         try:
@@ -139,6 +149,13 @@ def main() -> int:
             traceback.print_exc()
             print(f"verify failed: {import_name}", file=sys.stderr)
             return 1
+
+    try:
+        verify_open3d_headless()
+    except Exception:
+        traceback.print_exc()
+        print("verify failed: open3d headless", file=sys.stderr)
+        return 1
 
     try:
         verify_mvadapter_repo()
