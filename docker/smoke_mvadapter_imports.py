@@ -15,6 +15,7 @@ PURE_PACKAGES: tuple[str, ...] = (
     "accelerate",
     "spandrel",
     "imageio",
+    "open3d",
 )
 
 # pip dist names verified without import (opencv can be finicky on buildx)

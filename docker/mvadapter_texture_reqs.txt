@@ -1,0 +1,14 @@
+# Curated runtime deps for MV-Adapter texture_i2tex (not full training stack).
+# Torch/diffusers/transformers/accelerate/peft/huggingface_hub are pinned separately.
+controlnet_aux
+numpy
+safetensors
+omegaconf
+trimesh
+einops
+timm
+kornia
+scikit-image
+sentencepiece
+tqdm
+imageio
