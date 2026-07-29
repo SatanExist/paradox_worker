@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-29** — Serverless MV-Adapter worker ready; CI workflow `build-mvadapter.yml`; ждём build+deploy
+Последнее обновление: **2026-07-29** — endpoint `ggjypsxh0u1djj` live; smoke #1 fail spandrel, #2 fail cv2; CI fix cv2 pushed
 
 ---
 
@@ -82,7 +82,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
 | Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
 | **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
-| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume (пока) | image `mvadapter-latest`; max workers=1; smoke next |
+| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume | smoke #2 fail `cv2`; CI fix pushed, New Release → retry |
 
 **`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
@@ -336,7 +336,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Thin texture Dockerfile + `build-texture.yml` → GHCR | Ждать CI; создать RunPod endpoint |
 | 2026-07-24 | Pedrokita | Баланс OK → Pod `zhdeac3dd4otww` A6000; zip `mvadapter_w2_upload.zip` | Upload + bootstrap smoke |
 | 2026-07-28 | Pedrokita | W2 smoke green: `knight_i2tex_shaded.glb`; A/B лучше cascade; дыры+мыло → W2b plan | W2b mesh repair + preprocess_mesh |
-| 2026-07-29 | Pedrokita | `worker_mvadapter.py` + full `Dockerfile.mvadapter` + `test_req_mvadapter.py` + `build-mvadapter.yml` CI | Build image → deploy endpoint → W2b smoke |
+| 2026-07-29 | Pedrokita | Endpoint `ggjypsxh0u1djj` deployed; smoke fail spandrel→cv2; CI fixes pushed | New Release + smoke retry |
 | 2026-07-24 | Pedrokita | W2 GO: MV-Adapter Apache-2.0; spike.md + Dockerfile.mvadapter | Pod smoke рыцарь |
 | 2026-07-23 | Pedrokita | Texture endpoint `a968zrhd6hmj7s`; UA fix; infer smoke OK; warm ops idle=60 / no pre-heal | R2 retest smoke; Studio T1c |
 

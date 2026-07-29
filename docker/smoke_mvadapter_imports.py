@@ -14,6 +14,7 @@ PURE_PACKAGES: tuple[str, ...] = (
     "transformers",
     "accelerate",
     "spandrel",
+    "cv2",
 )
 
 # import name -> pip dist candidates (git installs may omit metadata)
