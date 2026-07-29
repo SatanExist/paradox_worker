@@ -14,7 +14,11 @@ PURE_PACKAGES: tuple[str, ...] = (
     "transformers",
     "accelerate",
     "spandrel",
-    "cv2",
+)
+
+# pip dist names verified without import (opencv can be finicky on buildx)
+PIP_DIST_PACKAGES: tuple[tuple[str, ...], ...] = (
+    ("opencv-python-headless", "opencv_python_headless"),
 )
 
 # import name -> pip dist candidates (git installs may omit metadata)
@@ -72,6 +76,13 @@ def _find_extension_so(keyword: str) -> list[pathlib.Path]:
     return unique
 
 
+def verify_pip_dist(dist_names: tuple[str, ...]) -> None:
+    version = _dist_version(dist_names)
+    if version == "unknown":
+        raise RuntimeError(f"package not installed: {dist_names[0]}")
+    print(f"{dist_names[0]}=={version}: OK")
+
+
 def verify_pure_import(import_name: str) -> None:
     module = __import__(import_name)
     version = getattr(module, "__version__", "unknown")
@@ -99,6 +110,14 @@ def verify_mvadapter_repo() -> None:
 
 
 def main() -> int:
+    for dist_names in PIP_DIST_PACKAGES:
+        try:
+            verify_pip_dist(dist_names)
+        except Exception:
+            traceback.print_exc()
+            print(f"verify failed: {dist_names[0]}", file=sys.stderr)
+            return 1
+
     for import_name in PURE_PACKAGES:
         try:
             verify_pure_import(import_name)
