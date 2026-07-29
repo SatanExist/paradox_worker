@@ -114,13 +114,23 @@ def verify_mvadapter_repo() -> None:
 
 
 def verify_open3d_headless() -> None:
+    init_path = None
+    spec = importlib.util.find_spec("open3d")
+    if spec is not None and spec.origin:
+        init_path = pathlib.Path(spec.origin)
+    if init_path is None or not init_path.is_file():
+        raise RuntimeError("open3d __init__.py not found")
+
+    init_text = init_path.read_text(encoding="utf-8")
+    if "# paradox: headless uv-atlas" not in init_text:
+        raise RuntimeError("open3d headless patch marker missing")
+
     import open3d as o3d
 
-    init_text = pathlib.Path(o3d.__file__).read_text(encoding="utf-8")
-    if "import open3d.visualization\n" in init_text and "# paradox: skip visualization" not in init_text:
-        raise RuntimeError("open3d visualization import was not patched")
     if not hasattr(o3d, "core") or not hasattr(o3d, "t"):
         raise RuntimeError("open3d missing core/t after headless patch")
+    # Touch the tensor API used by MV-Adapter mesh_process / UV atlas.
+    _ = o3d.core.Device("CPU:0")
     version = getattr(o3d, "__version__", "unknown")
     print(f"open3d=={version} headless core/t: OK")
 

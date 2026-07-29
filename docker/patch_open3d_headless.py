@@ -1,7 +1,11 @@
-"""Patch Open3D __init__.py without importing the package (avoids dash/plotly)."""
+"""Patch Open3D __init__.py for headless UV-atlas use (no dash/plotly/ml GUI).
+
+Must not import open3d — visualization/ml fail without optional deps.
+"""
 from __future__ import annotations
 
 import importlib.util
+import re
 import site
 from pathlib import Path
 
@@ -19,24 +23,40 @@ def _find_open3d_init() -> Path:
     raise FileNotFoundError("open3d package not found in site-packages")
 
 
+def _comment_line(text: str, needle: str, reason: str) -> str:
+    if f"# paradox: skip {reason}" in text:
+        return text
+    if needle not in text:
+        raise SystemExit(f"patch target missing ({needle!r})")
+    return text.replace(
+        needle,
+        f"# paradox: skip {reason}\n# {needle}",
+        1,
+    )
+
+
 def main() -> None:
     init_path = _find_open3d_init()
     text = init_path.read_text(encoding="utf-8")
-    if "# paradox: skip visualization" in text:
+    if "# paradox: headless uv-atlas" in text:
         print(f"already patched: {init_path}")
         return
 
-    needle = "import open3d.visualization"
-    if needle not in text:
-        raise SystemExit(f"patch target missing in {init_path}")
+    # Mark file so smoke can detect the patch set.
+    text = "# paradox: headless uv-atlas\n" + text
 
-    patched = text.replace(
-        needle,
-        "# paradox: skip visualization (dash/plotly) — UV atlas only\n"
-        "# import open3d.visualization",
-        1,
+    text = _comment_line(text, "import open3d.visualization", "visualization")
+    text = _comment_line(text, "import open3d.ml", "ml")
+
+    # Jupyter block may still reference open3d.visualization.* — disable it.
+    text = re.sub(
+        r'if _build_config\["BUILD_JUPYTER_EXTENSION"\]',
+        'if False and _build_config["BUILD_JUPYTER_EXTENSION"]  # paradox: skip jupyter',
+        text,
+        count=1,
     )
-    init_path.write_text(patched, encoding="utf-8")
+
+    init_path.write_text(text, encoding="utf-8")
     print(f"patched: {init_path}")
 
 
