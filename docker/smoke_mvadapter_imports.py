@@ -4,14 +4,9 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import pathlib
+import site
 import sys
 import traceback
-
-# pip distribution name -> import name (CUDA extensions: verify .so, do not import)
-BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
-    ("nvdiffrast", "nvdiffrast"),
-    ("cvcuda-cu12", "cvcuda"),
-)
 
 PURE_PACKAGES: tuple[str, ...] = (
     "torch",
@@ -20,41 +15,73 @@ PURE_PACKAGES: tuple[str, ...] = (
     "accelerate",
 )
 
+# import name -> pip dist candidates (git installs may omit metadata)
+BUILT_EXTENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("nvdiffrast", ("nvdiffrast",)),
+    ("cvcuda", ("cvcuda-cu12", "cvcuda")),
+)
 
-def _package_root(import_name: str) -> pathlib.Path:
+
+def _package_root(import_name: str) -> pathlib.Path | None:
     spec = importlib.util.find_spec(import_name)
     if spec is None:
-        raise ImportError(f"find_spec({import_name!r}) returned None")
+        return None
     if spec.submodule_search_locations:
         return pathlib.Path(next(iter(spec.submodule_search_locations)))
     if spec.origin:
         return pathlib.Path(spec.origin).parent
-    raise ImportError(f"cannot resolve package root for {import_name!r}")
+    return None
 
 
-def _dist_version(dist_name: str) -> str:
-    candidates = {dist_name, dist_name.replace("-", "_"), dist_name.replace("_", "-")}
-    for candidate in candidates:
-        try:
-            return importlib.metadata.version(candidate)
-        except importlib.metadata.PackageNotFoundError:
+def _dist_version(dist_names: tuple[str, ...]) -> str:
+    for dist_name in dist_names:
+        candidates = {dist_name, dist_name.replace("-", "_"), dist_name.replace("_", "-")}
+        for candidate in candidates:
+            try:
+                return importlib.metadata.version(candidate)
+            except importlib.metadata.PackageNotFoundError:
+                continue
+    return "unknown"
+
+
+def _find_extension_so(keyword: str) -> list[pathlib.Path]:
+    found: list[pathlib.Path] = []
+    root = _package_root(keyword)
+    if root is not None:
+        found.extend(root.rglob("*.so"))
+
+    for sp in site.getsitepackages():
+        base = pathlib.Path(sp)
+        if not base.is_dir():
             continue
-    raise importlib.metadata.PackageNotFoundError(dist_name)
+        for so in base.rglob("*.so"):
+            if keyword.lower() in str(so).lower():
+                found.append(so)
 
-
-def verify_built_package(dist_name: str, import_name: str) -> None:
-    version = _dist_version(dist_name)
-    root = _package_root(import_name)
-    shared_objects = list(root.rglob("*.so"))
-    if not shared_objects:
-        raise RuntimeError(f"{import_name}: no compiled .so under {root}")
-    print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
+    # de-dupe while preserving order
+    seen: set[str] = set()
+    unique: list[pathlib.Path] = []
+    for path in found:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def verify_pure_import(import_name: str) -> None:
     module = __import__(import_name)
     version = getattr(module, "__version__", "unknown")
     print(f"{import_name}=={version}: OK")
+
+
+def verify_built_extension(import_name: str, dist_names: tuple[str, ...]) -> None:
+    version = _dist_version(dist_names)
+    shared_objects = _find_extension_so(import_name)
+    if not shared_objects:
+        raise RuntimeError(f"{import_name}: no compiled .so found in site-packages")
+    print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
 
 
 def verify_mvadapter_repo() -> None:
@@ -66,7 +93,7 @@ def verify_mvadapter_repo() -> None:
         path = checkpoints / name
         if not path.is_file() or path.stat().st_size < 1024:
             raise RuntimeError(f"checkpoint missing or too small: {path}")
-    print(f"MV-Adapter repo + checkpoints: OK")
+    print("MV-Adapter repo + checkpoints: OK")
 
 
 def main() -> int:
@@ -78,9 +105,9 @@ def main() -> int:
             print(f"verify failed: {import_name}", file=sys.stderr)
             return 1
 
-    for dist_name, import_name in BUILT_PACKAGES:
+    for import_name, dist_names in BUILT_EXTENSIONS:
         try:
-            verify_built_package(dist_name, import_name)
+            verify_built_extension(import_name, dist_names)
         except Exception:
             traceback.print_exc()
             print(f"verify failed: {import_name}", file=sys.stderr)
