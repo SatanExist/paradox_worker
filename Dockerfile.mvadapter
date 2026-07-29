@@ -68,8 +68,10 @@ RUN pip install --no-cache-dir "cvcuda-cu12==0.16.0"
 # ── extra texture helpers ────────────────────────────────────────────
 # open3d declared deps pull dash/flask/jupyter — not needed for UV atlas;
 # install wheel only (--no-deps). pymeshlab pin matches MV-Adapter Percentage API.
+# matplotlib is imported by mvadapter.utils.saving (not an open3d GUI dep).
 RUN pip install --no-cache-dir \
-        gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless && \
+        gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless \
+        matplotlib && \
     pip install --no-cache-dir "pymeshlab==2022.2.post3" && \
     pip install --no-cache-dir --no-deps "open3d==0.18.0"
 

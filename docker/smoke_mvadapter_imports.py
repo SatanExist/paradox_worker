@@ -17,6 +17,7 @@ PURE_PACKAGES: tuple[str, ...] = (
     "imageio",
     "pymeshlab",
     "gltflib",
+    "matplotlib",
 )
 
 # pip dist names verified without import (opencv can be finicky on buildx;
