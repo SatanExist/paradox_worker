@@ -15,12 +15,15 @@ PURE_PACKAGES: tuple[str, ...] = (
     "accelerate",
     "spandrel",
     "imageio",
-    "open3d",
+    "pymeshlab",
+    "gltflib",
 )
 
-# pip dist names verified without import (opencv can be finicky on buildx)
+# pip dist names verified without import (opencv can be finicky on buildx;
+# open3d may touch GUI/OpenGL at import time)
 PIP_DIST_PACKAGES: tuple[tuple[str, ...], ...] = (
     ("opencv-python-headless", "opencv_python_headless"),
+    ("open3d",),
 )
 
 # import name -> pip dist candidates (git installs may omit metadata)

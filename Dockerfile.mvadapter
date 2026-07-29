@@ -24,7 +24,7 @@ WORKDIR /app
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         ninja-build build-essential wget unzip \
-        libgl1 libegl1 libglib2.0-0 && \
+        libgl1 libegl1 libglib2.0-0 libgomp1 libx11-6 libxi6 libxxf86vm1 && \
     rm -rf /var/lib/apt/lists/*
 
 # ── pin torch 2.4.1+cu124 ───────────────────────────────────────────
@@ -66,9 +66,12 @@ RUN pip install --no-cache-dir --no-build-isolation --ignore-installed \
 RUN pip install --no-cache-dir "cvcuda-cu12==0.16.0"
 
 # ── extra texture helpers ────────────────────────────────────────────
+# open3d declared deps pull dash/flask/jupyter — not needed for UV atlas;
+# install wheel only (--no-deps). pymeshlab pin matches MV-Adapter Percentage API.
 RUN pip install --no-cache-dir \
-    gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless \
-    pymeshlab==2022.2.post3 open3d
+        gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless && \
+    pip install --no-cache-dir "pymeshlab==2022.2.post3" && \
+    pip install --no-cache-dir --no-deps "open3d==0.18.0"
 
 # ── checkpoints (RealESRGAN + LaMa inpainter) ───────────────────────
 RUN mkdir -p /app/MV-Adapter/checkpoints && \
