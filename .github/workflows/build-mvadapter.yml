@@ -6,6 +6,7 @@ on:
     paths:
       - "Dockerfile.mvadapter"
       - "worker_mvadapter.py"
+      - "docker/smoke_mvadapter_imports.py"
       - ".github/workflows/build-mvadapter.yml"
   workflow_dispatch:
 
