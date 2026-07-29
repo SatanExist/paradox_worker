@@ -82,7 +82,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
 | Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
 | **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
-| **MV-Adapter** | *(pending)* | — | EU-RO-1 | TBD | `worker_mvadapter.py` + CI ready; ждём build+deploy |
+| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume (пока) | image `mvadapter-latest`; max workers=1; smoke next |
 
 **`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)

@@ -67,7 +67,7 @@ RUN pip install --no-cache-dir --no-build-isolation --ignore-installed \
 RUN pip install --no-cache-dir "cvcuda-cu12==0.16.0"
 
 # ── extra texture helpers ────────────────────────────────────────────
-RUN pip install --no-cache-dir gltflib jaxtyping typeguard
+RUN pip install --no-cache-dir gltflib jaxtyping typeguard spandrel
 
 # ── checkpoints (RealESRGAN + LaMa inpainter) ───────────────────────
 RUN mkdir -p /app/MV-Adapter/checkpoints && \
