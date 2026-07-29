@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>paradox_worker — local GLB preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #eee; }
+    #bar {
+      padding: 10px 14px; background: #2a2a2a; border-bottom: 1px solid #444;
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    }
+    #bar a { color: #f88; }
+    #bar select, #bar button { padding: 6px 10px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+    #status { font-size: 13px; color: #aaa; flex: 1; min-width: 200px; }
+    #canvas-wrap { width: 100vw; height: calc(100vh - 52px); }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <strong>GLB preview</strong>
+    <select id="file">
+      <option value="../model-armor-clay_repaired.glb">Track A clay seed 42 REPAIRED</option>
+      <option value="../model-armor-clay-seed1.glb">Track A clay seed 1</option>
+      <option value="../model-armor-clay-seed7.glb">Track A clay seed 7</option>
+      <option value="../model-armor-clay-seed42.glb">Track A clay seed 42 (winner)</option>
+      <option value="../model-armor-clay-seed123.glb">Track A clay seed 123</option>
+      <option value="../knight_i2tex_shaded.glb">MV-Adapter knight_i2tex (W2 smoke)</option>
+      <option value="../model-armor-wow.glb">Armor cascade textured (baseline)</option>
+      <option value="../model-wow-baseline.glb">W1 cascade textured 2048 (chest)</option>
+      <option value="../model-tex-matte.glb">v1 paint matte (грязный albedo)</option>
+      <option value="../model-tex.glb">v1 paint original</option>
+      <option value="../model-t2-chest-seed7.glb">v0 bake T2 chest seed7</option>
+      <option value="../model-t2-chest-seed1.glb">v0 bake T2 chest seed1</option>
+      <option value="../model-clay.glb">clay</option>
+    </select>
+    <button id="reload">Reload</button>
+    <label><input type="checkbox" id="wireframe" /> Wireframe</label>
+    <label><input type="checkbox" id="fixMat" checked /> Fix metallic (Blender-like)</label>
+    <span id="status">Loading…</span>
+  </div>
+  <div id="canvas-wrap"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const wrap = document.getElementById('canvas-wrap');
+    const status = document.getElementById('status');
+    const fileSel = document.getElementById('file');
+    const fixMat = document.getElementById('fixMat');
+    const wireframe = document.getElementById('wireframe');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    wrap.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2a2a2a);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+    camera.position.set(1.5, 1, 1.5);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(2, 3, 2);
+    scene.add(dir);
+    scene.add(new THREE.GridHelper(2, 20, 0x444444, 0x333333));
+
+    let root = null;
+
+    function resize() {
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function applyFixes(obj) {
+      obj.traverse((child) => {
+        if (!child.isMesh) return;
+        child.material = child.material.clone();
+        child.material.wireframe = wireframe.checked;
+        if (fixMat.checked && child.material.metalness !== undefined) {
+          child.material.metalness = 0.0;
+          child.material.roughness = 0.85;
+        }
+      });
+    }
+
+    function frameObject(obj) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      controls.target.copy(center);
+      camera.position.copy(center).add(new THREE.Vector3(maxDim * 1.2, maxDim * 0.9, maxDim * 1.2));
+      camera.near = maxDim / 100;
+      camera.far = maxDim * 100;
+      camera.updateProjectionMatrix();
+    }
+
+    async function load(name) {
+      status.textContent = `Loading ${name}…`;
+      if (root) { scene.remove(root); root = null; }
+      const loader = new GLTFLoader();
+      try {
+        const gltf = await loader.loadAsync(name);
+        root = gltf.scene;
+        applyFixes(root);
+        scene.add(root);
+        frameObject(root);
+        let verts = 0, tris = 0;
+        root.traverse((c) => {
+          if (c.isMesh && c.geometry) {
+            const g = c.geometry;
+            verts += g.attributes.position?.count || 0;
+            tris += g.index ? g.index.count / 3 : verts / 3;
+          }
+        });
+        status.textContent = `${name} OK — ~${Math.round(verts).toLocaleString()} verts, ~${Math.round(tris).toLocaleString()} tris`;
+      } catch (e) {
+        status.textContent = `Error: ${e.message}. Run: python -m http.server 8765 from repo root.`;
+        console.error(e);
+      }
+    }
+
+    document.getElementById('reload').onclick = () => load(fileSel.value);
+    fileSel.onchange = () => load(fileSel.value);
+    wireframe.onchange = () => { if (root) applyFixes(root); };
+    fixMat.onchange = () => { if (root) applyFixes(root); };
+
+    const params = new URLSearchParams(location.search);
+    const q = params.get('file');
+    if (q) fileSel.value = q.startsWith('../') ? q : `../${q}`;
+    if (params.get('wireframe') === '1') wireframe.checked = true;
+    load(fileSel.value);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

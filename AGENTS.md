@@ -2,7 +2,8 @@
 
 RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.  
 Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`.  
-Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`.
+Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`.  
+Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.py`.
 
 ## С чего начать
 
@@ -20,6 +21,7 @@ Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture
 python test_req.py                    # тест v1 endpoint (async + fallback)
 python test_req_trellis2.py           # тест quality endpoint (TRELLIS.2)
 python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 (needs ENDPOINT)
+python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v2 MV-Adapter (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier preview
 python scripts/studio_api.py   # http://127.0.0.1:8787/docs
@@ -27,6 +29,7 @@ python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
 docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
+docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow texture
 ```
 
 ## Memory bank
@@ -34,7 +37,10 @@ docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
 | Файл | Назначение |
 |------|------------|
 | `memory-bank/projectbrief.md` | Зачем существует проект |
-| `memory-bank/platformRoadmap.md` | **План AI_MESH: 4 фичи, модели, фазы, economics** |
+| `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
+| `scripts/mvadapter_w2_spike.md` | Чеклист Pod smoke `texture_i2tex` |
+| `Dockerfile.mvadapter` | MV-Adapter texture worker image |
+| `worker_mvadapter.py` | RunPod handler: mesh+image → MV-Adapter textured GLB |
 | `memory-bank/techContext.md` | Стек, API, секреты |
 | `memory-bank/systemPatterns.md` | Pipeline, решения |
 | `memory-bank/activeContext.md` | **Обновлять каждую сессию + push** |

@@ -22,6 +22,9 @@
 | `Dockerfile` | v1 контейнер (CUDA 11.8) |
 | `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
 | `Dockerfile.texture` | mesh paint (тот же стек, CMD → `worker_texture.py`) |
+| `worker_mvadapter.py` | MV-Adapter texture: mesh+image → `texture_i2tex` subprocess → R2 GLB |
+| `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |
+| `test_req_mvadapter.py` | Smoke test MV-Adapter endpoint (`RUNPOD_ENDPOINT_ID_MVADAPTER`) |
 | `test_req.py` | Smoke test v1 endpoint |
 | `runpod_queue_watchdog.py` | Zombie IN_QUEUE detect + DELETE ghost pods + retry |
 | `test_req_trellis2.py` | Smoke T2 + watchdog/heal; R2 download |

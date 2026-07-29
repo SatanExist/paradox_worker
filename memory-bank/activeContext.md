@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-23** — Texture v1 endpoint live + warm ops
+Последнее обновление: **2026-07-29** — Serverless MV-Adapter worker ready; CI workflow `build-mvadapter.yml`; ждём build+deploy
 
 ---
 
@@ -16,39 +16,44 @@
 | ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
 | Ветка worker | `feat/trellis2-poc` |
 | T2 image | `trellis2-sha-6d763fa` |
-| Texture image | `texture-sha-c6fa8b5` |
-| Фокус | Texture v1 smoke/R2; Studio v0 bake; T1c wiring next |
+| Texture image | `texture-sha-c6fa8b5` (paint — **frozen**, не prod) |
+| Фокус | **Вау-стек** → `textureWowPlan.md` (§ T2 vs MV-Adapter) |
 
 ---
 
 ## Текущий фокус
 
-**Generate = clay.** Texture = отдельный шаг + отдельный endpoint.
+**Держимся — прорвёмся.** W2 **GO** (MV-Adapter).
 
-| Версия | Что |
-|--------|-----|
-| **v0 (Studio)** | clay → «Наложить текстуру» → `texture_mode=textured` (legacy bake, 6 cr) |
-| **v1 (live POC)** | endpoint `a968zrhd6hmj7s` + `worker_texture.py` — mesh paint; Studio ещё на v0 |
+Детали: `textureWowPlan.md` § W2 checklist + `scripts/mvadapter_w2_spike.md`.
 
-**Seed:** only same model+image. Best-of-N отложен.
+| | TRELLIS.2 | MV-Adapter (W2) |
+|--|-----------|-----------------|
+| Даёт | mid clay/generate | скачок tex с 1 фото |
+| License | MIT | **Apache-2.0** ✅ |
+| Entry | worker_trellis2 | `scripts.texture_i2tex` → `*_shaded.glb` |
+| Сейчас | live mid | **W2 smoke ✅** → W2b (mesh repair, PNG/PBR) |
 
-**Release T2:** ✅ `trellis2-sha-6d763fa`.  
-**Release texture:** ✅ `texture-sha-c6fa8b5` (User-Agent fix для R2 download).  
-**New Release** нужен только при смене **Docker image**; смена env подхватывается новым worker’ом без Release.
+| Фаза | Статус |
+|------|--------|
+| 0–1 | ✅ |
+| 2 MV-Adapter | 🔄 **W2 smoke ✅** partial; **W2b** mesh+tex tuning |
+| 3 texture-v2 worker | 🔄 `worker_mvadapter.py` + CI ready; ждём build+deploy |
 
+**T1c** — не делать.
 ---
 
 ## Очередь спринта
 
 | # | Задача | Репо | Статус |
 |---|--------|------|--------|
-| 1–6 | Recipes → credits mock | POLY_LAB | ✅ |
-| T0 | Texture job UI/API (legacy bake) | POLY_LAB | ✅ |
-| T1a | Scaffold mesh-paint worker + contract | paradox_worker | ✅ |
-| T1b | Texture endpoint + smoke (infer OK; R2 retest) | paradox_worker | 🔄 |
-| T1c | Studio: v1 endpoint если `RUNPOD_ENDPOINT_ID_TEXTURE` else v0 | POLY_LAB | ⬜ |
-| — | Clerk/Stripe | POLY_LAB | ⬜ |
-| — | Warm ops без `workersMin` (heal + idle 60) | RunPod + Studio | ✅ |
+| W0 | Зафиксировать wow-plan в memory | paradox_worker | ✅ |
+| W1 | Cascade baseline + armor A/B vs Meshy | paradox_worker | ✅ проигрыш по sharpness |
+| W2 | Spike MV-Adapter knight — `knight_i2tex_shaded.glb` | paradox_worker | ✅ partial pass |
+| W2b | Mesh repair, preprocess_mesh, PNG/PBR, второй прогон | paradox_worker | 🔄 seed42 repaired → MV v2 |
+| W3 | MV-Adapter Serverless endpoint | paradox_worker | 🔄 code+CI done; build+deploy next |
+| T1c | Studio → paint v1 | POLY_LAB | ⏸ frozen |
+| — | Clerk/Stripe | POLY_LAB | ⏸ |
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
 
@@ -77,6 +82,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
 | Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
 | **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
+| **MV-Adapter** | *(pending)* | — | EU-RO-1 | TBD | `worker_mvadapter.py` + CI ready; ждём build+deploy |
 
 **`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
@@ -88,7 +94,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 
 **Volume T2 содержит:** `trellis2-weights/`, `dinov3-vitl16-pretrain-lvd1689m/`, `outputs/`, `huggingface_cache/`
 
-**CI:** `build-trellis2.yml` → `:trellis2-*`; `build-texture.yml` → `:texture-latest` / `:texture-sha-*` (thin overlay на trellis2).  
+**CI:** `build-trellis2.yml` → `:trellis2-*`; `build-texture.yml` → `:texture-*` (thin overlay); `build-mvadapter.yml` → `:mvadapter-latest` / `:mvadapter-sha-*`.  
 **RunPod Flash** — не используем. **FlashBoot** — **off**.
 
 **Texture smoke (2026-07-23):**
@@ -328,6 +334,10 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-23 | Pedrokita | Texture v0: Studio action=texture → legacy bake | Mesh paint worker (T1) |
 | 2026-07-23 | Pedrokita | T1a scaffold: `worker_texture.py`, Dockerfile.texture, test_req_texture | T1b: build+endpoint+smoke |
 | 2026-07-23 | Pedrokita | Thin texture Dockerfile + `build-texture.yml` → GHCR | Ждать CI; создать RunPod endpoint |
+| 2026-07-24 | Pedrokita | Баланс OK → Pod `zhdeac3dd4otww` A6000; zip `mvadapter_w2_upload.zip` | Upload + bootstrap smoke |
+| 2026-07-28 | Pedrokita | W2 smoke green: `knight_i2tex_shaded.glb`; A/B лучше cascade; дыры+мыло → W2b plan | W2b mesh repair + preprocess_mesh |
+| 2026-07-29 | Pedrokita | `worker_mvadapter.py` + full `Dockerfile.mvadapter` + `test_req_mvadapter.py` + `build-mvadapter.yml` CI | Build image → deploy endpoint → W2b smoke |
+| 2026-07-24 | Pedrokita | W2 GO: MV-Adapter Apache-2.0; spike.md + Dockerfile.mvadapter | Pod smoke рыцарь |
 | 2026-07-23 | Pedrokita | Texture endpoint `a968zrhd6hmj7s`; UA fix; infer smoke OK; warm ops idle=60 / no pre-heal | R2 retest smoke; Studio T1c |
 
 ---
@@ -336,6 +346,10 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-07-28 | **W2 smoke partial pass** | Tex лучше cascade; дыры = mesh T2 + UV gaps; мыло = JPEG + нет PBR |
+| 2026-07-24 | **Meshy рыцарь = эталон** (1 photo): меш+зад+tex | Наш cascade mid; вау через новый stack |
+| 2026-07-24 | **Meshy вау с 1 фото** — не user multi-view | Разрыв = их synth MV + models; наш cascade проигрывает |
+| 2026-07-24 | **Вау-first по текстурам** | Paint v1 frozen; T1c off; план `textureWowPlan.md`; цель 1 img → synth MV → bake |
 | 2026-07-23 | **Texture v1 = отдельный endpoint/образ** (не мультитаск на T2) | Endpoint `a968zrhd6hmj7s`; image `texture-sha-c6fa8b5`; volume тот же `paradox-trellis2`. v0 bake = Studio fallback |
 | 2026-07-23 | Warm без `workersMin` | idleTimeout=60; не heal перед submit; always-on слишком дорого для POC |
 | 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |

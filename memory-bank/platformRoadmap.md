@@ -145,19 +145,29 @@
 
 ## Фича 3: ИИ текстурирование
 
-**Два сценария:**
+> **Активный план (2026-07-24):** `@memory-bank/textureWowPlan.md` — вау-first, 2–4 месяца.
 
-1. **Retexture** — есть mesh + новый prompt/картинка → новые PBR maps.
-2. **Re-bake** — после ретopo перезапечь текстуры на новых UV.
+**Сценарии:**
 
-| Модель | Назначение | VRAM | EU |
-|--------|------------|------|-----|
-| TRELLIS mesh painting | text/image guided paint | ~8 GB | ✅ MIT |
-| Bake pipeline (nvdiffrast) | multiview → bake | как generate | ✅ |
+1. **Generate-time bake** — `texture_mode=textured` вместе с shape (mid baseline).
+2. **Wow retexture** — clay + multi-view diffusion → UV bake → PBR (цель ≈ Meshy).
+3. **Legacy TRELLIS paint** — POC only; **не prod** (грязный albedo).
+
+| Стек | Назначение | VRAM | EU | Статус |
+|------|------------|------|-----|--------|
+| TRELLIS.2 bake (v0) | mid textured GLB | 24 GB | ✅ MIT | Studio сейчас |
+| TRELLIS.2 paint (v1) | mesh+image paint | 24 GB | ✅ MIT | frozen |
+| **MVPainter** | multi-view + PBR paint | **≥40 GB** | ✅ Apache-2.0 | кандидат Фазы 2 |
+| MV-Adapter + bake | multi-view → nvdiffrast | ~24 GB | ✅ | backup на 4090 |
+| Hunyuan3D-Paint | сильные текстуры | 10–29 GB | ❌ EU ban | нет |
 
 **Не для EU prod:** Hunyuan3D-Paint (Tencent Community License, EU/UK/KR excluded).
 
-**COGS (оценка):** ~$0.05–0.10/job.
+**COGS (оценка):** bake ~$0.05–0.15; wow multi-view ~$0.10–0.30/job (40GB GPU).
+
+**Критерий:** props/characters визуально близко к Meshy Texture **с одной картинки** (synth multi-view внутри); не «чуть лучше seed7».
+
+**A/B 2026-07-24:** рыцарь 1 photo — Meshy чёткий; наш `1024_cascade`+tex2048 — мыльный. См. `textureWowPlan.md`.
 
 ---
 
