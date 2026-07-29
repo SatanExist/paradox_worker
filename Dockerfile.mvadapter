@@ -46,13 +46,13 @@ RUN pip install --no-cache-dir \
 RUN git clone --depth 1 https://github.com/huanngzh/MV-Adapter.git /app/MV-Adapter
 
 # ── MV-Adapter requirements (minus torch/nvdiffrast/cvcuda) ─────────
-RUN grep -vE 'nvdiffrast|cvcuda|^torch$|^torchvision$|^torchaudio$|git\+https://github.com/NVlabs/nvdiffrast' \
+RUN grep -vE 'nvdiffrast|cvcuda|opencv-python|^torch$|^torchvision$|^torchaudio$|git\+https://github.com/NVlabs/nvdiffrast|^open3d$|^gradio$|^pytorch-lightning$' \
         /app/MV-Adapter/requirements.txt > /tmp/mvadapter_reqs.txt && \
     echo "torch==2.4.1+cu124" > /tmp/constraints.txt && \
     echo "torchvision==0.19.1+cu124" >> /tmp/constraints.txt && \
     echo "torchaudio==2.4.1+cu124" >> /tmp/constraints.txt && \
     PIP_CONSTRAINT=/tmp/constraints.txt \
-        pip install --no-cache-dir --ignore-installed -r /tmp/mvadapter_reqs.txt || true
+        pip install --no-cache-dir --ignore-installed -r /tmp/mvadapter_reqs.txt
 
 # ── re-pin torch (deps may have pulled a different version) ──────────
 RUN pip install --no-cache-dir --force-reinstall \
@@ -66,8 +66,10 @@ RUN pip install --no-cache-dir --no-build-isolation --ignore-installed \
 # ── CV-CUDA (texture uv_padding) ────────────────────────────────────
 RUN pip install --no-cache-dir "cvcuda-cu12==0.16.0"
 
-# ── extra texture helpers ────────────────────────────────────────────
-RUN pip install --no-cache-dir gltflib jaxtyping typeguard spandrel opencv-python-headless
+# ── extra texture helpers (imageio not in upstream requirements.txt) ─
+RUN pip install --no-cache-dir \
+    gltflib jaxtyping typeguard spandrel==0.4.1 opencv-python-headless \
+    imageio pymeshlab==2022.2.post3
 
 # ── checkpoints (RealESRGAN + LaMa inpainter) ───────────────────────
 RUN mkdir -p /app/MV-Adapter/checkpoints && \

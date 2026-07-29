@@ -14,6 +14,7 @@ PURE_PACKAGES: tuple[str, ...] = (
     "transformers",
     "accelerate",
     "spandrel",
+    "imageio",
 )
 
 # pip dist names verified without import (opencv can be finicky on buildx)
