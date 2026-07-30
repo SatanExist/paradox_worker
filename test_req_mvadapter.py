@@ -5,6 +5,10 @@ Contract:
   output: model_url | model_base64 | model_path (+ billing)
 
 Requires RUNPOD_ENDPOINT_ID_MVADAPTER env var.
+
+Ops: keep endpoint workersMin=0 (no always-on GPU). This script does NOT bump
+workersMin. Expect throttled / cold start before IN_PROGRESS (often 5–15 min).
+Only heal on zombie queue (idle/ready + stuck IN_QUEUE), not before every submit.
 """
 
 from __future__ import annotations
@@ -25,8 +29,9 @@ load_dotenv()
 ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID_MVADAPTER", "").strip()
 API_KEY = os.getenv("RUNPOD_API_KEY")
 
-DEFAULT_ZOMBIE_AFTER_S = float(os.getenv("MVADAPTER_ZOMBIE_AFTER_S", "120"))
+DEFAULT_ZOMBIE_AFTER_S = float(os.getenv("MVADAPTER_ZOMBIE_AFTER_S", "300"))
 DEFAULT_ZOMBIE_RETRIES = int(os.getenv("MVADAPTER_ZOMBIE_RETRIES", "2"))
+DEFAULT_MAX_WAIT_S = float(os.getenv("MVADAPTER_MAX_WAIT_S", str(45 * 60)))
 
 
 def sanitize(payload: dict) -> dict:
@@ -106,6 +111,7 @@ def main() -> int:
 
     job_input = build_input(args)
     print(f"Endpoint: {ENDPOINT_ID}")
+    print("Ops: workersMin=0 expected — cold/throttled wait before GPU (no always-on billing).")
     print(f"Job input: {job_input}")
 
     if args.no_zombie_watch:
@@ -114,7 +120,7 @@ def main() -> int:
         job_id = submit_job(ENDPOINT_ID, API_KEY, job_input)
         final = wait_for_job(
             ENDPOINT_ID, job_id, API_KEY,
-            zombie_after_s=1e9, max_wait_s=30 * 60,
+            zombie_after_s=1e9, max_wait_s=DEFAULT_MAX_WAIT_S,
         )
         endpoint_used = ENDPOINT_ID
     else:
@@ -122,7 +128,7 @@ def main() -> int:
             ENDPOINT_ID, API_KEY, job_input,
             zombie_after_s=args.zombie_after,
             zombie_retries=args.zombie_retries,
-            max_wait_s=30 * 60,
+            max_wait_s=DEFAULT_MAX_WAIT_S,
             heal=True,
         )
 

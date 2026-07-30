@@ -65,7 +65,7 @@
 
 Endpoint: `workersMin=0` (без always-on — дорого), `workersStandby=2`, `idleTimeout=60` (T2 + texture). Первый job после простоя — cold; подряд в окне idle — **~25–31 с**. Studio warm ETA: **35 с**.
 
-**Ops без workersMin (2026-07-23):**
+**MV-Adapter ops:** `workersMin=0` всегда (тесты тоже — cold/throttled OK). Не поднимать min перед smoke. Heal только на zombie IN_QUEUE.
 - Не heal’ить перед каждым submit (Studio + smoke) — только на zombie / stuck IN_QUEUE
 - `idleTimeout=60` — `scripts/set_endpoint_idle.py --seconds 60 --apply`
 - Ручной heal: `python scripts/heal_t2_endpoint.py`
@@ -82,7 +82,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
 | Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
 | **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
-| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume | smoke #2 fail `cv2`; CI fix pushed, New Release → retry |
+| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume | **workersMin=0**; Release #9 fail (pipe hang); next `398264f` + cold smoke |
 
 **`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
