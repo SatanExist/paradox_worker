@@ -28,6 +28,7 @@ MVADAPTER_DIR = Path(os.environ.get("MVADAPTER_DIR", "/app/MV-Adapter"))
 DEFAULT_SEED = 1
 DEFAULT_OUTPUT_DIR = "/runpod-volume/outputs"
 DEFAULT_BASE64_MAX_BYTES = 5 * 1024 * 1024
+DEFAULT_TEXTURE_TIMEOUT_S = int(os.environ.get("MVADAPTER_TEXTURE_TIMEOUT_S", "1800"))
 
 
 def _coerce_int(value, default: int, *, min_val: int, max_val: int) -> int:
@@ -185,7 +186,7 @@ def _run_texture_i2tex(
         cwd=str(MVADAPTER_DIR),
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=DEFAULT_TEXTURE_TIMEOUT_S,
     )
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
