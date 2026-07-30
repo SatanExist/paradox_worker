@@ -1,11 +1,8 @@
-"""Patch Open3D __init__.py for headless UV-atlas use (no dash/plotly/ml GUI).
-
-Must not import open3d — visualization/ml fail without optional deps.
-"""
+"""Install headless Open3D __init__.py without importing the package."""
 from __future__ import annotations
 
 import importlib.util
-import re
+import shutil
 import site
 from pathlib import Path
 
@@ -23,41 +20,24 @@ def _find_open3d_init() -> Path:
     raise FileNotFoundError("open3d package not found in site-packages")
 
 
-def _comment_line(text: str, needle: str, reason: str) -> str:
-    if f"# paradox: skip {reason}" in text:
-        return text
-    if needle not in text:
-        raise SystemExit(f"patch target missing ({needle!r})")
-    return text.replace(
-        needle,
-        f"# paradox: skip {reason}\n# {needle}",
-        1,
-    )
-
-
 def main() -> None:
     init_path = _find_open3d_init()
+    replacement = Path("/tmp/open3d_headless_init.py")
+    if not replacement.is_file():
+        # Local/dev fallback next to this script
+        replacement = Path(__file__).resolve().with_name("open3d_headless_init.py")
+    if not replacement.is_file():
+        raise FileNotFoundError(f"headless init missing: {replacement}")
+
+    backup = init_path.with_suffix(".py.upstream")
+    if not backup.exists():
+        shutil.copy2(init_path, backup)
+
+    shutil.copy2(replacement, init_path)
     text = init_path.read_text(encoding="utf-8")
-    if "# paradox: headless uv-atlas" in text:
-        print(f"already patched: {init_path}")
-        return
-
-    # Mark file so smoke can detect the patch set.
-    text = "# paradox: headless uv-atlas\n" + text
-
-    text = _comment_line(text, "import open3d.visualization", "visualization")
-    text = _comment_line(text, "import open3d.ml", "ml")
-
-    # Jupyter block may still reference open3d.visualization.* — disable it.
-    text = re.sub(
-        r'if _build_config\["BUILD_JUPYTER_EXTENSION"\]',
-        'if False and _build_config["BUILD_JUPYTER_EXTENSION"]  # paradox: skip jupyter',
-        text,
-        count=1,
-    )
-
-    init_path.write_text(text, encoding="utf-8")
-    print(f"patched: {init_path}")
+    if "# paradox: headless uv-atlas" not in text:
+        raise SystemExit(f"replacement missing paradox marker: {init_path}")
+    print(f"replaced open3d __init__ with headless loader: {init_path}")
 
 
 if __name__ == "__main__":

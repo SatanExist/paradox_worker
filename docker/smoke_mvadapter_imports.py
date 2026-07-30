@@ -114,6 +114,10 @@ def verify_mvadapter_repo() -> None:
 
 
 def verify_open3d_headless() -> None:
+    version = _dist_version(("open3d-cpu", "open3d_cpu", "open3d"))
+    if version == "unknown":
+        raise RuntimeError("open3d-cpu/open3d package not installed")
+
     init_path = None
     spec = importlib.util.find_spec("open3d")
     if spec is not None and spec.origin:
@@ -131,8 +135,7 @@ def verify_open3d_headless() -> None:
         raise RuntimeError("open3d missing core/t after headless patch")
     # Touch the tensor API used by MV-Adapter mesh_process / UV atlas.
     _ = o3d.core.Device("CPU:0")
-    version = getattr(o3d, "__version__", "unknown")
-    print(f"open3d=={version} headless core/t: OK")
+    print(f"open3d-cpu=={version} headless core/t: OK")
 
 
 def main() -> int:
