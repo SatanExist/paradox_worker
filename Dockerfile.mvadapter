@@ -17,7 +17,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX" \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/runpod-volume/huggingface_cache \
-    OPEN3D_DISABLE_WEB_VISUALIZER=true
+    OPEN3D_DISABLE_WEB_VISUALIZER=true \
+    OPEN3D_CPU_RENDERING=true
 
 WORKDIR /app
 
@@ -25,7 +26,8 @@ WORKDIR /app
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         ninja-build build-essential wget unzip \
-        libgl1 libegl1 libglib2.0-0 libgomp1 libx11-6 libxi6 libxxf86vm1 && \
+        libgl1 libegl1 libglib2.0-0 libgomp1 libx11-6 libxi6 libxxf86vm1 \
+        libxext6 libxrender1 libsm6 libglvnd0 && \
     rm -rf /var/lib/apt/lists/*
 
 # ── pin torch 2.4.1+cu124 ───────────────────────────────────────────
@@ -94,7 +96,7 @@ RUN pip install --no-cache-dir runpod boto3 Pillow requests trimesh
 
 # ── build-time smoke (no GPU import on CI buildx) ───────────────────
 COPY docker/smoke_mvadapter_imports.py /tmp/smoke_mvadapter_imports.py
-RUN python /tmp/smoke_mvadapter_imports.py
+RUN python -u /tmp/smoke_mvadapter_imports.py
 
 # ── build metadata ──────────────────────────────────────────────────
 ARG BUILD_SHA=dev
