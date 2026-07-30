@@ -10,6 +10,7 @@ on:
       - "docker/mvadapter_texture_reqs.txt"
       - "docker/patch_open3d_headless.py"
       - "docker/open3d_headless_init.py"
+      - "docker/mvadapter_serverless_i2tex.py"
       - ".github/workflows/build-mvadapter.yml"
   workflow_dispatch:
 

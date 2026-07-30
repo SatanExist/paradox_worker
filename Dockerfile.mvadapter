@@ -103,5 +103,6 @@ ARG BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${BUILD_SHA}
 
 COPY worker_mvadapter.py /app/worker_mvadapter.py
+COPY docker/mvadapter_serverless_i2tex.py /app/MV-Adapter/scripts/mvadapter_serverless_i2tex.py
 
 CMD ["python", "-u", "/app/worker_mvadapter.py"]

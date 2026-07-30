@@ -29,6 +29,11 @@ DEFAULT_SEED = 1
 DEFAULT_OUTPUT_DIR = "/runpod-volume/outputs"
 DEFAULT_BASE64_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_TEXTURE_TIMEOUT_S = int(os.environ.get("MVADAPTER_TEXTURE_TIMEOUT_S", "1800"))
+DEFAULT_FAST_TEXTURE = os.environ.get("MVADAPTER_FAST_TEXTURE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 def _coerce_int(value, default: int, *, min_val: int, max_val: int) -> int:
@@ -165,10 +170,16 @@ def _run_texture_i2tex(
     seed: int,
     remove_bg: bool,
     preprocess_mesh: bool,
+    fast_texture: bool,
 ) -> Path:
     """Run MV-Adapter texture_i2tex as subprocess and return the shaded GLB path."""
+    module = (
+        "scripts.mvadapter_serverless_i2tex"
+        if fast_texture
+        else "scripts.texture_i2tex"
+    )
     cmd = [
-        sys.executable, "-m", "scripts.texture_i2tex",
+        sys.executable, "-m", module,
         "--image", image_path,
         "--mesh", mesh_path,
         "--save_dir", save_dir,
@@ -180,7 +191,7 @@ def _run_texture_i2tex(
     if preprocess_mesh:
         cmd.append("--preprocess_mesh")
 
-    print(f"texture_i2tex cmd: {' '.join(cmd)}")
+    print(f"texture_i2tex cmd: {' '.join(cmd)} (fast_texture={fast_texture})")
     result = subprocess.run(
         cmd,
         cwd=str(MVADAPTER_DIR),
@@ -217,6 +228,7 @@ def handler(job):
     seed = _coerce_int(job_input.get("seed"), DEFAULT_SEED, min_val=0, max_val=2**31 - 1)
     remove_bg = _coerce_bool(job_input.get("remove_bg"), True)
     preprocess_mesh = _coerce_bool(job_input.get("preprocess_mesh"), True)
+    fast_texture = _coerce_bool(job_input.get("fast_texture"), DEFAULT_FAST_TEXTURE)
 
     if not mesh_url:
         return {"error": "Missing mesh_url (clay GLB) in job input"}
@@ -235,7 +247,7 @@ def handler(job):
         print(f"paradox_worker mvadapter build: {build_sha}")
         print(f"mesh_url={mesh_url}")
         print(f"image_url={image_url}")
-        print(f"seed={seed}, remove_bg={remove_bg}, preprocess_mesh={preprocess_mesh}")
+        print(f"seed={seed}, remove_bg={remove_bg}, preprocess_mesh={preprocess_mesh}, fast_texture={fast_texture}")
 
         t_dl = time.perf_counter()
         mesh_path = _download(str(mesh_url), ".glb")
@@ -254,6 +266,7 @@ def handler(job):
             seed=seed,
             remove_bg=remove_bg,
             preprocess_mesh=preprocess_mesh,
+            fast_texture=fast_texture,
         )
         handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
 
@@ -269,6 +282,7 @@ def handler(job):
                 "seed": seed,
                 "remove_bg": remove_bg,
                 "preprocess_mesh": preprocess_mesh,
+                "fast_texture": fast_texture,
             },
             "billing": {
                 "worker_variant": "mvadapter",
