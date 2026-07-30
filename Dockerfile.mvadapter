@@ -17,6 +17,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX" \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/runpod-volume/huggingface_cache \
+    TORCH_HOME=/runpod-volume/torch_cache \
+    TORCH_EXTENSIONS_DIR=/runpod-volume/torch_extensions \
     OPEN3D_DISABLE_WEB_VISUALIZER=true \
     OPEN3D_CPU_RENDERING=true
 

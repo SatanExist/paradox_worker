@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 
 import torch
 from torchvision import transforms
@@ -22,6 +23,15 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _phase(msg: str, t0: float | None = None) -> float:
+    now = time.perf_counter()
+    if t0 is None:
+        print(f"[i2tex] {msg}", flush=True)
+    else:
+        print(f"[i2tex] {msg} (+{now - t0:.1f}s)", flush=True)
+    return now
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
@@ -36,6 +46,13 @@ if __name__ == "__main__":
     parser.add_argument("--preprocess_mesh", action="store_true")
     parser.add_argument("--remove_bg", action="store_true")
     args = parser.parse_args()
+
+    t_job = _phase(
+        f"start variant={args.variant} mesh={args.mesh} image={args.image} "
+        f"remove_bg={args.remove_bg} preprocess_mesh={args.preprocess_mesh} "
+        f"HF_HOME={os.environ.get('HF_HOME')} "
+        f"TORCH_EXTENSIONS_DIR={os.environ.get('TORCH_EXTENSIONS_DIR')}"
+    )
 
     tex_steps = _env_int("MVADAPTER_TEX_STEPS", 30)
     uv_size = _env_int("MVADAPTER_UV_SIZE", 2048)
@@ -62,6 +79,7 @@ if __name__ == "__main__":
     device = args.device
     num_views = 6
 
+    t0 = _phase(f"prepare_pipeline begin base={base_model} adapter=huanngzh/mv-adapter")
     pipe = prepare_pipeline(
         base_model=base_model,
         vae_model=vae_model,
@@ -73,9 +91,11 @@ if __name__ == "__main__":
         device=device,
         dtype=torch.float16,
     )
+    _phase("prepare_pipeline done", t0)
 
     birefnet = None
     if args.remove_bg:
+        t0 = _phase("BiRefNet load begin")
         birefnet = AutoModelForImageSegmentation.from_pretrained(
             "ZhengPeng7/BiRefNet", trust_remote_code=True
         )
@@ -88,21 +108,26 @@ if __name__ == "__main__":
             ]
         )
         remove_bg_fn = lambda x: remove_bg(x, birefnet, transform_image, args.device)
+        _phase("BiRefNet load done", t0)
     else:
         remove_bg_fn = None
 
+    t0 = _phase("TexturePipeline init begin")
     texture_pipe = TexturePipeline(
         upscaler_ckpt_path="./checkpoints/RealESRGAN_x2plus.pth",
         inpaint_ckpt_path="./checkpoints/big-lama.pt",
         device=device,
     )
+    _phase("TexturePipeline init done", t0)
     print(
-        f"serverless_i2tex: variant={args.variant} steps={tex_steps} "
-        f"uv_size={uv_size} view_upscale=False inpaint_mode=uv"
+        f"[i2tex] config steps={tex_steps} uv_size={uv_size} "
+        f"view_upscale=False inpaint_mode=uv",
+        flush=True,
     )
 
     os.makedirs(args.save_dir, exist_ok=True)
 
+    t0 = _phase(f"diffusion begin steps={tex_steps}")
     images, _, _, _ = run_pipeline(
         pipe,
         mesh_path=args.mesh,
@@ -121,12 +146,17 @@ if __name__ == "__main__":
     )
     mv_path = os.path.join(args.save_dir, f"{args.save_name}.png")
     make_image_grid(images, rows=1).save(mv_path)
+    _phase(f"diffusion done saved={mv_path}", t0)
 
     del pipe
     if birefnet is not None:
         del birefnet
     torch.cuda.empty_cache()
+    _phase("VRAM freed before UV bake")
 
+    t0 = _phase(
+        f"UV bake begin uv_size={uv_size} preprocess_mesh={args.preprocess_mesh}"
+    )
     out = texture_pipe(
         mesh_path=args.mesh,
         save_dir=args.save_dir,
@@ -138,4 +168,6 @@ if __name__ == "__main__":
         rgb_process_config=ModProcessConfig(view_upscale=False, inpaint_mode="uv"),
         camera_azimuth_deg=[x - 90 for x in [0, 90, 180, 270, 180, 180]],
     )
-    print(f"Output saved to {out.shaded_model_save_path}")
+    _phase(f"UV bake done shaded={out.shaded_model_save_path}", t0)
+    _phase("job complete", t_job)
+    print(f"Output saved to {out.shaded_model_save_path}", flush=True)

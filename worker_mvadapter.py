@@ -195,21 +195,57 @@ def _run_texture_i2tex(
     # Do not use capture_output=True: texture_i2tex tqdm can fill the pipe
     # buffer and block until the subprocess timeout (looks like a 30min hang).
     log_path = Path(save_dir) / f"{save_name}_texture_i2tex.log"
+    vol = Path(os.environ.get("MVADAPTER_VOLUME_ROOT", "/runpod-volume"))
+    torch_cache = vol / "torch_cache"
+    torch_ext = vol / "torch_extensions"
+    hf_home = vol / "huggingface_cache"
+    for d in (torch_cache, torch_ext, hf_home):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            print(f"volume cache mkdir skip {d}: {exc}")
+
     child_env = os.environ.copy()
     child_env.setdefault("PYTHONUNBUFFERED", "1")
-    child_env.setdefault("TQDM_DISABLE", "1")
-    with open(log_path, "w", encoding="utf-8") as log_file:
-        result = subprocess.run(
-            cmd,
-            cwd=str(MVADAPTER_DIR),
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            timeout=DEFAULT_TEXTURE_TIMEOUT_S,
-            env=child_env,
-        )
-    log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
-    if log_tail:
-        print(f"texture_i2tex log tail ({log_path}):\n{log_tail}")
+    # Keep HF/tqdm progress visible in the log file (do NOT set TQDM_DISABLE).
+    child_env.setdefault("HF_HOME", str(hf_home))
+    child_env.setdefault("TORCH_HOME", str(torch_cache))
+    child_env.setdefault("TORCH_EXTENSIONS_DIR", str(torch_ext))
+    print(
+        f"texture_i2tex caches: HF_HOME={child_env.get('HF_HOME')} "
+        f"TORCH_HOME={child_env.get('TORCH_HOME')} "
+        f"TORCH_EXTENSIONS_DIR={child_env.get('TORCH_EXTENSIONS_DIR')}"
+    )
+
+    def _dump_log_tail(prefix: str) -> str:
+        if not log_path.is_file():
+            print(f"{prefix}: log file missing ({log_path})")
+            return ""
+        tail = log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
+        if tail:
+            print(f"{prefix} ({log_path}, {log_path.stat().st_size} bytes):\n{tail}")
+        else:
+            print(f"{prefix}: log file empty ({log_path})")
+        return tail
+
+    try:
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            result = subprocess.run(
+                cmd,
+                cwd=str(MVADAPTER_DIR),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                timeout=DEFAULT_TEXTURE_TIMEOUT_S,
+                env=child_env,
+            )
+    except subprocess.TimeoutExpired as exc:
+        log_tail = _dump_log_tail("texture_i2tex TIMEOUT log tail")
+        raise TimeoutError(
+            f"texture_i2tex timed out after {DEFAULT_TEXTURE_TIMEOUT_S}s; "
+            f"log_tail={log_tail[-1500:]!r}"
+        ) from exc
+
+    log_tail = _dump_log_tail("texture_i2tex log tail")
     if result.returncode != 0:
         raise RuntimeError(
             f"texture_i2tex exited {result.returncode}: {log_tail[-2000:]}"
