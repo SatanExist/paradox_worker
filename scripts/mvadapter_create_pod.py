@@ -181,11 +181,19 @@ def main() -> int:
                 )
                 pod = data.get("podFindAndDeployOnDemand") or data
                 print(json.dumps(pod, indent=2))
-                print("\nNext:")
-                print("  1. Open Pod in RunPod UI -> Connect (SSH / Jupyter)")
-                print("  2. Upload data/: ref_gold_armor.png + model-armor-clay_repaired.glb")
-                print("  3. Copy scripts/mvadapter_w2_oneshot.sh to pod, then:")
-                print("     bash /workspace/mvadapter_w2_oneshot.sh")
+                print("\nNext (Phase 1 FAST baseline):")
+                print("  1. Open Pod -> Connect -> Start Web Terminal")
+                print("  2. One-liner:")
+                print(
+                    "     cd /workspace && wget -q -O /tmp/w2.zip "
+                    "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/mvadapter_w2_upload.zip "
+                    "&& unzip -o /tmp/w2.zip -d /workspace "
+                    "&& wget -q -O /workspace/mvadapter_w2_fast_oneshot.sh "
+                    "https://raw.githubusercontent.com/SatanExist/paradox_worker/feat/trellis2-poc/scripts/mvadapter_w2_fast_oneshot.sh "
+                    "&& bash /workspace/mvadapter_w2_fast_oneshot.sh"
+                )
+                print("  3. After DONE_OK: download outputs/knight_fast_shaded.glb + knight_fast_timings.txt")
+                print("  4. Terminate pod when finished (billing!).")
                 return 0
             except SystemExit as exc:
                 last_err = exc
