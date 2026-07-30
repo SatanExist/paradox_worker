@@ -192,18 +192,27 @@ def _run_texture_i2tex(
         cmd.append("--preprocess_mesh")
 
     print(f"texture_i2tex cmd: {' '.join(cmd)} (fast_texture={fast_texture})")
-    result = subprocess.run(
-        cmd,
-        cwd=str(MVADAPTER_DIR),
-        capture_output=True,
-        text=True,
-        timeout=DEFAULT_TEXTURE_TIMEOUT_S,
-    )
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
+    # Do not use capture_output=True: texture_i2tex tqdm can fill the pipe
+    # buffer and block until the subprocess timeout (looks like a 30min hang).
+    log_path = Path(save_dir) / f"{save_name}_texture_i2tex.log"
+    child_env = os.environ.copy()
+    child_env.setdefault("PYTHONUNBUFFERED", "1")
+    child_env.setdefault("TQDM_DISABLE", "1")
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        result = subprocess.run(
+            cmd,
+            cwd=str(MVADAPTER_DIR),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            timeout=DEFAULT_TEXTURE_TIMEOUT_S,
+            env=child_env,
+        )
+    log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+    if log_tail:
+        print(f"texture_i2tex log tail ({log_path}):\n{log_tail}")
     if result.returncode != 0:
         raise RuntimeError(
-            f"texture_i2tex exited {result.returncode}: {result.stderr[-2000:]}"
+            f"texture_i2tex exited {result.returncode}: {log_tail[-2000:]}"
         )
 
     shaded = Path(save_dir) / f"{save_name}_shaded.glb"

@@ -1,7 +1,7 @@
 """Smoke test for MV-Adapter texture RunPod endpoint.
 
 Contract:
-  input:  mesh_url, image_url, seed?, remove_bg?, preprocess_mesh?, return_base64?
+  input:  mesh_url, image_url, seed?, remove_bg?, preprocess_mesh?, fast_texture?, return_base64?
   output: model_url | model_base64 | model_path (+ billing)
 
 Requires RUNPOD_ENDPOINT_ID_MVADAPTER env var.
@@ -46,6 +46,7 @@ def build_input(args: argparse.Namespace) -> dict:
         "seed": args.seed,
         "remove_bg": args.remove_bg,
         "preprocess_mesh": args.preprocess_mesh,
+        "fast_texture": args.fast_texture,
         "return_base64": args.return_base64,
     }
 
@@ -85,6 +86,8 @@ def main() -> int:
     parser.add_argument("--no-remove-bg", dest="remove_bg", action="store_false")
     parser.add_argument("--preprocess-mesh", action="store_true", default=True)
     parser.add_argument("--no-preprocess-mesh", dest="preprocess_mesh", action="store_false")
+    parser.add_argument("--fast-texture", action="store_true", default=True)
+    parser.add_argument("--no-fast-texture", dest="fast_texture", action="store_false")
     parser.add_argument("--return-base64", action="store_true")
     parser.add_argument("--save", type=Path, default=Path("model-mvadapter.glb"))
     parser.add_argument("--zombie-after", type=float, default=DEFAULT_ZOMBIE_AFTER_S)
