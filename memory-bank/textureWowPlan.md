@@ -134,10 +134,67 @@ T2 роль: preview / mid / props; не носитель «Meshy-орнамен
 
 ---
 
-## T2 max-quality (2026-08-02) — следующий прогон
+## Корневая матрица T2 (долгосрок, 2026-08-02)
 
-> Источники: upstream `Trellis2ImageTo3DPipeline.run`, [issue #92](https://github.com/microsoft/TRELLIS.2/issues/92), community (skip heavy simplify / remesh), fal/hard-surface tips.  
-> Цель: **исчерпать рычаги T2** до Hi3DGen.
+> Цель: **найти корень** HF-каши на рыцаре, не смешивать 5 переменных в одном job.  
+> Kitchen-sink `--quality-max` = **финальный stress** («лучшее, что умеем на T2»), не замена матрицы.
+
+### Правило эксперимента
+
+- Baseline: seed42, clay, один ref (`ref_gold_armor` / cutout).  
+- Критерий глаз: **наплечник + пояс/ткань** (не силуэт).  
+- За раз меняем **одну ось** (или фиксированный набор уже закрытых + одна новая).  
+- Пишем вердикт в journal: better / same / worse.
+
+### Матрица осей
+
+| Ось | Что крутим | Статус | Вердикт |
+|-----|------------|--------|---------|
+| **A вход** | cutout + `preprocess=false` | ✅ job | глаза (ожид. same) |
+| **B remesh** | remesh on/off + denser | ✅ | denser, **каша same** |
+| **C resolution** | 1536 @ **default** steps | ✅ | denser, **каша same** |
+| **D sampler** | только steps50 + high guidance (остальное = baseline или фикс. A) | 🔴 после deploy | ? |
+| **E simplify** | почти без simplify / очень высокий target | ⏸ опц. | ? |
+| **F remesh_project** | `project_back>0` при remesh on | ⏸ опц. | ? |
+| **G max-q stress** | все туториалы сразу (`--quality-max`) | ⏸ после D | лучший T2 effort |
+| **H shape model** | Hi3DGen Solid | ⏸ если D+G не спасли | потолок T2 |
+
+### Порядок (долгосрок)
+
+1. Deploy образа с sampler knobs  
+2. **Ось D** — чистый sampler A/B (например: cutout + 1024_cascade + remesh=true + 500k **как baseline**, но ss/shape steps=50 guidance↑). Так видно: помогает ли *только* sampler.  
+3. Если D weakly helps → крутить E/F точечно  
+4. **G max-q** — один stress «потолок стека T2»  
+5. Если орнамент всё ещё каша → **корень = модель/геометрия T2** → Hi3DGen; T2 = preview/макро  
+
+### Почему не сразу kitchen-sink
+
+Max-q смешивает D+C+B+A. Если станет чуть лучше — не знаем почему; если same — ок как «T2 исчерпан», но для **product recipe** нужны изолированные факты.
+
+### Команды (после deploy)
+
+**Ось D (корень sampler):**
+```powershell
+.\.venv\Scripts\python.exe test_req_trellis2.py `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
+  --no-preprocess --pipeline-type 1024_cascade --seed 42 `
+  --decimation-target 500000 --texture-mode clay `
+  --ss-steps 50 --ss-guidance 8.0 --shape-steps 50 --shape-guidance 8.5 `
+  --save model-armor-clay-sampler50-42.glb
+```
+(remesh default ON = как baseline Track A)
+
+**G stress:**
+```powershell
+.\.venv\Scripts\python.exe test_req_trellis2.py `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
+  --quality-max --seed 42 --texture-mode clay `
+  --save model-armor-clay-maxq42.glb
+```
+
+---
+
+## T2 max-quality preset (stress G, не замена матрицы)
 
 ### Что уже закрыто
 
@@ -532,16 +589,18 @@ Scripts: `scripts/batch_seeds_trellis2.py`, `scripts/repair_glb_mesh.py`, `scrip
 
 ## Следующий конкретный шаг
 
-1. ~~A/B remesh/1536/cutout~~ ✅ (плотность↑, каша осталась / cutout на глазах)  
-2. **T2 max-quality:** код sampler → deploy → `model-armor-clay-maxq42.glb`  
-3. Глаза → recipe или **Hi3DGen**  
-4. Texture — только после не-мыльного shape
+1. Deploy T2 image (sampler knobs)  
+2. **Ось D** — только steps/guidance → глаза  
+3. Опц. E/F  
+4. **G** max-q stress  
+5. Fail → Hi3DGen; pass → recipe из выигравших осей  
 
 ---
 
 ## Не делаем
 
-- Synth multi-view R&D до исчерпания sampler max-q  
+- Только kitchen-sink без изолированных осей (долгосрок / корень)  
+- Synth multi-view R&D до закрытия матрицы D–G  
 - Красить кашу / E2 Meshy-меш  
 - Обещать Meshy-деталь на default T2  
 - Hunyuan в EU core  

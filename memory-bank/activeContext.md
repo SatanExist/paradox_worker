@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-02** — план **T2 max-quality** (sampler/steps/guidance из upstream + community) до Hi3DGen
+Последнее обновление: **2026-08-02** — курс: **корневая матрица T2** (не kitchen-sink); max-q = финальный stress после осей
 
 ---
 
@@ -15,36 +15,30 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **T2 max-quality** — код sampler готов; нужен **deploy** образа |
+| Фокус | **Найти корень** HF-каши: изолированные оси → потом max-q / Hi3DGen |
 
 ---
 
-## Простыми словами (план 2026-08-02)
+## Простыми словами (долгосрок)
 
-Уже проверили и **не хватило**: remesh off, 1536 default steps, denser, cutout+no-preprocess.  
-Раньше **не крутили**: `ss` / `shape_slat` **steps + guidance**.
+**Не** один прогон «всё на максимум» как единственный шаг — он не скажет, *что* помогло.  
+**Да** матрица: фиксируем baseline, крутим **одну ось**, смотрим орнамент (плечи/пояс) в Solid.
 
-**План:**
-1. ~~Проброс sampler в worker + `--quality-max`~~ ✅ код в ветке  
-2. **Deploy** trellis2 image → New Release `ynzpzjvcbfl656`  
-3. Job max-q на cutout → `model-armor-clay-maxq42.glb`  
-4. Глаза vs Meshy → recipe или Hi3DGen  
+Уже закрыты оси: remesh, 1536@default steps, denser, cutout.  
+**Не закрыта чисто:** только sampler (steps/guidance) при том же остальном.  
+Код `quality_max` оставляем для **финального stress** после осей (или как «лучшая попытка T2»).
 
-### Preset (после deploy)
-
-```powershell
-.\.venv\Scripts\python.exe test_req_trellis2.py `
-  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
-  --quality-max --seed 42 --texture-mode clay `
-  --save model-armor-clay-maxq42.glb
+```
+Корень?
+├─ вход / preprocess     → cutout (есть)
+├─ postprocess remesh    → no-remesh (есть)
+├─ resolution cascade    → 1536 default (есть)
+├─ sampler steps/guid.   → 🔴 следующий чистый A/B
+├─ simplify extreme      → опционально
+└─ потолок модели        → Hi3DGen, если оси не спасли
 ```
 
-| | Значение |
-|--|----------|
-| pipeline | 1536_cascade |
-| decim / remesh | 800k / false |
-| preprocess | false (cutout) |
-| ss / shape | steps 50, guidance 8.0 / 8.5 |
+Подробная матрица: `textureWowPlan.md` § **Корневая матрица T2**.
 
 ---
 
@@ -52,10 +46,11 @@
 
 | | Статус |
 |--|--------|
-| Код sampler / quality_max | ✅ |
-| **Deploy T2 image** | 🔴 следующий |
-| Job max-quality | ⏸ |
-| Hi3DGen | ⏸ если fail |
+| Код sampler / quality_max | ✅ в git |
+| Deploy T2 image | 🔴 нужен для sampler job |
+| **Ось D: только sampler** | 🔴 после deploy |
+| Max-q kitchen-sink | ⏸ после D (или параллельно как stress) |
+| Hi3DGen | ⏸ если D+max-q fail |
 
 ---
 
@@ -63,11 +58,12 @@
 
 | # | Задача | Статус |
 |---|--------|--------|
-| План max-quality | ✅ |
-| Worker + test_req | ✅ |
-| **CI / New Release T2** | 🔴 |
-| Smoke maxq42 | ⏸ |
-| Вердикт / Hi3DGen | ⏸ |
+| Матрица / план корень | ✅ |
+| Deploy T2 (sampler в образе) | 🔴 |
+| Ось D: baseline knobs + steps50/guidance only | ⏸ |
+| Опц. skip-simplify / remesh_project | ⏸ |
+| Max-q stress | ⏸ |
+| Вердикт → recipe или Hi3DGen | ⏸ |
 
 **План:** `textureWowPlan.md` § «T2 max-quality».
 
@@ -330,7 +326,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-02 | Pedrokita | План T2 max-quality; проброс sampler/quality_max в worker+test_req | Deploy T2 → smoke maxq42 |
+| 2026-08-02 | Pedrokita | Долгосрок = корневая матрица осей; max-q = stress G; код sampler в push | Deploy → ось D sampler |
 | 2026-07-31 | Pedrokita | xatlas path; decimate 80k; GHCR Pod smoke; preview + lights | quality after latency |
 | 2026-07-08 | Pedrokita | Memory-bank, test_req async, worker traceback/xformers | RunPod тест |
 | 2026-07-09 | Pedrokita | Multi-endpoint fallback, watch_endpoint, CZ Release #13, support ticket | Digest fix |
