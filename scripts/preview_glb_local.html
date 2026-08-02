@@ -22,10 +22,15 @@
     <strong>GLB preview</strong>
     <select id="file">
       <option value="../model-armor-clay_repaired.glb">Track A clay seed 42 REPAIRED</option>
+      <option value="../model-armor-clay-nopreprocess42.glb">T2 cutout + no-preprocess seed42</option>
+      <option value="../model-armor-clay-noremesh42.glb">T2 A/B no-remesh seed42 (700k)</option>
+      <option value="../model-armor-clay-1536-42.glb">T2 A/B 1536_cascade seed42 (700k)</option>
       <option value="../model-armor-clay-seed1.glb">Track A clay seed 1</option>
       <option value="../model-armor-clay-seed7.glb">Track A clay seed 7</option>
       <option value="../model-armor-clay-seed42.glb">Track A clay seed 42 (winner)</option>
       <option value="../model-armor-clay-seed123.glb">Track A clay seed 123</option>
+      <option value="../knight_w2c_shaded.glb">MV-Adapter knight_w2c (decimate 80k)</option>
+      <option value="../knight_fast_shaded.glb">MV-Adapter knight_fast (xatlas 2026-07-31)</option>
       <option value="../knight_i2tex_shaded.glb">MV-Adapter knight_i2tex (W2 smoke)</option>
       <option value="../model-armor-wow.glb">Armor cascade textured (baseline)</option>
       <option value="../model-wow-baseline.glb">W1 cascade textured 2048 (chest)</option>
@@ -38,6 +43,8 @@
     <button id="reload">Reload</button>
     <label><input type="checkbox" id="wireframe" /> Wireframe</label>
     <label><input type="checkbox" id="fixMat" checked /> Fix metallic (Blender-like)</label>
+    <label>Key <input type="range" id="keyLight" min="0" max="40" value="18" style="width:90px;vertical-align:middle" /></label>
+    <label><input type="checkbox" id="envLight" checked /> Env light</label>
     <span id="status">Loading…</span>
   </div>
   <div id="canvas-wrap"></div>
@@ -53,16 +60,22 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
     const wrap = document.getElementById('canvas-wrap');
     const status = document.getElementById('status');
     const fileSel = document.getElementById('file');
     const fixMat = document.getElementById('fixMat');
     const wireframe = document.getElementById('wireframe');
+    const keyLightEl = document.getElementById('keyLight');
+    const envLightEl = document.getElementById('envLight');
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     wrap.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -72,11 +85,49 @@
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-    dir.position.set(2, 3, 2);
-    scene.add(dir);
-    scene.add(new THREE.GridHelper(2, 20, 0x444444, 0x333333));
+    // Studio lighting: ambient + key / fill / rim (directional)
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444455, 0.55);
+    scene.add(hemi);
+
+    const key = new THREE.DirectionalLight(0xfff5e6, 1.8);
+    key.position.set(3.5, 5, 2.5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0002;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xddeeff, 0.7);
+    fill.position.set(-3, 2, 1);
+    scene.add(fill);
+
+    const rim = new THREE.DirectionalLight(0xffffff, 0.9);
+    rim.position.set(-1.5, 3, -4);
+    scene.add(rim);
+
+    // Soft IBL so metal/gold reads correctly
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = envRT.texture;
+    pmrem.dispose();
+
+    function syncLights() {
+      const k = Number(keyLightEl.value) / 10;
+      key.intensity = k;
+      fill.intensity = Math.max(0.15, k * 0.35);
+      rim.intensity = Math.max(0.2, k * 0.45);
+      hemi.intensity = 0.35 + k * 0.12;
+      scene.environmentIntensity = envLightEl.checked ? 0.85 : 0.0;
+      // three r152+ uses environmentIntensity; older falls back via env map null
+      if (!('environmentIntensity' in scene)) {
+        scene.environment = envLightEl.checked ? envRT.texture : null;
+      }
+    }
+    syncLights();
+    keyLightEl.oninput = syncLights;
+    envLightEl.onchange = syncLights;
+
+    const grid = new THREE.GridHelper(2, 20, 0x444444, 0x333333);
+    scene.add(grid);
 
     let root = null;
 
@@ -92,12 +143,15 @@
     function applyFixes(obj) {
       obj.traverse((child) => {
         if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
         child.material = child.material.clone();
         child.material.wireframe = wireframe.checked;
         if (fixMat.checked && child.material.metalness !== undefined) {
           child.material.metalness = 0.0;
           child.material.roughness = 0.85;
         }
+        child.material.needsUpdate = true;
       });
     }
 
@@ -111,6 +165,20 @@
       camera.near = maxDim / 100;
       camera.far = maxDim * 100;
       camera.updateProjectionMatrix();
+      // Keep key light relative to framed model
+      key.position.set(center.x + maxDim * 2, center.y + maxDim * 2.5, center.z + maxDim * 1.5);
+      key.target.position.copy(center);
+      key.target.updateMatrixWorld();
+      key.shadow.camera.near = maxDim / 50;
+      key.shadow.camera.far = maxDim * 20;
+      const extent = maxDim * 2.5;
+      key.shadow.camera.left = -extent;
+      key.shadow.camera.right = extent;
+      key.shadow.camera.top = extent;
+      key.shadow.camera.bottom = -extent;
+      key.shadow.camera.updateProjectionMatrix();
+      grid.position.y = box.min.y;
+      grid.scale.setScalar(Math.max(1, maxDim));
     }
 
     async function load(name) {

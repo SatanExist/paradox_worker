@@ -76,9 +76,82 @@ def _coerce_int(value, default: int, *, min_val: int, max_val: int) -> int:
     return max(min_val, min(max_val, out))
 
 
+def _coerce_float(value, default: float, *, min_val: float, max_val: float) -> float:
+    if value is None:
+        return default
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_val, min(max_val, out))
+
+
+def _sampler_params_from_input(raw, defaults: dict) -> dict:
+    """Merge job sampler overrides into TRELLIS.2 sampler kwargs (steps/guidance/…)."""
+    out = dict(defaults)
+    if not isinstance(raw, dict):
+        return out
+    if "steps" in raw:
+        out["steps"] = _coerce_int(raw.get("steps"), out["steps"], min_val=1, max_val=50)
+    if "guidance_strength" in raw:
+        out["guidance_strength"] = _coerce_float(
+            raw.get("guidance_strength"), out["guidance_strength"], min_val=0.0, max_val=20.0
+        )
+    if "guidance_rescale" in raw:
+        out["guidance_rescale"] = _coerce_float(
+            raw.get("guidance_rescale"), out["guidance_rescale"], min_val=0.0, max_val=1.0
+        )
+    if "rescale_t" in raw:
+        out["rescale_t"] = _coerce_float(
+            raw.get("rescale_t"), out["rescale_t"], min_val=1.0, max_val=6.0
+        )
+    return out
+
+
+# Community / issue #92 quality-first defaults (hard-surface leaning).
+DEFAULT_SS_SAMPLER = {
+    "steps": 12,
+    "guidance_strength": 7.5,
+    "guidance_rescale": 0.7,
+    "rescale_t": 5.0,
+}
+DEFAULT_SHAPE_SLAT_SAMPLER = {
+    "steps": 12,
+    "guidance_strength": 7.5,
+    "guidance_rescale": 0.5,
+    "rescale_t": 3.0,
+}
+DEFAULT_TEX_SLAT_SAMPLER = {
+    "steps": 12,
+    "guidance_strength": 1.0,
+    "guidance_rescale": 0.0,
+    "rescale_t": 3.0,
+}
+MAXQ_SS_SAMPLER = {
+    "steps": 50,
+    "guidance_strength": 8.0,
+    "guidance_rescale": 0.7,
+    "rescale_t": 6.0,
+}
+MAXQ_SHAPE_SLAT_SAMPLER = {
+    "steps": 50,
+    "guidance_strength": 8.5,
+    "guidance_rescale": 0.5,
+    "rescale_t": 6.0,
+}
+
+
 def _generation_params(job_input: dict) -> dict:
-    pipeline_type = job_input.get("pipeline_type") or DEFAULT_PIPELINE_TYPE
-    if pipeline_type not in VALID_PIPELINE_TYPES:
+    quality_max = bool(job_input.get("quality_max", False))
+
+    # Explicit pipeline_type wins; quality_max defaults to 1536_cascade.
+    if job_input.get("pipeline_type"):
+        pipeline_type = job_input.get("pipeline_type")
+        if pipeline_type not in VALID_PIPELINE_TYPES:
+            pipeline_type = DEFAULT_PIPELINE_TYPE
+    elif quality_max:
+        pipeline_type = "1536_cascade"
+    else:
         pipeline_type = DEFAULT_PIPELINE_TYPE
 
     texture_mode = str(job_input.get("texture_mode") or DEFAULT_TEXTURE_MODE).strip().lower()
@@ -98,14 +171,30 @@ def _generation_params(job_input: dict) -> dict:
 
     decimation_target = _coerce_int(
         job_input.get("decimation_target"),
-        DEFAULT_DECIMATION_TARGET,
+        800_000 if quality_max else DEFAULT_DECIMATION_TARGET,
         min_val=50_000,
         max_val=1_000_000,
     )
     seed = _coerce_int(job_input.get("seed"), DEFAULT_SEED, min_val=0, max_val=2**31 - 1)
-    preprocess_image = bool(job_input.get("preprocess_image", True))
-    remesh = bool(job_input.get("remesh", True))
+    preprocess_image = bool(job_input.get("preprocess_image", not quality_max))
+    if "remesh" in job_input:
+        remesh = bool(job_input.get("remesh"))
+    else:
+        remesh = False if quality_max else True
     verbose = bool(job_input.get("verbose", True))
+    remesh_project = _coerce_float(
+        job_input.get("remesh_project"), 0.0, min_val=0.0, max_val=1.0
+    )
+    max_num_tokens = _coerce_int(
+        job_input.get("max_num_tokens"),
+        65_536 if quality_max else 49_152,
+        min_val=16_384,
+        max_val=98_304,
+    )
+
+    ss_defaults = MAXQ_SS_SAMPLER if quality_max else DEFAULT_SS_SAMPLER
+    shape_defaults = MAXQ_SHAPE_SLAT_SAMPLER if quality_max else DEFAULT_SHAPE_SLAT_SAMPLER
+    tex_defaults = DEFAULT_TEX_SLAT_SAMPLER
 
     return {
         "pipeline_type": pipeline_type,
@@ -115,7 +204,19 @@ def _generation_params(job_input: dict) -> dict:
         "seed": seed,
         "preprocess_image": preprocess_image,
         "remesh": remesh,
+        "remesh_project": remesh_project,
         "verbose": verbose,
+        "quality_max": quality_max,
+        "max_num_tokens": max_num_tokens,
+        "sparse_structure_sampler_params": _sampler_params_from_input(
+            job_input.get("sparse_structure_sampler_params"), ss_defaults
+        ),
+        "shape_slat_sampler_params": _sampler_params_from_input(
+            job_input.get("shape_slat_sampler_params"), shape_defaults
+        ),
+        "tex_slat_sampler_params": _sampler_params_from_input(
+            job_input.get("tex_slat_sampler_params"), tex_defaults
+        ),
     }
 
 
@@ -237,7 +338,7 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
         verts_now, faces_now = cm.read()
         bvh = cumesh.cuBVH(verts_now, faces_now)
         remesh_band = 1.0
-        remesh_project = 0.0
+        remesh_project = float(gen_params.get("remesh_project", 0.0))
         center = aabb.mean(dim=0)
         scale = (aabb[1] - aabb[0]).max().item()
         resolution = grid_size.max().item()
@@ -317,7 +418,7 @@ def _mesh_to_glb(mesh, gen_params: dict):
         texture_size=gen_params["texture_size"],
         remesh=gen_params["remesh"],
         remesh_band=1,
-        remesh_project=0,
+        remesh_project=float(gen_params.get("remesh_project", 0.0)),
         verbose=gen_params["verbose"],
     )
 
@@ -434,7 +535,11 @@ def handler(job):
             f"texture_mode={gen_params['texture_mode']}, "
             f"texture_size={gen_params['texture_size']}, "
             f"decimation_target={gen_params['decimation_target']}, "
-            f"seed={gen_params['seed']}"
+            f"seed={gen_params['seed']}, "
+            f"quality_max={gen_params.get('quality_max')}, "
+            f"remesh={gen_params['remesh']}, "
+            f"ss={gen_params['sparse_structure_sampler_params']}, "
+            f"shape_slat={gen_params['shape_slat_sampler_params']}"
         )
 
         print(f"Downloading image: {image_url}")
@@ -447,6 +552,10 @@ def handler(job):
             seed=gen_params["seed"],
             preprocess_image=gen_params["preprocess_image"],
             pipeline_type=gen_params["pipeline_type"],
+            sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
+            shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
+            tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
+            max_num_tokens=gen_params["max_num_tokens"],
         )
         handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
 

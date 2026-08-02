@@ -79,6 +79,10 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026-07-10 | Только 24GB Ampere/Ada GPU на endpoint | CUDA 11.8 образ несовместим с RTX 5090 / Blackwell |
 | 2026-07-13 | nvdiffrast в Docker с EGL + no-build-isolation | GLB export требует MeshRenderer; CI падал без libegl-dev |
 | 2026-07-13 | Smoke test URL → T.png | fox.png в TRELLIS repo 404 |
+| 2026-07-31 | Prod UV = **xatlas** + `uv_unwarp=False`; не Open3D UVAtlas | Open3D hang/30+ мин; bake после UV ~2 с; xatlas на 471k F ~25 мин → нужен decimate |
+| 2026-07-31 | Не жечь MV serverless до wall≪10 мин на Pod | 1800s timeout бил в unwrap, не в diffusion |
+| 2026-07-31 | Meshy-like ops: remesh + UV раз + bake; **poly budget глазами** | 80k ок для ETA; на character с орнаментом убивает HF — не слепой default |
+| 2026-07-31 | Качество = макро / микро-геометрия / текстура отдельно | T2 clay рыцарь: макро вау, микро месиво; tex смотреть после изоляции (E2) |
 
 ## Будущее (когда будет сайт)
 

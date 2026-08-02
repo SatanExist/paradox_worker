@@ -61,6 +61,59 @@ def build_input(args: argparse.Namespace) -> dict:
         job_input["preprocess_image"] = False
     if args.no_remesh:
         job_input["remesh"] = False
+    if args.quality_max:
+        job_input["quality_max"] = True
+        # Full tutorial/community preset; CLI flags still override when set.
+        if args.pipeline_type == "1024_cascade" and not args.force_pipeline:
+            job_input["pipeline_type"] = "1536_cascade"
+        if args.decimation_target == 500_000 and not args.force_decimation:
+            job_input["decimation_target"] = 800_000
+        if not args.no_remesh:
+            job_input["remesh"] = False
+        if not args.no_preprocess:
+            job_input["preprocess_image"] = False
+        job_input["max_num_tokens"] = args.max_num_tokens
+        job_input["sparse_structure_sampler_params"] = {
+            "steps": args.ss_steps if args.ss_steps is not None else 50,
+            "guidance_strength": args.ss_guidance if args.ss_guidance is not None else 8.0,
+            "guidance_rescale": (
+                args.ss_guidance_rescale if args.ss_guidance_rescale is not None else 0.7
+            ),
+            "rescale_t": args.ss_rescale_t if args.ss_rescale_t is not None else 6.0,
+        }
+        job_input["shape_slat_sampler_params"] = {
+            "steps": args.shape_steps if args.shape_steps is not None else 50,
+            "guidance_strength": (
+                args.shape_guidance if args.shape_guidance is not None else 8.5
+            ),
+            "guidance_rescale": (
+                args.shape_guidance_rescale
+                if args.shape_guidance_rescale is not None
+                else 0.5
+            ),
+            "rescale_t": args.shape_rescale_t if args.shape_rescale_t is not None else 6.0,
+        }
+    elif args.ss_steps is not None or args.shape_steps is not None:
+        job_input["sparse_structure_sampler_params"] = {
+            "steps": args.ss_steps if args.ss_steps is not None else 12,
+            "guidance_strength": args.ss_guidance if args.ss_guidance is not None else 7.5,
+            "guidance_rescale": (
+                args.ss_guidance_rescale if args.ss_guidance_rescale is not None else 0.7
+            ),
+            "rescale_t": args.ss_rescale_t if args.ss_rescale_t is not None else 5.0,
+        }
+        job_input["shape_slat_sampler_params"] = {
+            "steps": args.shape_steps if args.shape_steps is not None else 12,
+            "guidance_strength": (
+                args.shape_guidance if args.shape_guidance is not None else 7.5
+            ),
+            "guidance_rescale": (
+                args.shape_guidance_rescale
+                if args.shape_guidance_rescale is not None
+                else 0.5
+            ),
+            "rescale_t": args.shape_rescale_t if args.shape_rescale_t is not None else 3.0,
+        }
     return job_input
 
 
@@ -117,6 +170,30 @@ def main() -> int:
     )
     parser.add_argument("--no-preprocess", action="store_true")
     parser.add_argument("--no-remesh", action="store_true")
+    parser.add_argument(
+        "--quality-max",
+        action="store_true",
+        help="Tutorial/community max-quality preset (1536, steps50, high guidance, no remesh)",
+    )
+    parser.add_argument(
+        "--force-pipeline",
+        action="store_true",
+        help="With --quality-max, keep --pipeline-type as given",
+    )
+    parser.add_argument(
+        "--force-decimation",
+        action="store_true",
+        help="With --quality-max, keep --decimation-target as given",
+    )
+    parser.add_argument("--max-num-tokens", type=int, default=65536)
+    parser.add_argument("--ss-steps", type=int, default=None)
+    parser.add_argument("--ss-guidance", type=float, default=None)
+    parser.add_argument("--ss-guidance-rescale", type=float, default=None)
+    parser.add_argument("--ss-rescale-t", type=float, default=None)
+    parser.add_argument("--shape-steps", type=int, default=None)
+    parser.add_argument("--shape-guidance", type=float, default=None)
+    parser.add_argument("--shape-guidance-rescale", type=float, default=None)
+    parser.add_argument("--shape-rescale-t", type=float, default=None)
     parser.add_argument(
         "--zombie-after",
         type=float,

@@ -1,8 +1,187 @@
 # Texture Wow Plan — путь к качеству уровня Meshy
 
 > **Статус:** активный фокус с **2026-07-24**  
-> **Решение:** пилить текстурирование до вау; остальное (T1c, Clerk…) на паузе.  
-> **Обновлено:** 2026-07-29 — **Serverless worker ready** (`worker_mvadapter.py` + `Dockerfile.mvadapter`); W2b tuning checklist.
+> **Решение:** вау упирается в **мыльный меш**; краска вторична.  
+> **Обновлено:** 2026-07-31 — E2 отменён (unit economics); только shape.
+
+---
+
+## Мыльный меш → куда смотреть
+
+### Исходное суждение (держать)
+
+**Меш T2 на рыцаре мыльный по мелким деталям.**  
+Макро / силуэт — сильный, издалека даже вау. Узоры (плечи, грудь, пояс) — месиво.  
+Meshy на той же картинке держит орнамент в Solid.
+
+| | T2 clay seed42 | Meshy |
+|--|----------------|-------|
+| ~Verts / tris | **~230–240k** / ~471k | **~337k** / ~640k |
+| Макро | ок | ок |
+| Микро-узоры | **мыло** | читаемые |
+
+**Про вершины:** Meshy ~**+40% verts** (~337k vs ~240k) и больше faces — у них просто **больше бюджета на рельеф**. Это не единственная причина (у нас 471k tris уже «шум» на орнаменте, не чёткие львы), но **игнорировать разницу нельзя**: мы режем/ремешим агрессивнее, чем эталон.
+
+**Следствие:** пока нет мелкой геометрии — **красить бессмысленно**.  
+Но гипотеза Pedrokita: **T2 умеет круче — мы могли накосячить в пайплайне**, а не только «потолок модели». Сначала проверить это дёшево (наши рычаги), потом чужие модели.
+
+### Где мы могли накосячить (наш T2 clay path)
+
+Код: `worker_trellis2.py` → `_mesh_to_clay_glb`. Track A: `1024_cascade`, `remesh=True`, `decimation_target=500_000`, seed42.
+
+| Рычаг | Сейчас | Риск |
+|-------|--------|------|
+| **`remesh=True`** | `remesh_narrow_band_dc` + simplify | Ремеш **сглаживает** HF; классика «мыла» |
+| **`project_back=0.0`** | захардкожено | Нет проекции обратно на исходную поверхность → деталь теряется |
+| **`pipeline_type`** | Track A = **`1024_cascade`** | Есть **`1536_cascade`** — на рыцаре **не гоняли** |
+| **`decimation_target`** | 500k → на выходе ~471k F / ~230k V | Meshy ~640k F / ~337k V; можно поднять target и/или `remesh=false` |
+| **Критерий Track A** | дыры / рога, не орнамент | Winner по дырам ≠ winner по микро-детали |
+| **repair** | trimesh/pymeshlab | Вряд ли главный мыло-фактор; вторично |
+
+**Дешёвый A/B на том же seed42 / том же ref (только Solid, без paint):**
+
+1. `remesh=false` (или позже `project_back>0` если протащим в input)  
+2. `pipeline_type=1536_cascade`  
+3. выше `decimation_target` (например 700k–1M) — ближе к бюджету Meshy по плотности  
+
+Если после этого узоры всё ещё мыло → тогда потолок T2 / нужна другая shape-модель.  
+Если стало ближе к Meshy → **мы виноваты в постпроцессе**, не «T2 плохой».
+
+### Отменено
+
+| Идея | Почему нет |
+|------|------------|
+| Seeds как фикс орнамента | Не снимают класс мыла (дырки — да, львы — нет) |
+| Paint / W2b / serverless wow на мыльном clay | Красим мыло |
+| E2: Meshy-меш + наша краска | Unit economics / не prod |
+
+### Порядок
+
+```
+1a. A/B нашего T2 (remesh / 1536 / denser) — дёшево, self-host
+1b. Если мало → shape spike EU (Hi3DGen …)
+2. UV / poly (не убивая HF)
+3. Texture
+4. PBR / viewer
+```
+
+### Кандидаты (сравнение «где лучше / где мы слабее»)
+
+| Кандидат | Сильная сторона | Слабая / риск | EU | Когда трогать |
+|----------|-----------------|---------------|-----|----------------|
+| **TRELLIS.2** (наш) | Макро, MIT, уже в prod, warm COGS | Микро мыло **на текущем clay path**; не гоняли 1536 / no-remesh | ✅ | **Сначала A/B пайплайна** |
+| **Meshy** | Микро-орнамент, ~337k V | Закрытый SaaS, не core economics | n/a | Только эталон глазами |
+| **Hi3DGen** | Заточен под **HF geometry** (normal bridging); MIT; часто хвалят за detail vs Trellis-семейства | Отдельный стек/Pod; не наш warm path | ✅ | Spike Solid после/параллельно T2 A/B |
+| **TripoSG** | Shape MIT, roadmap Tier S | Меньше evidence на ornament character | ✅ | Второй spike если Hi3DGen/T2 A/B слабо |
+| **Hunyuan3D** | Очень сильный | **Не EU prod** | ❌ | Не core |
+
+**Итог сравнения:** эталон качества = Meshy Solid. Наш gap = микро + меньше vert budget. Кандидат №1 на починку — **не сразу новая модель**, а проверка «T2 + честный export». Кандидат №2 на замену/дополнение shape — **Hi3DGen** (геометрия).
+
+**Следующий шаг:** T2 clay A/B на `ref_gold_armor` seed42 — **прогоны DONE 2026-08-01**, нужен визуальный Solid вердикт.
+
+### T2 A/B прогон (2026-08-01) — гипотеза «портим export»
+
+| | Baseline seed42 | A no-remesh | B 1536_cascade |
+|--|-----------------|-------------|----------------|
+| pipeline | 1024_cascade | 1024_cascade | **1536_cascade** |
+| remesh | True | **False** | True (default) |
+| decimation_target | 500k | **700k** | **700k** |
+| Verts | ~230–240k | **~351k** | **~327k** |
+| Faces | ~471k | **~677k** | **~673k** |
+| Файл | `model-armor-clay-seed42.glb` | `model-armor-clay-noremesh42.glb` | `model-armor-clay-1536-42.glb` |
+| Wall | (Track A warm ~30s) | ~322s cold | ~98s warm |
+
+Плотность теперь **в зоне Meshy** (~337k V / ~640k F) или выше.  
+
+### Вердикт глаз (2026-08-02, Pedrokita) — гипотеза **FAIL**
+
+На no-remesh / 1536 (и в целом):
+- наплечники — размазаны / **каша**  
+- пояс + «ткань» под ним — **каша**  
+- топология на мелких деталях — ужас  
+
+**Вывод:** больше verts/faces не сделали орнамент читаемым. Remesh/1024 — не главный виновник HF-каши.  
+T2 на этом character даёт сильный **макро**, слабый **микро** (шум вместо скульптуры).  
+
+→ Не крутить дальше T2 ради львов **как основной план**. Hi3DGen Solid — следующий shape spike.  
+T2 роль: preview / mid / props; не носитель «Meshy-орнамент».
+
+### Ещё колдовство над T2? (разбор идей, 2026-08-02)
+
+| Идея | Реализм | Заметка |
+|------|---------|---------|
+| **Лучший вход** (чистый cutout, без грязного rembg, ровный свет, выше res) | 🟡 дешёвый A/B | Может чуть подтянуть силуэт/зад; **не** превратит кашу-льва в Meshy-скульпт |
+| **`preprocess_image=false`** + ручной alpha | 🟡 1 job | Имеет смысл один раз проверить |
+| **Multi-view в T2** (несколько ракурсов объекта) | 🟠 у нас **не подключено** | Официальный T2 card = single image; v1 имел `run_multi_image`; T2 multi = community forks / Comfy, не наш worker |
+| **Синтез «видов со всех сторон» → T2** | 🔴 дорого / R&D | По сути строить кусок Meshy; synth MV сам ошибается → в T2 уйдёт каша с других сторон |
+| **Кропы мелких деталей (лев, пояс) как доп. вход** | 🔴 почти нет | Модель ждёт **виды целого объекта**, не патчи орнамента; у нас API только `image_url` |
+| Ещё seeds / steps ради HF | ❌ | Уже отказ; класс каши не снят |
+
+**Честно:** идея «нагенерить виды + детали и скормить T2» звучит как Meshy UX, но **self-host это отдельный стек** (MV synth + multi-cond + валидация), не «ещё один флаг».  
+Дешёвый остаток на T2: **один** прогон с лучшим cutout / `preprocess=false`. Если каша та же — закрываем T2-колдовство по орнаменту.
+
+### Cutout + no-preprocess (2026-08-02)
+
+| | Baseline seed42 | Cutout + `--no-preprocess` |
+|--|-----------------|----------------------------|
+| image | RGB + BiRefNet preprocess | RGBA u2net cutout, preprocess off |
+| remesh / pipeline / decim | True / 1024_cascade / 500k | same |
+| Verts / faces | 231023 / 471924 | **238373 / 482836** |
+| Файл | `model-armor-clay-seed42.glb` | `model-armor-clay-nopreprocess42.glb` |
+| Cutout URL | — | `…/smoke/ref_gold_armor_cutout.png` |
+
+**Вердикт = глаза** (наплечник / пояс): стал ли орнамент читаемее? Если нет → тема «неправильно подаём» закрыта → **сначала T2 max-quality (sampler)**, потом Hi3DGen.
+
+---
+
+## T2 max-quality (2026-08-02) — следующий прогон
+
+> Источники: upstream `Trellis2ImageTo3DPipeline.run`, [issue #92](https://github.com/microsoft/TRELLIS.2/issues/92), community (skip heavy simplify / remesh), fal/hard-surface tips.  
+> Цель: **исчерпать рычаги T2** до Hi3DGen.
+
+### Что уже закрыто
+
+| Прогон | Итог |
+|--------|------|
+| no-remesh + 700k | denser, орнамент каша |
+| 1536 default steps | denser, каша |
+| cutout + no-preprocess | почти тот же polycount, ждать/уже глаза |
+
+### Чего ещё не делали (главное)
+
+Worker **не пробрасывал** в `pipeline.run`:
+- `sparse_structure_sampler_params` (`steps`, `guidance_strength`, `guidance_rescale`, `rescale_t`)
+- `shape_slat_sampler_params` (то же — **главный рычаг fine geometry** по community)
+- `max_num_tokens` (cascade downsample)
+
+### Preset `t2_max_quality` (один clay job)
+
+```text
+image_url     = …/smoke/ref_gold_armor_cutout.png
+preprocess    = false
+pipeline_type = 1536_cascade
+seed          = 42
+texture_mode  = clay
+decimation    = 800000
+remesh        = false
+ss:    steps=50 guidance=8.0 rescale=0.7 rescale_t=6.0
+shape: steps=50 guidance=8.5 rescale=0.5 rescale_t=6.0
+max_num_tokens = 65536
+→ save model-armor-clay-maxq42.glb
+```
+
+Опционально B: те же sampler + `remesh=true` (чище topo vs резкость).
+
+### Порядок работ
+
+1. Код: проброс params в `worker_trellis2.py` + `--quality-max` в `test_req_trellis2.py`  
+2. Push → CI `build-trellis2` → **New Release** на `ynzpzjvcbfl656`  
+3. Smoke max-q (~дольше default; cold дорого)  
+4. Solid vs Meshy / seed42  
+5. Pass → recipe; Fail → Hi3DGen, T2 тюны по орнаменту **стоп**
+
+Логи A/B: `track_a_ab_noremesh.log`, `track_a_ab_1536.log`, `track_a_ab_nopreprocess.log`.
+
 
 ---
 
@@ -187,7 +366,39 @@ MV-Adapter = **не замена всего Meshy**. Это слой:
 
 ---
 
-## W2b — что даст **значительное** улучшение
+## W2c — latency + prod UV (2026-07-31) ✅ latency done
+
+> Path работает. **80k = ~8 мин**, но на рыцаре **качество просело** (месиво). Дальше — § «Ближе к вау», не ещё latency.
+
+### Измерения
+
+| Прогон | Faces | xatlas | wall | Качество |
+|--------|-------|--------|------|----------|
+| `knight_fast` | ~471k | ~1502 с | ~29 мин | лучше деталь, дорого |
+| `knight_w2c` | ~80k | ~145 с | **~8 мин** | быстро, орнамент убивает |
+
+### Решения (не менять)
+
+| Было | Стало |
+|------|--------|
+| Open3D UVAtlas | **запрещён** |
+| Clay без UV | **xatlas** → bake `uv_unwarp=False` |
+| Serverless 30 мин | не гонять marathon |
+
+### Checklist latency
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Decimate перед xatlas | ✅ 80k работает |
+| 2 | Pod wall минуты | ✅ ~8 мин |
+| 3 | Кеш UV / UV на clay в T2 | ⏸ позже |
+| 4 | Serverless | ⏸ после качества Q1–Q3 |
+
+**Meshy-like ops:** remesh/decimate + UV раз + bake. Poly budget **подбирать глазами** (не слепо 80k на character).
+
+---
+
+## W2b — мелочи краски (ТОЛЬКО после Q1–Q3)
 
 > Разделяем три слоя: **форма (mesh)**, **текстура (UV/projection)**, **мелкие детали (PBR/viewer)**.  
 > MV-Adapter **не чинит** дыры в геометрии T2 — только красит то, что есть.
@@ -268,11 +479,11 @@ python -m scripts.texture_i2tex \
 - [x] Pod smoke: `rm934rvrjh60g5` — green run → `knight_i2tex_shaded.glb`
 - [x] A/B локально: MV-Adapter **лучше** cascade; **не** Meshy wow
 - [x] Pin stack: torch cu124, diffusers 0.31, cvcuda-cu12, gltflib
-- [ ] **W2b:** `--preprocess_mesh`, mesh repair, PNG export, PBR patch
-- [ ] **W2b:** chest prop (второй asset) — regression
-- [ ] Stop pod после W2b (volume OK на EXITED)
-- [x] `worker_mvadapter.py` + `Dockerfile.mvadapter` + `test_req_mvadapter.py` — Serverless worker ready
-- [ ] Если tex plateau → MVPainter ≥40GB
+- [x] **2026-07-31:** xatlas path DONE_OK; W2c ~8 мин @ 80k
+- [x] **2026-07-31:** A/B vs Meshy зафиксирован — месиво = меш first
+- [ ] **Q1–Q3:** seeds → faces A/B → один paint
+- [ ] W2b мелочи / W3 — после Q1–Q3
+- [ ] Если tex plateau → MVPainter ≥40GB / другой shape
 
 ---
 
@@ -321,18 +532,17 @@ Scripts: `scripts/batch_seeds_trellis2.py`, `scripts/repair_glb_mesh.py`, `scrip
 
 ## Следующий конкретный шаг
 
-1. ~~W1 cascade + armor A/B~~ ✅  
-2. ~~W2 kickoff + smoke knight~~ ✅ (partial pass)  
-3. **Сейчас:** W2b — mesh repair + `--preprocess_mesh` + PNG/PBR export → второй прогон рыцаря  
-4. Параллельно: зафиксировать «дыры = mesh T2» vs «UV gaps» на clay viewer  
-5. Если tex plateau после W2b → MVPainter на ≥40GB pod (ceiling)
+1. ~~A/B remesh/1536/cutout~~ ✅ (плотность↑, каша осталась / cutout на глазах)  
+2. **T2 max-quality:** код sampler → deploy → `model-armor-clay-maxq42.glb`  
+3. Глаза → recipe или **Hi3DGen**  
+4. Texture — только после не-мыльного shape
 
 ---
 
 ## Не делаем
 
-- Тюнить TRELLIS paint / «ещё cascade seed»
-- Hunyuan в EU prod
-- Meshy API в core
-- Обещать 8K как Meshy сразу
-- Требовать от юзера multi-view для базового вау (Meshy не требует)
+- Synth multi-view R&D до исчерпания sampler max-q  
+- Красить кашу / E2 Meshy-меш  
+- Обещать Meshy-деталь на default T2  
+- Hunyuan в EU core  
+- Бесконечные seeds ради орнамента

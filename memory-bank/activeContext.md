@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-07-29** — endpoint `ggjypsxh0u1djj` live; smoke #1 fail spandrel, #2 fail cv2; CI fix cv2 pushed
+Последнее обновление: **2026-08-02** — план **T2 max-quality** (sampler/steps/guidance из upstream + community) до Hi3DGen
 
 ---
 
@@ -13,47 +13,65 @@
 | Поле | Значение |
 |------|----------|
 | Кто | Pedrokita (с Cursor агентом) |
-| ПК | Windows (`D:\AI_HUB\paradox_worker` + `D:\AI_HUB\POLY_LAB`) |
+| ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| T2 image | `trellis2-sha-6d763fa` |
-| Texture image | `texture-sha-c6fa8b5` (paint — **frozen**, не prod) |
-| Фокус | **Вау-стек** → `textureWowPlan.md` (§ T2 vs MV-Adapter) |
+| Фокус | **T2 max-quality** — код sampler готов; нужен **deploy** образа |
+
+---
+
+## Простыми словами (план 2026-08-02)
+
+Уже проверили и **не хватило**: remesh off, 1536 default steps, denser, cutout+no-preprocess.  
+Раньше **не крутили**: `ss` / `shape_slat` **steps + guidance**.
+
+**План:**
+1. ~~Проброс sampler в worker + `--quality-max`~~ ✅ код в ветке  
+2. **Deploy** trellis2 image → New Release `ynzpzjvcbfl656`  
+3. Job max-q на cutout → `model-armor-clay-maxq42.glb`  
+4. Глаза vs Meshy → recipe или Hi3DGen  
+
+### Preset (после deploy)
+
+```powershell
+.\.venv\Scripts\python.exe test_req_trellis2.py `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
+  --quality-max --seed 42 --texture-mode clay `
+  --save model-armor-clay-maxq42.glb
+```
+
+| | Значение |
+|--|----------|
+| pipeline | 1536_cascade |
+| decim / remesh | 800k / false |
+| preprocess | false (cutout) |
+| ss / shape | steps 50, guidance 8.0 / 8.5 |
 
 ---
 
 ## Текущий фокус
 
-**Держимся — прорвёмся.** W2 **GO** (MV-Adapter).
+| | Статус |
+|--|--------|
+| Код sampler / quality_max | ✅ |
+| **Deploy T2 image** | 🔴 следующий |
+| Job max-quality | ⏸ |
+| Hi3DGen | ⏸ если fail |
 
-Детали: `textureWowPlan.md` § W2 checklist + `scripts/mvadapter_w2_spike.md`.
-
-| | TRELLIS.2 | MV-Adapter (W2) |
-|--|-----------|-----------------|
-| Даёт | mid clay/generate | скачок tex с 1 фото |
-| License | MIT | **Apache-2.0** ✅ |
-| Entry | worker_trellis2 | `scripts.texture_i2tex` → `*_shaded.glb` |
-| Сейчас | live mid | **W2 smoke ✅** → W2b (mesh repair, PNG/PBR) |
-
-| Фаза | Статус |
-|------|--------|
-| 0–1 | ✅ |
-| 2 MV-Adapter | 🔄 **W2 smoke ✅** partial; **W2b** mesh+tex tuning |
-| 3 texture-v2 worker | 🔄 `worker_mvadapter.py` + CI ready; ждём build+deploy |
-
-**T1c** — не делать.
 ---
 
 ## Очередь спринта
 
-| # | Задача | Репо | Статус |
-|---|--------|------|--------|
-| W0 | Зафиксировать wow-plan в memory | paradox_worker | ✅ |
-| W1 | Cascade baseline + armor A/B vs Meshy | paradox_worker | ✅ проигрыш по sharpness |
-| W2 | Spike MV-Adapter knight — `knight_i2tex_shaded.glb` | paradox_worker | ✅ partial pass |
-| W2b | Mesh repair, preprocess_mesh, PNG/PBR, второй прогон | paradox_worker | 🔄 seed42 repaired → MV v2 |
-| W3 | MV-Adapter Serverless endpoint | paradox_worker | 🔄 code+CI done; build+deploy next |
-| T1c | Studio → paint v1 | POLY_LAB | ⏸ frozen |
-| — | Clerk/Stripe | POLY_LAB | ⏸ |
+| # | Задача | Статус |
+|---|--------|--------|
+| План max-quality | ✅ |
+| Worker + test_req | ✅ |
+| **CI / New Release T2** | 🔴 |
+| Smoke maxq42 | ⏸ |
+| Вердикт / Hi3DGen | ⏸ |
+
+**План:** `textureWowPlan.md` § «T2 max-quality».
+
+**MV-Adapter ops:** `workersMin=0` всегда. Не serverless marathon. Pod terminate после smoke.
 
 **Warm clay `512` (2026-07-22, 5 jobs back-to-back):**
 
@@ -82,7 +100,7 @@ Warm timing: `scripts/warm_timing_t2.py --no-zombie-watch --no-heal`.
 | Secondary (RO) | nasty_tan_boa | `88djlbwtw4sjlv` | EU-RO-1 | `witty_blush_toucan` | v1 OK |
 | Quality (T2) | paradox-trellis2_endpoint | `ynzpzjvcbfl656` | EU-RO-1 | `paradox-trellis2` (`netu72a8j2`) | **T2 + R2 OK** |
 | **Texture v1** | TRELLIS_texturing | `a968zrhd6hmj7s` | EU-RO-1 | `paradox-trellis2` | **live**; image `texture-sha-c6fa8b5`; R2 env ✅ |
-| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO | no volume | **workersMin=0**; Release #9 fail (pipe hang); next `398264f` + cold smoke |
+| **MV-Adapter** | paradox-mvadapter | `ggjypsxh0u1djj` | EU-RO-1 | `paradox-mvadapter-storage` (`dses29m9i5`, 40GB) | **workersMin=0**; v11+volume; Release #10 timeout без кэша → retry smoke |
 
 **`.env`:** `RUNPOD_ENDPOINT_ID_TRELLIS2=ynzpzjvcbfl656`, `RUNPOD_ENDPOINT_ID_TEXTURE=a968zrhd6hmj7s`  
 (локально также могут быть `RUNPOD_S3_*` для volume S3 — **не** путать с `R2_*`)
@@ -312,6 +330,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-02 | Pedrokita | План T2 max-quality; проброс sampler/quality_max в worker+test_req | Deploy T2 → smoke maxq42 |
+| 2026-07-31 | Pedrokita | xatlas path; decimate 80k; GHCR Pod smoke; preview + lights | quality after latency |
 | 2026-07-08 | Pedrokita | Memory-bank, test_req async, worker traceback/xformers | RunPod тест |
 | 2026-07-09 | Pedrokita | Multi-endpoint fallback, watch_endpoint, CZ Release #13, support ticket | Digest fix |
 | 2026-07-10 | Pedrokita | Digest fix; FlexiCubes+kaolin; CI tags; 5090 unhealthy; throttled CZ; nvdiffrast missing | Rebuild, GPU list, retest |
@@ -346,6 +366,9 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-08-02 | **T2 A/B FAIL на HF** | no-remesh/1536 denser ≈ Meshy polycount; орнамент всё ещё каша → потолок T2 micro, не только export |
+| 2026-08-01 | **Сначала чинили T2 export** | Проверили; не хватило |
+| 2026-07-31 | **Мыльный меш → не красить; E2 нет** | Unit economics |
 | 2026-07-28 | **W2 smoke partial pass** | Tex лучше cascade; дыры = mesh T2 + UV gaps; мыло = JPEG + нет PBR |
 | 2026-07-24 | **Meshy рыцарь = эталон** (1 photo): меш+зад+tex | Наш cascade mid; вау через новый stack |
 | 2026-07-24 | **Meshy вау с 1 фото** — не user multi-view | Разрыв = их synth MV + models; наш cascade проигрывает |

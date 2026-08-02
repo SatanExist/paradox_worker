@@ -172,12 +172,23 @@ Studio без этой переменной остаётся на v0 bake.
 4. ETA: если endpoint cold → показывать cold; если недавний job на том же endpoint → warm
 5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
 
-**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `return_base64`; `texture_size` только при `textured`.
+**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.
+
+**`quality_max=true` preset:** `1536_cascade`, decim 800k, remesh false, preprocess false, ss/shape steps=50 + high guidance (issue #92). Нужен образ **после** проброса sampler в `worker_trellis2.py`.
+
+```powershell
+# после New Release trellis2:
+.\.venv\Scripts\python.exe test_req_trellis2.py `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
+  --quality-max --seed 42 --texture-mode clay `
+  --save model-armor-clay-maxq42.glb
+```
 
 **Clay release checklist:**
 1. Push `worker_trellis2.py` → CI `build-trellis2.yml` (или `docker build -f Dockerfile.trellis2`)
 2. New RunPod Release on `ynzpzjvcbfl656` with new image tag
 3. Smoke: `python test_req_trellis2.py --pipeline-type 512 --texture-mode clay --save model-clay.glb`
+4. Max-q: команда выше → Solid vs Meshy
 
 ### Studio Bridge API (POC, 2026-07-20)
 
