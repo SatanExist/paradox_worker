@@ -46,6 +46,34 @@ def sanitize(payload: dict) -> dict:
     return out
 
 
+def _sampler_dict(
+    *,
+    steps,
+    guidance,
+    guidance_rescale,
+    rescale_t,
+    guidance_interval,
+    default_steps: int,
+    default_guidance: float,
+    default_rescale: float,
+    default_rescale_t: float,
+    default_interval: list[float],
+) -> dict:
+    out = {
+        "steps": steps if steps is not None else default_steps,
+        "guidance_strength": guidance if guidance is not None else default_guidance,
+        "guidance_rescale": (
+            guidance_rescale if guidance_rescale is not None else default_rescale
+        ),
+        "rescale_t": rescale_t if rescale_t is not None else default_rescale_t,
+    }
+    if guidance_interval is not None:
+        out["guidance_interval"] = guidance_interval
+    else:
+        out["guidance_interval"] = list(default_interval)
+    return out
+
+
 def build_input(args: argparse.Namespace) -> dict:
     job_input = {
         "image_url": args.image_url,
@@ -61,6 +89,14 @@ def build_input(args: argparse.Namespace) -> dict:
         job_input["preprocess_image"] = False
     if args.no_remesh:
         job_input["remesh"] = False
+    if args.remesh_project is not None:
+        job_input["remesh_project"] = args.remesh_project
+    if args.remesh_band is not None:
+        job_input["remesh_band"] = args.remesh_band
+    if args.max_hole_perimeter is not None:
+        job_input["max_hole_perimeter"] = args.max_hole_perimeter
+    if args.remove_small_cc is not None:
+        job_input["remove_small_cc"] = args.remove_small_cc
     if args.quality_max:
         job_input["quality_max"] = True
         # Full tutorial/community preset; CLI flags still override when set.
@@ -73,48 +109,119 @@ def build_input(args: argparse.Namespace) -> dict:
         if not args.no_preprocess:
             job_input["preprocess_image"] = False
         job_input["max_num_tokens"] = args.max_num_tokens
-        job_input["sparse_structure_sampler_params"] = {
-            "steps": args.ss_steps if args.ss_steps is not None else 50,
-            "guidance_strength": args.ss_guidance if args.ss_guidance is not None else 8.0,
-            "guidance_rescale": (
-                args.ss_guidance_rescale if args.ss_guidance_rescale is not None else 0.7
-            ),
-            "rescale_t": args.ss_rescale_t if args.ss_rescale_t is not None else 6.0,
-        }
-        job_input["shape_slat_sampler_params"] = {
-            "steps": args.shape_steps if args.shape_steps is not None else 50,
-            "guidance_strength": (
-                args.shape_guidance if args.shape_guidance is not None else 8.5
-            ),
-            "guidance_rescale": (
-                args.shape_guidance_rescale
-                if args.shape_guidance_rescale is not None
-                else 0.5
-            ),
-            "rescale_t": args.shape_rescale_t if args.shape_rescale_t is not None else 6.0,
-        }
-    elif args.ss_steps is not None or args.shape_steps is not None:
-        job_input["sparse_structure_sampler_params"] = {
-            "steps": args.ss_steps if args.ss_steps is not None else 12,
-            "guidance_strength": args.ss_guidance if args.ss_guidance is not None else 7.5,
-            "guidance_rescale": (
-                args.ss_guidance_rescale if args.ss_guidance_rescale is not None else 0.7
-            ),
-            "rescale_t": args.ss_rescale_t if args.ss_rescale_t is not None else 5.0,
-        }
-        job_input["shape_slat_sampler_params"] = {
-            "steps": args.shape_steps if args.shape_steps is not None else 12,
-            "guidance_strength": (
-                args.shape_guidance if args.shape_guidance is not None else 7.5
-            ),
-            "guidance_rescale": (
-                args.shape_guidance_rescale
-                if args.shape_guidance_rescale is not None
-                else 0.5
-            ),
-            "rescale_t": args.shape_rescale_t if args.shape_rescale_t is not None else 3.0,
-        }
+        job_input["sparse_structure_sampler_params"] = _sampler_dict(
+            steps=args.ss_steps,
+            guidance=args.ss_guidance,
+            guidance_rescale=args.ss_guidance_rescale,
+            rescale_t=args.ss_rescale_t,
+            guidance_interval=args.ss_guidance_interval,
+            default_steps=50,
+            default_guidance=8.0,
+            default_rescale=0.7,
+            default_rescale_t=6.0,
+            default_interval=[0.6, 1.0],
+        )
+        job_input["shape_slat_sampler_params"] = _sampler_dict(
+            steps=args.shape_steps,
+            guidance=args.shape_guidance,
+            guidance_rescale=args.shape_guidance_rescale,
+            rescale_t=args.shape_rescale_t,
+            guidance_interval=args.shape_guidance_interval,
+            default_steps=50,
+            default_guidance=8.5,
+            default_rescale=0.5,
+            default_rescale_t=6.0,
+            default_interval=[0.6, 1.0],
+        )
+    elif (
+        args.ss_steps is not None
+        or args.shape_steps is not None
+        or args.ss_guidance_interval is not None
+        or args.shape_guidance_interval is not None
+    ):
+        job_input["max_num_tokens"] = args.max_num_tokens
+        job_input["sparse_structure_sampler_params"] = _sampler_dict(
+            steps=args.ss_steps,
+            guidance=args.ss_guidance,
+            guidance_rescale=args.ss_guidance_rescale,
+            rescale_t=args.ss_rescale_t,
+            guidance_interval=args.ss_guidance_interval,
+            default_steps=12,
+            default_guidance=7.5,
+            default_rescale=0.7,
+            default_rescale_t=5.0,
+            default_interval=[0.6, 1.0],
+        )
+        job_input["shape_slat_sampler_params"] = _sampler_dict(
+            steps=args.shape_steps,
+            guidance=args.shape_guidance,
+            guidance_rescale=args.shape_guidance_rescale,
+            rescale_t=args.shape_rescale_t,
+            guidance_interval=args.shape_guidance_interval,
+            default_steps=12,
+            default_guidance=7.5,
+            default_rescale=0.5,
+            default_rescale_t=3.0,
+            default_interval=[0.6, 1.0],
+        )
     return job_input
+
+
+def glb_mesh_stats(path: Path) -> dict:
+    """Count vertices/faces from GLB without heavy deps (JSON chunk accessors)."""
+    import json
+    import struct
+
+    data = path.read_bytes()
+    if len(data) < 20 or data[0:4] != b"glTF":
+        raise ValueError(f"Not a GLB: {path}")
+    json_len = struct.unpack_from("<I", data, 12)[0]
+    chunk = json.loads(data[20 : 20 + json_len])
+    accessors = chunk.get("accessors") or []
+    meshes = chunk.get("meshes") or []
+    verts = 0
+    faces = 0
+    for mesh in meshes:
+        for prim in mesh.get("primitives") or []:
+            attrs = prim.get("attributes") or {}
+            pos = attrs.get("POSITION")
+            if pos is not None and pos < len(accessors):
+                verts += int(accessors[pos].get("count") or 0)
+            idx = prim.get("indices")
+            if idx is not None and idx < len(accessors):
+                faces += int(accessors[idx].get("count") or 0) // 3
+            elif pos is not None and pos < len(accessors):
+                # triangle soup without indices
+                faces += int(accessors[pos].get("count") or 0) // 3
+    return {"vertices": verts, "faces": faces, "bytes": path.stat().st_size}
+
+
+def print_run_metrics(final: dict, save_path: Path | None) -> None:
+    output = final.get("output") or {}
+    if not isinstance(output, dict):
+        return
+    billing = output.get("billing") or {}
+    handler = billing.get("handler_ms") or {}
+    mesh = output.get("mesh_stats") or {}
+    print("--- metrics ---")
+    if handler:
+        print(
+            "timing_ms:",
+            f"inference={handler.get('inference_ms')}",
+            f"glb_export={handler.get('glb_export_ms')}",
+            f"model_load={handler.get('model_load_ms')}",
+            f"total={handler.get('total_ms')}",
+            f"delay={final.get('delayTime')}",
+            f"execution={final.get('executionTime')}",
+        )
+    if mesh:
+        print(f"mesh_stats (worker): verts={mesh.get('vertices')} faces={mesh.get('faces')}")
+    if save_path and save_path.is_file():
+        local = glb_mesh_stats(save_path)
+        print(
+            f"mesh_stats (local GLB): verts={local['vertices']} "
+            f"faces={local['faces']} bytes={local['bytes']}"
+        )
 
 
 def save_output(final: dict, save_path: Path) -> None:
@@ -171,6 +278,30 @@ def main() -> int:
     parser.add_argument("--no-preprocess", action="store_true")
     parser.add_argument("--no-remesh", action="store_true")
     parser.add_argument(
+        "--remesh-project",
+        type=float,
+        default=None,
+        help="project_back for remesh_narrow_band_dc (0..1; official to_glb often 0.9)",
+    )
+    parser.add_argument(
+        "--remesh-band",
+        type=float,
+        default=None,
+        help="narrow-band remesh band (default 1.0)",
+    )
+    parser.add_argument(
+        "--max-hole-perimeter",
+        type=float,
+        default=None,
+        help="CuMesh fill_holes max perimeter (default 0.03)",
+    )
+    parser.add_argument(
+        "--remove-small-cc",
+        type=float,
+        default=None,
+        help="remove_small_connected_components threshold (no-remesh path; default 1e-5)",
+    )
+    parser.add_argument(
         "--quality-max",
         action="store_true",
         help="Tutorial/community max-quality preset (1536, steps50, high guidance, no remesh)",
@@ -190,10 +321,26 @@ def main() -> int:
     parser.add_argument("--ss-guidance", type=float, default=None)
     parser.add_argument("--ss-guidance-rescale", type=float, default=None)
     parser.add_argument("--ss-rescale-t", type=float, default=None)
+    parser.add_argument(
+        "--ss-guidance-interval",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=None,
+        help="SS CFG interval on t, e.g. 0.0 1.0 (default HF 0.6 1.0)",
+    )
     parser.add_argument("--shape-steps", type=int, default=None)
     parser.add_argument("--shape-guidance", type=float, default=None)
     parser.add_argument("--shape-guidance-rescale", type=float, default=None)
     parser.add_argument("--shape-rescale-t", type=float, default=None)
+    parser.add_argument(
+        "--shape-guidance-interval",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=None,
+        help="Shape SLat CFG interval on t, e.g. 0.0 1.0 (default HF 0.6 1.0)",
+    )
     parser.add_argument(
         "--zombie-after",
         type=float,
@@ -275,7 +422,11 @@ def main() -> int:
                 output.get("model_url"),
             )
         if args.save:
-            save_output(final, Path(args.save))
+            save_path = Path(args.save)
+            save_output(final, save_path)
+            print_run_metrics(final, save_path)
+        else:
+            print_run_metrics(final, None)
         return 0
 
     return 1

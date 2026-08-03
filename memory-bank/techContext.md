@@ -172,9 +172,15 @@ Studio без этой переменной остаётся на v0 bake.
 4. ETA: если endpoint cold → показывать cold; если недавний job на том же endpoint → warm
 5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
 
-**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.
+**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter`, `remove_small_cc`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.
 
-**`quality_max=true` preset:** `1536_cascade`, decim 800k, remesh false, preprocess false, ss/shape steps=50 + high guidance (issue #92). Нужен образ **после** проброса sampler в `worker_trellis2.py`.
+**Sampler params (каждый блок):** `steps` (1–100), `guidance_strength`, `guidance_rescale`, `rescale_t`, `guidance_interval` `[lo,hi]` (CFG window on t; HF default SS/shape `[0.6,1.0]`, tex `[0.6,0.9]`).
+
+**Ответ worker:** `generation` (params), `mesh_stats` `{vertices, faces}`, `billing.handler_ms` (`inference_ms`, `glb_export_ms`, `model_load_ms`, `total_ms`), R2 `model_url`.
+
+**`quality_max=true` preset:** `1536_cascade`, decim 800k, remesh false, preprocess false, ss/shape steps=50 + high guidance (issue #92). **Не** front recipe (дыры). Product front: 1536+remesh+700k+steps50+RGB.
+
+**Метрики A/B:** `scripts/summarize_t2_front_metrics.py`; CLI `test_req_trellis2.py` печатает `--- metrics ---` после save.
 
 ```powershell
 # после New Release trellis2:

@@ -92,7 +92,7 @@ def _sampler_params_from_input(raw, defaults: dict) -> dict:
     if not isinstance(raw, dict):
         return out
     if "steps" in raw:
-        out["steps"] = _coerce_int(raw.get("steps"), out["steps"], min_val=1, max_val=50)
+        out["steps"] = _coerce_int(raw.get("steps"), out["steps"], min_val=1, max_val=100)
     if "guidance_strength" in raw:
         out["guidance_strength"] = _coerce_float(
             raw.get("guidance_strength"), out["guidance_strength"], min_val=0.0, max_val=20.0
@@ -105,39 +105,70 @@ def _sampler_params_from_input(raw, defaults: dict) -> dict:
         out["rescale_t"] = _coerce_float(
             raw.get("rescale_t"), out["rescale_t"], min_val=1.0, max_val=6.0
         )
+    if "guidance_interval" in raw:
+        interval = _coerce_guidance_interval(
+            raw.get("guidance_interval"), out.get("guidance_interval", [0.6, 1.0])
+        )
+        if interval is not None:
+            out["guidance_interval"] = interval
     return out
 
 
+def _coerce_guidance_interval(raw, default):
+    """Parse [lo, hi] in [0, 1] with lo <= hi (TRELLIS.2 CFG window on t)."""
+    fallback = list(default) if isinstance(default, (list, tuple)) and len(default) == 2 else [0.6, 1.0]
+    if raw is None:
+        return fallback
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return fallback
+    try:
+        lo = float(raw[0])
+        hi = float(raw[1])
+    except (TypeError, ValueError):
+        return fallback
+    lo = max(0.0, min(1.0, lo))
+    hi = max(0.0, min(1.0, hi))
+    if lo > hi:
+        lo, hi = hi, lo
+    return [lo, hi]
+
+
 # Community / issue #92 quality-first defaults (hard-surface leaning).
+# guidance_interval matches HF pipeline.json defaults for SS/shape.
 DEFAULT_SS_SAMPLER = {
     "steps": 12,
     "guidance_strength": 7.5,
     "guidance_rescale": 0.7,
     "rescale_t": 5.0,
+    "guidance_interval": [0.6, 1.0],
 }
 DEFAULT_SHAPE_SLAT_SAMPLER = {
     "steps": 12,
     "guidance_strength": 7.5,
     "guidance_rescale": 0.5,
     "rescale_t": 3.0,
+    "guidance_interval": [0.6, 1.0],
 }
 DEFAULT_TEX_SLAT_SAMPLER = {
     "steps": 12,
     "guidance_strength": 1.0,
     "guidance_rescale": 0.0,
     "rescale_t": 3.0,
+    "guidance_interval": [0.6, 0.9],
 }
 MAXQ_SS_SAMPLER = {
     "steps": 50,
     "guidance_strength": 8.0,
     "guidance_rescale": 0.7,
     "rescale_t": 6.0,
+    "guidance_interval": [0.6, 1.0],
 }
 MAXQ_SHAPE_SLAT_SAMPLER = {
     "steps": 50,
     "guidance_strength": 8.5,
     "guidance_rescale": 0.5,
     "rescale_t": 6.0,
+    "guidance_interval": [0.6, 1.0],
 }
 
 
@@ -191,6 +222,15 @@ def _generation_params(job_input: dict) -> dict:
         min_val=16_384,
         max_val=98_304,
     )
+    remesh_band = _coerce_float(
+        job_input.get("remesh_band"), 1.0, min_val=0.5, max_val=4.0
+    )
+    max_hole_perimeter = _coerce_float(
+        job_input.get("max_hole_perimeter"), 3e-2, min_val=0.0, max_val=1.0
+    )
+    remove_small_cc = _coerce_float(
+        job_input.get("remove_small_cc"), 1e-5, min_val=0.0, max_val=1e-2
+    )
 
     ss_defaults = MAXQ_SS_SAMPLER if quality_max else DEFAULT_SS_SAMPLER
     shape_defaults = MAXQ_SHAPE_SLAT_SAMPLER if quality_max else DEFAULT_SHAPE_SLAT_SAMPLER
@@ -205,6 +245,9 @@ def _generation_params(job_input: dict) -> dict:
         "preprocess_image": preprocess_image,
         "remesh": remesh,
         "remesh_project": remesh_project,
+        "remesh_band": remesh_band,
+        "max_hole_perimeter": max_hole_perimeter,
+        "remove_small_cc": remove_small_cc,
         "verbose": verbose,
         "quality_max": quality_max,
         "max_num_tokens": max_num_tokens,
@@ -306,6 +349,9 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
     verbose = gen_params["verbose"]
     remesh = gen_params["remesh"]
     decimation_target = gen_params["decimation_target"]
+    max_hole_perimeter = float(gen_params.get("max_hole_perimeter", 3e-2))
+    remove_small_cc = float(gen_params.get("remove_small_cc", 1e-5))
+    remesh_band = float(gen_params.get("remesh_band", 1.0))
     aabb = torch.tensor(
         [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
         dtype=torch.float32,
@@ -316,7 +362,7 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
     faces = mesh.faces.cuda()
     cm = cumesh.CuMesh()
     cm.init(vertices, faces)
-    cm.fill_holes(max_hole_perimeter=3e-2)
+    cm.fill_holes(max_hole_perimeter=max_hole_perimeter)
     if verbose:
         print(f"Clay after fill_holes: {cm.num_vertices} verts, {cm.num_faces} faces")
 
@@ -337,7 +383,6 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
         grid_size = ((aabb[1] - aabb[0]) / voxel_size_t).round().int()
         verts_now, faces_now = cm.read()
         bvh = cumesh.cuBVH(verts_now, faces_now)
-        remesh_band = 1.0
         remesh_project = float(gen_params.get("remesh_project", 0.0))
         center = aabb.mean(dim=0)
         scale = (aabb[1] - aabb[0]).max().item()
@@ -362,13 +407,13 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
         cm.simplify(decimation_target * 3, verbose=verbose)
         cm.remove_duplicate_faces()
         cm.repair_non_manifold_edges()
-        cm.remove_small_connected_components(1e-5)
-        cm.fill_holes(max_hole_perimeter=3e-2)
+        cm.remove_small_connected_components(remove_small_cc)
+        cm.fill_holes(max_hole_perimeter=max_hole_perimeter)
         cm.simplify(decimation_target, verbose=verbose)
         cm.remove_duplicate_faces()
         cm.repair_non_manifold_edges()
-        cm.remove_small_connected_components(1e-5)
-        cm.fill_holes(max_hole_perimeter=3e-2)
+        cm.remove_small_connected_components(remove_small_cc)
+        cm.fill_holes(max_hole_perimeter=max_hole_perimeter)
         cm.unify_face_orientations()
 
     if verbose:
@@ -417,7 +462,7 @@ def _mesh_to_glb(mesh, gen_params: dict):
         decimation_target=gen_params["decimation_target"],
         texture_size=gen_params["texture_size"],
         remesh=gen_params["remesh"],
-        remesh_band=1,
+        remesh_band=float(gen_params.get("remesh_band", 1.0)),
         remesh_project=float(gen_params.get("remesh_project", 0.0)),
         verbose=gen_params["verbose"],
     )
@@ -563,6 +608,10 @@ def handler(job):
 
         t_glb = time.perf_counter()
         glb = _mesh_to_glb(mesh, gen_params)
+        mesh_stats = {
+            "vertices": int(len(glb.vertices)),
+            "faces": int(len(glb.faces)),
+        }
 
         glb_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
         glb_path = glb_temp.name
@@ -582,6 +631,7 @@ def handler(job):
             "status": "success",
             "message": "TRELLIS.2 model generated successfully",
             "generation": gen_params,
+            "mesh_stats": mesh_stats,
             "billing": _runpod_billing_metadata(handler_ms),
             **delivery,
         }

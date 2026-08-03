@@ -83,6 +83,8 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026-07-31 | Не жечь MV serverless до wall≪10 мин на Pod | 1800s timeout бил в unwrap, не в diffusion |
 | 2026-07-31 | Meshy-like ops: remesh + UV раз + bake; **poly budget глазами** | 80k ок для ETA; на character с орнаментом убивает HF — не слепой default |
 | 2026-07-31 | Качество = макро / микро-геометрия / текстура отдельно | T2 clay рыцарь: макро вау, микро месиво; tex смотреть после изоляции (E2) |
+| 2026-08-03 | Front clay recipe = **1536+remesh+700k+steps50+RGB**; не cutout; не no-remesh max-q | Матрица A–G: 1536+sampler = big+; табард каша = остаток; seeds отложены |
+| 2026-08-03 | `remesh_project` не рычаг sharpness на этом ассете | F@D' / G = same |
 
 ## Будущее (когда будет сайт)
 

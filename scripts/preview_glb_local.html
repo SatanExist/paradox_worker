@@ -21,20 +21,29 @@
   <div id="bar">
     <strong>GLB preview</strong>
     <select id="file">
-      <option value="../model-armor-clay_repaired.glb">Track A clay seed 42 REPAIRED</option>
-      <option value="../model-armor-clay-nopreprocess42.glb">T2 cutout + no-preprocess seed42</option>
-      <option value="../model-armor-clay-noremesh42.glb">T2 A/B no-remesh seed42 (700k)</option>
-      <option value="../model-armor-clay-1536-42.glb">T2 A/B 1536_cascade seed42 (700k)</option>
-      <option value="../model-armor-clay-seed1.glb">Track A clay seed 1</option>
-      <option value="../model-armor-clay-seed7.glb">Track A clay seed 7</option>
-      <option value="../model-armor-clay-seed42.glb">Track A clay seed 42 (winner)</option>
-      <option value="../model-armor-clay-seed123.glb">Track A clay seed 123</option>
-      <option value="../knight_w2c_shaded.glb">MV-Adapter knight_w2c (decimate 80k)</option>
-      <option value="../knight_fast_shaded.glb">MV-Adapter knight_fast (xatlas 2026-07-31)</option>
-      <option value="../knight_i2tex_shaded.glb">MV-Adapter knight_i2tex (W2 smoke)</option>
-      <option value="../model-armor-wow.glb">Armor cascade textured (baseline)</option>
-      <option value="../model-wow-baseline.glb">W1 cascade textured 2048 (chest)</option>
-      <option value="../model-tex-matte.glb">v1 paint matte (грязный albedo)</option>
+      <option value="../model-armor-clay-sampler50-pro-1536-tok98k.glb">tokens 98k — best + max_num_tokens</option>
+      <option value="../model-armor-clay-sampler50-pro-1536-e700.glb">C+E — 1536 + remesh + 700k</option>
+      <option value="../model-armor-clay-sampler50-pro-1536.glb">C@D' — 1536 + remesh + 500k</option>
+      <option value="../model-armor-clay-sampler50-pro-e700.glb">E lite — D' + decim 700k</option>
+      <option value="../model-armor-clay-sampler50-pro-rp05.glb">F@D' — sampler50-pro + project0.5</option>
+      <option value="../model-armor-clay-sampler50-pro42.glb">D' — sampler50 + RGB (без cutout)</option>
+      <option value="../model-armor-clay-maxq-remesh42.glb">G+F — maxq + remesh + project0.9</option>
+      <option value="../model-armor-clay-maxq-pro42.glb">G stress — maxq 1536+sampler (нормальные пропорции)</option>
+      <option value="../model-armor-clay-sampler50-42.glb">Ось D — sampler50 seed42</option>
+      <option value="../model-armor-clay-seed42.glb">Track A — clay seed42 (winner)</option>
+      <option value="../model-armor-clay_repaired.glb">Track A — seed42 REPAIRED</option>
+      <option value="../model-armor-clay-nopreprocess42.glb">A/B — cutout + no-preprocess</option>
+      <option value="../model-armor-clay-noremesh42.glb">A/B — no-remesh 700k</option>
+      <option value="../model-armor-clay-1536-42.glb">A/B — 1536_cascade 700k</option>
+      <option value="../model-armor-clay-seed1.glb">Track A — clay seed1</option>
+      <option value="../model-armor-clay-seed7.glb">Track A — clay seed7</option>
+      <option value="../model-armor-clay-seed123.glb">Track A — clay seed123</option>
+      <option value="../knight_w2c_shaded.glb">MV-Adapter — knight_w2c (80k)</option>
+      <option value="../knight_fast_shaded.glb">MV-Adapter — knight_fast</option>
+      <option value="../knight_i2tex_shaded.glb">MV-Adapter — knight_i2tex</option>
+      <option value="../model-armor-wow.glb">Armor cascade textured</option>
+      <option value="../model-wow-baseline.glb">W1 cascade textured chest</option>
+      <option value="../model-tex-matte.glb">v1 paint matte</option>
       <option value="../model-tex.glb">v1 paint original</option>
       <option value="../model-t2-chest-seed7.glb">v0 bake T2 chest seed7</option>
       <option value="../model-t2-chest-seed1.glb">v0 bake T2 chest seed1</option>
@@ -213,9 +222,21 @@
 
     const params = new URLSearchParams(location.search);
     const q = params.get('file');
-    if (q) fileSel.value = q.startsWith('../') ? q : `../${q}`;
+    let initial = fileSel.value;
+    if (q) {
+      const path = q.startsWith('../') ? q : `../${q.replace(/^\/+/, '')}`;
+      const match = [...fileSel.options].some((o) => o.value === path);
+      if (!match) {
+        const opt = document.createElement('option');
+        opt.value = path;
+        opt.textContent = `URL — ${q}`;
+        fileSel.insertBefore(opt, fileSel.firstChild);
+      }
+      fileSel.value = path;
+      initial = path;
+    }
     if (params.get('wireframe') === '1') wireframe.checked = true;
-    load(fileSel.value);
+    load(initial);
 
     function animate() {
       requestAnimationFrame(animate);

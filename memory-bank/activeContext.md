@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-02** — курс: **корневая матрица T2** (не kitchen-sink); max-q = финальный stress после осей
+Последнее обновление: **2026-08-03** — front best + метрики зафиксированы; knobs в коде; **шаги squeeze T2** (после deploy)
 
 ---
 
@@ -15,30 +15,111 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **Найти корень** HF-каши: изолированные оси → потом max-q / Hi3DGen |
+| Фокус | **шаги squeeze T2** — 0: commit/push/CI/release → 1…5 A/B с метриками |
+
+### Чеклист шагов (T2 knobs дожим)
+
+| Шаг | Действие | Статус | Артефакт / критерий |
+|-----|----------|--------|---------------------|
+| **0** | commit+push worker/CLI/metrics → CI `trellis2` → RunPod New Release | ⏸ ждём OK на commit | image `trellis2-sha-*` |
+| **1** | best + `guidance_interval 0 1` (ss+shape) | ⏸ | `…-gi01.glb` — табард? |
+| **2** | best + steps **75** | ⏸ | `…-s75.glb` |
+| **3** | best + shape guidance **10** | ⏸ | `…-sg10.glb` |
+| **4** | best + `remesh_band 2` | ⏸ | `…-band2.glb` |
+| **5** | best + `max_hole_perimeter 0.1` | ⏸ | `…-hole01.glb` |
+| — | Hi3DGen | ⏸ после T2 knobs | если табард всё ещё каша |
+
+На **каждом** job писать: `infer_s` / `exec_s` / verts / faces (CLI `--- metrics ---` + `summarize_t2_front_metrics.py`).
+
+Best baseline для шагов 1–5:
+`1536_cascade` + remesh + 700k + steps50 + RGB + seed42 → `sampler50-pro-1536-e700.glb`
+
+### Метрики front A/B (verts/faces + время)
+
+`infer_s` = handler `inference_ms` (без cold load). `exec_s` = RunPod `executionTime` (load+infer+export).
+
+| label | verts | faces | MB | infer_s | exec_s | load_s |
+|-------|------:|------:|---:|--------:|-------:|-------:|
+| Track A seed42 | 231023 | 471924 | 8.44 | — | — | — |
+| D' 1024+50+500k | 244156 | 493766 | 8.86 | 128.8 | 277.4 | 142.3 |
+| F@D' project0.5 | 243477 | 499060 | 8.91 | 130.1 | 286.5 | 151.2 |
+| E 1024+700k | 339869 | 688554 | 12.34 | 130.5 | 275.1 | 140.3 |
+| C@D' 1536+500k | 241729 | 485780 | 8.73 | 183.3 | 327.4 | 135.3 |
+| **C+E best 1536+700k** | **332711** | **669158** | **12.02** | **182.8** | **334.4** | 142.0 |
+| tokens 98k (=same) | 333159 | 669892 | 12.04 | 238.5 | 459.0 | 205.0 |
+| G maxq no-remesh | 428607 | 767078 | 14.35 | 197.7 | 369.1 | 167.7 |
+| G+F remesh+p0.9 | 384991 | 791890 | 14.12 | 185.0 | 341.6 | 147.6 |
+
+Скрипт: `scripts/summarize_t2_front_metrics.py` (логи часто UTF-16 от PowerShell `*>`).
+
+### Код (локально, ждёт шаг 0 deploy)
+
+Файлы: `worker_trellis2.py`, `test_req_trellis2.py`, `scripts/summarize_t2_front_metrics.py`, preview dropdown.
+- `guidance_interval` в sampler params (HF default `[0.6,1.0]`)
+- steps max **100** (было 50)
+- `remesh_band`, `max_hole_perimeter`, `remove_small_cc`
+- ответ: `mesh_stats` {vertices, faces}; CLI печатает timing + local GLB counts
+
+---
+
+## Наработки front (золотой рыцарь) — 2026-08-03
+
+### Scope глаз
+Только **перед**. Бока/спина — позже.
+
+### Best recipe (product candidate)
+
+```text
+image          = …/smoke/ref_gold_armor.png   # RGB, НЕ cutout
+preprocess     = true
+pipeline_type  = 1536_cascade
+remesh         = true
+remesh_project = 0
+decimation     = 700000
+ss/shape steps = 50, guidance ~8.0/8.5
+seed           = 42
+texture_mode   = clay
+```
+
+| Артефакт | Роль |
+|----------|------|
+| `model-armor-clay-sampler50-pro-1536-e700.glb` | **текущий best** — грудь/над поясом сильно лучше; табард всё ещё каша |
+| `model-armor-clay-sampler50-pro-1536.glb` | 1536+500k — big+ front |
+| `model-armor-clay-sampler50-pro-e700.glb` | 1024+700k — weak+ |
+| `model-armor-clay-sampler50-pro42.glb` | D' 1024+500k — рост ок, без решета |
+| `model-armor-clay-seed42.glb` | Track A baseline |
+
+Preview: `?file=model-armor-clay-sampler50-pro-1536-e700.glb`
+
+### Жёсткие выводы
+
+| Факт | Следствие |
+|------|-----------|
+| Cutout + no-preprocess | **сплющивает** — не для quality A/B |
+| no-remesh / max-q G | **дыры** — не front recipe |
+| `remesh_project` | **no-op** для sharpness |
+| 1536 + steps50 + remesh | главный **big+** |
+| denser 700k | **weak+**; табард чувствителен |
+| Табард на best | всё ещё **каша** → похоже на потолок T2 occupancy |
+| Красить мыло / Meshy-mesh | **нет** |
+| Seed roulette | **отложено** (2026-08-03) |
+
+Подробности: `textureWowPlan.md` § **Корневая матрица T2** + § **Остаток методик**.
 
 ---
 
 ## Простыми словами (долгосрок)
 
-**Не** один прогон «всё на максимум» как единственный шаг — он не скажет, *что* помогло.  
-**Да** матрица: фиксируем baseline, крутим **одну ось**, смотрим орнамент (плечи/пояс) в Solid.
-
-Уже закрыты оси: remesh, 1536@default steps, denser, cutout.  
-**Не закрыта чисто:** только sampler (steps/guidance) при том же остальном.  
-Код `quality_max` оставляем для **финального stress** после осей (или как «лучшая попытка T2»).
+Матрица front **пройдена**. Best = 1536+remesh+700k+steps50+RGB.  
+Остаток = **табард**. Дальше таблица методик (tokens / Hi3DGen / …), не kitchen-sink и не seeds.
 
 ```
-Корень?
-├─ вход / preprocess     → cutout (есть)
-├─ postprocess remesh    → no-remesh (есть)
-├─ resolution cascade    → 1536 default (есть)
-├─ sampler steps/guid.   → 🔴 следующий чистый A/B
-├─ simplify extreme      → опционально
-└─ потолок модели        → Hi3DGen, если оси не спасли
+Front?
+├─ cutout / no-remesh G  → squash / дыры ❌
+├─ remesh_project / tokens98k → no-op ❌
+├─ 1536+steps50+remesh+700k → ✅ best (табард каша)
+└─ дальше → шаги 0–5 knobs → Hi3DGen
 ```
-
-Подробная матрица: `textureWowPlan.md` § **Корневая матрица T2**.
 
 ---
 
@@ -46,11 +127,15 @@
 
 | | Статус |
 |--|--------|
-| Код sampler / quality_max | ✅ в git |
-| Deploy T2 image | 🔴 нужен для sampler job |
-| **Ось D: только sampler** | 🔴 после deploy |
-| Max-q kitchen-sink | ⏸ после D (или параллельно как stress) |
-| Hi3DGen | ⏸ если D+max-q fail |
+| Матрица A–G front | ✅ |
+| Best recipe | ✅ 1536+remesh+700k+steps50 |
+| Метрики verts/time | ✅ таблица в activeContext |
+| tokens 98k | ✅ same |
+| Код interval/band/holes/steps100 | ✅ локально |
+| Deploy нового образа | ⏸ **шаг 0** |
+| A/B 1–5 | ⏸ после release |
+| Seeds | ⏸ не сейчас |
+| Hi3DGen | ⏸ после squeeze T2 |
 
 ---
 
@@ -58,14 +143,13 @@
 
 | # | Задача | Статус |
 |---|--------|--------|
-| Матрица / план корень | ✅ |
-| Deploy T2 (sampler в образе) | 🔴 |
-| Ось D: baseline knobs + steps50/guidance only | ⏸ |
-| Опц. skip-simplify / remesh_project | ⏸ |
-| Max-q stress | ⏸ |
-| Вердикт → recipe или Hi3DGen | ⏸ |
+| Front матрица T2 | ✅ | |
+| Метрики + knobs code | ✅ | |
+| **Шаг 0** commit/push/CI/release | ⏸ | |
+| Шаги 1–5 A/B | ⏸ | |
+| Hi3DGen | ⏸ | |
 
-**План:** `textureWowPlan.md` § «T2 max-quality».
+**План:** чеклист шагов в шапке activeContext.
 
 **MV-Adapter ops:** `workersMin=0` всегда. Не serverless marathon. Pod terminate после smoke.
 
@@ -326,6 +410,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-03 | Pedrokita | Front best+метрики; knobs code; чеклист шагов 0–5; tokens=same | Шаг 0 commit/push/release |
+| 2026-08-03 | Pedrokita | Front матрица: best=1536+remesh+700k+steps50; табард каша; seeds⏸; memory обновлена | Таблица остатка → tokens98k или Hi3DGen |
 | 2026-08-02 | Pedrokita | Долгосрок = корневая матрица осей; max-q = stress G; код sampler в push | Deploy → ось D sampler |
 | 2026-07-31 | Pedrokita | xatlas path; decimate 80k; GHCR Pod smoke; preview + lights | quality after latency |
 | 2026-07-08 | Pedrokita | Memory-bank, test_req async, worker traceback/xformers | RunPod тест |

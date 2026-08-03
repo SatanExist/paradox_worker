@@ -134,60 +134,92 @@ T2 роль: preview / mid / props; не носитель «Meshy-орнамен
 
 ---
 
-## Корневая матрица T2 (долгосрок, 2026-08-02)
+## Корневая матрица T2 (долгосрок, 2026-08-02 → итог 2026-08-03)
 
 > Цель: **найти корень** HF-каши на рыцаре, не смешивать 5 переменных в одном job.  
-> Kitchen-sink `--quality-max` = **финальный stress** («лучшее, что умеем на T2»), не замена матрицы.
+> Kitchen-sink `--quality-max` = **финальный stress**, не замена матрицы.  
+> **Итог front (2026-08-03):** best = `1536_cascade` + remesh + 700k + steps50 + RGB/preprocess; табард всё ещё каша. Seeds отложены.
 
 ### Правило эксперимента
 
-- Baseline: seed42, clay, один ref (`ref_gold_armor` / cutout).  
-- Критерий глаз: **наплечник + пояс/ткань** (не силуэт).  
-- За раз меняем **одну ось** (или фиксированный набор уже закрытых + одна новая).  
-- Пишем вердикт в journal: better / same / worse.
+- Baseline: seed42, clay, один ref (`ref_gold_armor`).  
+- Критерий глаз: **нагрудник + над поясом + табард**; только **перед**, пока не выжмем.  
+- За раз одна ось. Вердикт: better / same / worse.  
+- **Не** cutout для quality. **Не** no-remesh max-q как front recipe.
 
-### Матрица осей
+### Матрица осей (закрыто)
 
 | Ось | Что крутим | Статус | Вердикт |
 |-----|------------|--------|---------|
-| **A вход** | cutout + `preprocess=false` | ✅ job | глаза (ожид. same) |
-| **B remesh** | remesh on/off + denser | ✅ | denser, **каша same** |
-| **C resolution** | 1536 @ **default** steps | ✅ | denser, **каша same** |
-| **D sampler** | только steps50 + high guidance (остальное = baseline или фикс. A) | 🔴 после deploy | ? |
-| **E simplify** | почти без simplify / очень высокий target | ⏸ опц. | ? |
-| **F remesh_project** | `project_back>0` при remesh on | ⏸ опц. | ? |
-| **G max-q stress** | все туториалы сразу (`--quality-max`) | ⏸ после D | лучший T2 effort |
-| **H shape model** | Hi3DGen Solid | ⏸ если D+G не спасли | потолок T2 |
+| **A вход** | cutout + `preprocess=false` | ✅ | **сплющило** (~1.14 vs ~1.91) |
+| **B remesh** | remesh on/off + denser | ✅ | no-remesh denser ≠ чёткие орнаменты; no-remesh → дыры на HF |
+| **C early** | 1536 @ default steps | ✅ | denser, каша same (без steps50) |
+| **C@D'** | 1536 + steps50 + remesh + 500k | ✅ | **big+** лев / над поясом; табард плавает |
+| **C+E** | 1536 + steps50 + remesh + 700k | ✅ | **best front**; табард **всё ещё каша** |
+| **D / D'** | steps50; D' = RGB+1024 | ✅ | D cutout squash; D' рост ок, без решета, мыло |
+| **E** | decim 700k @1024 | ✅ | weak+; табард дыры+каша |
+| **F** | `remesh_project` 0.5 (@D') / 0.9 (@G) | ✅ | **no-op** sharpness |
+| **G** | quality_max / no-remesh stress | ✅ | **дыры**; не baseline |
+| **H** | Hi3DGen | ⏸ next-tier | кандидат на табард/micro |
 
-### Порядок (долгосрок)
+### Best front artifacts
 
-1. Deploy образа с sampler knobs  
-2. **Ось D** — чистый sampler A/B (например: cutout + 1024_cascade + remesh=true + 500k **как baseline**, но ss/shape steps=50 guidance↑). Так видно: помогает ли *только* sampler.  
-3. Если D weakly helps → крутить E/F точечно  
-4. **G max-q** — один stress «потолок стека T2»  
-5. Если орнамент всё ещё каша → **корень = модель/геометрия T2** → Hi3DGen; T2 = preview/макро  
+| Файл | Рецепт | Роль |
+|------|--------|------|
+| `model-armor-clay-sampler50-pro-1536-e700.glb` | 1536+50+remesh+700k+RGB | **best** |
+| `model-armor-clay-sampler50-pro-1536.glb` | 1536+50+remesh+500k | big+ / чуть меньше denser |
+| `model-armor-clay-sampler50-pro42.glb` | 1024+50+remesh+500k | safe no-hole baseline |
+
+### Остаток методик (после front best) — 2026-08-03
+
+Seeds **отложены**. Best front: `sampler50-pro-1536-e700.glb`. Tokens 98k = **same** (no-op).
+
+Чеклист шагов **0–5** (deploy → A/B knobs) — в `activeContext.md` («Чеклист шагов (T2 knobs дожим)»).
+
+| # | Методика | Статус | Зачем / комментарий | Приоритет |
+|---|----------|--------|---------------------|-----------|
+| 1 | **Hi3DGen** (ось H) | ⏸ после knobs | другой shape; если табард всё ещё каша после 0–5 | после шагов 0–5 |
+| 2 | **`max_num_tokens` → 98304** @1536 | ✅ same | no-op глазами; infer 238s vs 183s | закрыто |
+| 3 | best-of-N seeds | ⏸ later | табард может быть seed-зависим; не сейчас | later |
+| 4 | **`guidance_interval`** в worker | 🔄 код готов → A/B (шаг 1) | deploy; A/B `0 1` (ss+shape) | шаг 1 после release |
+| 5 | shape steps/guidance >50 / >8.5 | 🔄 код готов → A/B (шаги 2–3) | steps max100; A/B steps75 + guid10 | шаги 2–3 |
+| 6 | `fill_holes` / `remove_small_cc` / `remesh_band` | 🔄 код готов → A/B (шаги 4–5) | A/B band2 + hole 0.1 | шаги 4–5 |
+| 7 | post-repair (pymeshlab) | ⏸ | topo/дыры, не HF узор | пауза |
+| 8 | TripoSG / другой EU shape | ⏸ | запасной spike после/вместо H | пауза |
+| 9 | multi-view cond | ❌ нет | нет в worker; только fork | нет |
+| 10 | кроп рефа на пояс | ⏸ | риск пропорций | пауза |
+
+**Рекомендуемый порядок:** шаг **0** deploy (commit/push/CI/release) → шаги **1–5** A/B → **Hi3DGen**. Seeds — later.
+
+### Порядок (исторический / выполнен)
+
+1. ✅ Deploy sampler knobs
+2. ✅ Матрица D / D' / E / F / C@D' / C+E / G
+3. ✅ tokens 98k (= same)
+4. ⏸ шаги 0–5 (next)
+5. ⏸ seeds later
+6. ⏸ Hi3DGen
 
 ### Почему не сразу kitchen-sink
 
-Max-q смешивает D+C+B+A. Если станет чуть лучше — не знаем почему; если same — ок как «T2 исчерпан», но для **product recipe** нужны изолированные факты.
+Max-q смешивает оси. Для **product recipe** нужны изолированные факты — они собраны выше.
 
-### Команды (после deploy)
+### Команды (best front replay)
 
-**Ось D (корень sampler):**
 ```powershell
 .\.venv\Scripts\python.exe test_req_trellis2.py `
-  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
-  --no-preprocess --pipeline-type 1024_cascade --seed 42 `
-  --decimation-target 500000 --texture-mode clay `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png" `
+  --pipeline-type 1536_cascade --seed 42 `
+  --decimation-target 700000 --texture-mode clay `
   --ss-steps 50 --ss-guidance 8.0 --shape-steps 50 --shape-guidance 8.5 `
-  --save model-armor-clay-sampler50-42.glb
+  --save model-armor-clay-sampler50-pro-1536-e700.glb
 ```
-(remesh default ON = как baseline Track A)
+(remesh default ON; preprocess default ON; без cutout)
 
-**G stress:**
+**G stress (не front recipe):**
 ```powershell
 .\.venv\Scripts\python.exe test_req_trellis2.py `
-  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor_cutout.png" `
+  --image-url "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png" `
   --quality-max --seed 42 --texture-mode clay `
   --save model-armor-clay-maxq42.glb
 ```
@@ -200,18 +232,16 @@ Max-q смешивает D+C+B+A. Если станет чуть лучше — 
 
 | Прогон | Итог |
 |--------|------|
-| no-remesh + 700k | denser, орнамент каша |
+| no-remesh + 700k | denser, орнамент каша / дыры |
 | 1536 default steps | denser, каша |
-| cutout + no-preprocess | почти тот же polycount, ждать/уже глаза |
+| cutout + no-preprocess | squash |
+| 1536+steps50+remesh+700k | **best front**; табард каша |
 
-### Чего ещё не делали (главное)
+### Чего ещё не делали (главное) — см. § Остаток методик
 
-Worker **не пробрасывал** в `pipeline.run`:
-- `sparse_structure_sampler_params` (`steps`, `guidance_strength`, `guidance_rescale`, `rescale_t`)
-- `shape_slat_sampler_params` (то же — **главный рычаг fine geometry** по community)
-- `max_num_tokens` (cascade downsample)
+Sampler params **уже** в worker (`c6db278`+). Дальше: tokens 98k, guidance_interval, Hi3DGen — не повторный quality_max.
 
-### Preset `t2_max_quality` (один clay job)
+### Preset `t2_max_quality` (legacy stress; даёт дыры)
 
 ```text
 image_url     = …/smoke/ref_gold_armor_cutout.png
@@ -221,26 +251,16 @@ seed          = 42
 texture_mode  = clay
 decimation    = 800000
 remesh        = false
-ss:    steps=50 guidance=8.0 rescale=0.7 rescale_t=6.0
-shape: steps=50 guidance=8.5 rescale=0.5 rescale_t=6.0
+ss/shape steps=50 high guidance
 max_num_tokens = 65536
-→ save model-armor-clay-maxq42.glb
 ```
 
-Опционально B: те же sampler + `remesh=true` (чище topo vs резкость).
+**Не использовать как front recipe.** Product front = § Best front artifacts.
 
-### Порядок работ
-
-1. Код: проброс params в `worker_trellis2.py` + `--quality-max` в `test_req_trellis2.py`  
-2. Push → CI `build-trellis2` → **New Release** на `ynzpzjvcbfl656`  
-3. Smoke max-q (~дольше default; cold дорого)  
-4. Solid vs Meshy / seed42  
-5. Pass → recipe; Fail → Hi3DGen, T2 тюны по орнаменту **стоп**
-
-Логи A/B: `track_a_ab_noremesh.log`, `track_a_ab_1536.log`, `track_a_ab_nopreprocess.log`.
-
+Логи: `track_a_axis_*.log`, `track_a_ab_*.log`.
 
 ---
+
 
 ## Вердикт по текущему стеку
 
