@@ -42,7 +42,10 @@ DEFAULT_BASE64_MAX_BYTES = 5 * 1024 * 1024
 VALID_PIPELINE_TYPES = frozenset({"512", "1024", "1024_cascade", "1536_cascade"})
 VALID_TEXTURE_SIZES = frozenset({1024, 2048, 4096})
 VALID_TEXTURE_MODES = frozenset({"clay", "textured"})
+VALID_MULTI_IMAGE_MODES = frozenset({"stochastic", "multidiffusion"})
 DEFAULT_TEXTURE_MODE = "clay"
+DEFAULT_MULTI_IMAGE_MODE = "multidiffusion"
+MAX_MULTI_IMAGES = 8
 
 
 def _runpod_billing_metadata(handler_ms: dict) -> dict:
@@ -236,6 +239,12 @@ def _generation_params(job_input: dict) -> dict:
     shape_defaults = MAXQ_SHAPE_SLAT_SAMPLER if quality_max else DEFAULT_SHAPE_SLAT_SAMPLER
     tex_defaults = DEFAULT_TEX_SLAT_SAMPLER
 
+    multi_image_mode = str(
+        job_input.get("multi_image_mode") or DEFAULT_MULTI_IMAGE_MODE
+    ).strip().lower()
+    if multi_image_mode not in VALID_MULTI_IMAGE_MODES:
+        multi_image_mode = DEFAULT_MULTI_IMAGE_MODE
+
     return {
         "pipeline_type": pipeline_type,
         "texture_mode": texture_mode,
@@ -251,6 +260,7 @@ def _generation_params(job_input: dict) -> dict:
         "verbose": verbose,
         "quality_max": quality_max,
         "max_num_tokens": max_num_tokens,
+        "multi_image_mode": multi_image_mode,
         "sparse_structure_sampler_params": _sampler_params_from_input(
             job_input.get("sparse_structure_sampler_params"), ss_defaults
         ),
@@ -261,6 +271,22 @@ def _generation_params(job_input: dict) -> dict:
             job_input.get("tex_slat_sampler_params"), tex_defaults
         ),
     }
+
+
+def _resolve_image_urls(job_input: dict) -> list[str]:
+    """Prefer image_urls[]; else single image_url. Dedup while preserving order."""
+    urls: list[str] = []
+    raw_list = job_input.get("image_urls")
+    if isinstance(raw_list, (list, tuple)):
+        for item in raw_list:
+            if isinstance(item, str) and item.strip():
+                urls.append(item.strip())
+    single = job_input.get("image_url")
+    if isinstance(single, str) and single.strip():
+        if single.strip() not in urls:
+            urls.insert(0, single.strip())
+    # Cap to keep VRAM/time bounded (multidiffusion scales with N).
+    return urls[:MAX_MULTI_IMAGES]
 
 
 def _rewrite_pipeline_json(model_path: str) -> None:
@@ -329,6 +355,11 @@ def load_model():
 
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_path)
     pipeline.cuda()
+    try:
+        from trellis2_multi_image import patch_pipeline
+    except ImportError:
+        from studio_bridge.trellis2_multi_image import patch_pipeline
+    patch_pipeline(pipeline)
     print("TRELLIS.2 pipeline ready in VRAM.")
 
 
@@ -555,15 +586,15 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
 
 def handler(job):
     job_input = job.get("input", {})
-    image_url = job_input.get("image_url")
+    image_urls = _resolve_image_urls(job_input)
     gen_params = _generation_params(job_input)
     return_base64 = bool(job_input.get("return_base64", False))
     job_id = str(job.get("id") or f"local-{int(time.time())}")
 
-    if not image_url:
-        return {"error": "Missing image_url in job input"}
+    if not image_urls:
+        return {"error": "Missing image_url or image_urls in job input"}
 
-    img_path = None
+    img_paths: list[str] = []
     glb_path = None
 
     try:
@@ -574,6 +605,8 @@ def handler(job):
         load_model()
         handler_ms["model_load_ms"] = int((time.perf_counter() - t_load) * 1000)
 
+        multi = len(image_urls) >= 2
+        gen_params["num_images"] = len(image_urls)
         print(
             "TRELLIS.2 params: "
             f"pipeline_type={gen_params['pipeline_type']}, "
@@ -583,25 +616,48 @@ def handler(job):
             f"seed={gen_params['seed']}, "
             f"quality_max={gen_params.get('quality_max')}, "
             f"remesh={gen_params['remesh']}, "
+            f"num_images={len(image_urls)}, "
+            f"multi_image_mode={gen_params['multi_image_mode'] if multi else 'n/a'}, "
             f"ss={gen_params['sparse_structure_sampler_params']}, "
             f"shape_slat={gen_params['shape_slat_sampler_params']}"
         )
 
-        print(f"Downloading image: {image_url}")
-        img_path = _download_image(image_url)
-        image = Image.open(img_path)
+        images = []
+        for i, url in enumerate(image_urls):
+            print(f"Downloading image[{i}]: {url}")
+            path = _download_image(url)
+            img_paths.append(path)
+            images.append(Image.open(path))
 
         t_infer = time.perf_counter()
-        meshes = pipeline.run(
-            image,
-            seed=gen_params["seed"],
-            preprocess_image=gen_params["preprocess_image"],
-            pipeline_type=gen_params["pipeline_type"],
-            sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
-            shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
-            tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
-            max_num_tokens=gen_params["max_num_tokens"],
-        )
+        if multi:
+            try:
+                from trellis2_multi_image import run_multi_image
+            except ImportError:
+                from studio_bridge.trellis2_multi_image import run_multi_image
+            meshes = run_multi_image(
+                pipeline,
+                images,
+                seed=gen_params["seed"],
+                preprocess_image=gen_params["preprocess_image"],
+                pipeline_type=gen_params["pipeline_type"],
+                sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
+                shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
+                tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
+                max_num_tokens=gen_params["max_num_tokens"],
+                fusion_mode=gen_params["multi_image_mode"],
+            )
+        else:
+            meshes = pipeline.run(
+                images[0],
+                seed=gen_params["seed"],
+                preprocess_image=gen_params["preprocess_image"],
+                pipeline_type=gen_params["pipeline_type"],
+                sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
+                shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
+                tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
+                max_num_tokens=gen_params["max_num_tokens"],
+            )
         handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
 
         mesh = meshes[0]
@@ -643,8 +699,9 @@ def handler(job):
         return {"error": f"Generation failed: {exc}"}
 
     finally:
-        if img_path and os.path.exists(img_path):
-            os.remove(img_path)
+        for img_path in img_paths:
+            if img_path and os.path.exists(img_path):
+                os.remove(img_path)
         if glb_path and os.path.exists(glb_path):
             os.remove(glb_path)
 

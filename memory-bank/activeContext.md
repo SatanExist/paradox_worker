@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-03** — front best + метрики зафиксированы; knobs в коде; **шаги squeeze T2** (после deploy)
+Последнее обновление: **2026-08-04** — решения MV зафиксированы; старт **MV1** (multi-image deploy)
 
 ---
 
@@ -15,24 +15,205 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **шаги squeeze T2** — 0: commit/push/CI/release → 1…5 A/B с метриками |
+| Фокус | **MV1** → потом Wonder3D synth (MV2); Hi3DGen после T2+tex |
 
-### Чеклист шагов (T2 knobs дожим)
+### Решения зафиксированы (Pedrokita, 2026-08-04)
 
-| Шаг | Действие | Статус | Артефакт / критерий |
-|-----|----------|--------|---------------------|
-| **0** | commit+push worker/CLI/metrics → CI `trellis2` → RunPod New Release | ⏸ ждём OK на commit | image `trellis2-sha-*` |
-| **1** | best + `guidance_interval 0 1` (ss+shape) | ⏸ | `…-gi01.glb` — табард? |
-| **2** | best + steps **75** | ⏸ | `…-s75.glb` |
-| **3** | best + shape guidance **10** | ⏸ | `…-sg10.glb` |
-| **4** | best + `remesh_band 2` | ⏸ | `…-band2.glb` |
-| **5** | best + `max_hole_perimeter 0.1` | ⏸ | `…-hole01.glb` |
-| — | Hi3DGen | ⏸ после T2 knobs | если табард всё ещё каша |
+| Тема | Решение |
+|------|---------|
+| Hi3DGen | **после** полного T2 + texture |
+| Single-view knobs | **закрыты** → recipe **rt6** |
+| MV1 | **делаем сейчас**: commit+deploy multi (`image_urls`), API **non-final** ок |
+| Synth prod | **Wonder3D (MIT)**; Era3D только R&D (AGPL); Zero123++ weights NC ❌ |
+| N views v1 | default **6**, A/B vs **4** |
+| Fusion A/B | сначала **stochastic**, потом multidiffusion |
+| Texture | после/параллельно MV5 на лучшем clay |
 
-На **каждом** job писать: `infer_s` / `exec_s` / verts / faces (CLI `--- metrics ---` + `summarize_t2_front_metrics.py`).
+### С чего начинаем сейчас
 
-Best baseline для шагов 1–5:
-`1536_cascade` + remesh + 700k + steps50 + RGB + seed42 → `sampler50-pro-1536-e700.glb`
+1. **MV1** — commit multi-image worker + push/CI/release T2 endpoint  
+2. Smoke: single `image_url` всё ещё ок (регрессия)  
+3. Дальше **MV2** — spike Wonder3D (6 views)
+
+### Что умеет T2 для «серии ракурсов» (и чего нет)
+
+| Возможность | Где | Статус у нас |
+|-------------|-----|--------------|
+| Single-image → 3D + все sampler/export knobs | stock T2 | ✅ выжато → recipe rt6 |
+| Принять **2+ готовых** видов (`image_urls`) | community PR #104 / наш monkeypatch | 🟡 → **MV1 deploy** |
+| Fusion **`multidiffusion`** (усреднение pred) | PR #104 | в коде; риск «раздуть» форму |
+| Fusion **`stochastic`** (цикл видов по steps) | PR #104 | в коде; часто стабильнее; **A/B first** |
+| Те же knobs на multi (1536, gi01, rt6, remesh…) | наш worker | да, поверх multi path |
+| **Сам** нарисовать ракурсы из 1 фото | **нет в T2** | **Wonder3D** (prod) / MV-Adapter overlap |
+| Официальный trained multi-view T2 | нет в main Microsoft | только tuning-free community |
+
+**Итог:** T2 = потребитель серии. Генератор ракурсов = отдельный зверь (**Wonder3D** для prod).
+
+### План фичи: 1 фото → ракурсы → T2
+
+| # | Шаг | Зачем | Статус |
+|---|-----|--------|--------|
+| **MV0** | Single-view recipe = rt6 | baseline | ✅ |
+| **MV1** | Deploy T2 multi (`image_urls` + fusion) | T2 ест серию на RunPod | 🔄 **сейчас** |
+| **MV2** | Spike **Wonder3D** (MIT, 6 views) | нарисовать ракурсы; Era3D≠prod | ⏭ next |
+| **MV3** | Worker: 1 foto → N views | Meshy-like UX | ⏸ |
+| **MV4** | synth → T2 multi (rt6 knobs) | полный pipeline | ⏸ |
+| **MV5** | A/B: single vs stoch vs multi; N=6 vs 4 | глаза | ⏸ |
+| **MV6** | Recipe freeze «1-photo shape» | product | ⏸ |
+| **X*** | Texture MV-Adapter на лучшем clay | вау | после MV5 |
+| **H0** | Hi3DGen | другой shape | ⏸ после T2+tex |
+
+### Research: MV1 / synth / N views (2026-08-04)
+
+#### Официальный T2 про multi-image
+- HF model card / README Microsoft: **Input = Single Image**. Официальных туториалов «1→ракурсы→T2» **нет**.
+- Issue [#10](https://github.com/microsoft/TRELLIS.2/issues/10): multi = community workarounds, не roadmap от Microsoft.
+- PR [#104](https://github.com/microsoft/TRELLIS.2/pull/104): open, tuning-free fusion (`stochastic` / `multidiffusion`); автор: multidiffusion может **деформировать** пропорции.
+- Issue [#103](https://github.com/microsoft/TRELLIS.2/issues/103): у части людей multi **хуже** single; stochastic чаще ok, multidiffusion — спорно.
+- TRELLIS **v1** README: multi-image есть, но *tuning-free, may not give best for all images*.
+
+**Вывод MV1:** коммит/деплой multi **имеет смысл как инфраструктура** (есть серию), но версия **заведомо не final** — официально T2 single-image; fusion API ещё эволюционирует. OK деплоить early.
+
+#### Synth multi-view кандидаты (качество vs прод)
+
+| Кандидат | Согласованность видов | Лицензия | Прод self-host AI_MESH |
+|----------|----------------------|----------|-------------------------|
+| **Zero123 / XL / Stable Zero123** | слабее (по 1 виду за раз) | часто research / Stability caps | слабо как prod core |
+| **Zero123++** | лучше (тайл 6 видов за раз) | code Apache, **weights CC-BY-NC** | ❌ commercial weights |
+| **Era3D** (6 view, 512) | сильный paper / ortho variant | **AGPL-3.0** | ❌ без open-source всего продукта |
+| **SV3D** (Stability) | очень сильный consistency | Community / **$1M revenue** / Enterprise | ⚠ не как дешёвый core |
+| **Wonder3D / ++** | 6 видов color+normal; зрелый | **MIT** | ✅ кандидат #1 на spike |
+| **InstantMesh** pipeline | паттерн: synth 6 → reconstruct | code Apache; MV часто через Zero123++ NC | ⚠ паттерн ок, веса MV-весов проверить |
+| **MV-Adapter** (уже у нас) | 6 views для tex (+mesh) | **Apache-2.0** | ✅ уже в стеке; для *shape* — отдельный spike (ig2mv без/со слабым mesh?) |
+
+**Не Era3D в prod** из‑за AGPL. Spike качества можно на Era3D offline, prod путь — **Wonder3D (MIT)** и/или переиспользование **MV-Adapter** views.
+
+#### Сколько ракурсов (4 vs 6)
+- **Wonder3D / Era3D / InstantMesh**: дефолт пайплайна = **6** видов (фиксированные azimuth).
+- InstantMesh: можно **меньше** views, если synth inconsistent — иногда лучше.
+- T2 multidiffusion: cost/VRAM ~×N; stochastic дешевле.
+- **v1 рекомендация:** стартовать **6** (как в литературе), A/B против **4 (F/L/R/B)** на рыцаре; не фиксировать N до MV5.
+
+#### Рекомендуемый порядок ( Pedrokita GO 2026-08-04 )
+1. **MV1** deploy multi worker (non-final API ok) — **в работе**
+2. Spike synth: **Wonder3D** (+ опц. MV-Adapter views); Era3D только R&D глаз
+3. N=6 default → A/B N=4
+4. Fusion A/B: **stochastic first**, multidiffusion second
+
+### Журнал (свежее)
+
+| Дата | Что |
+|------|-----|
+| 2026-08-04 | Решения: MV1 сейчас; Wonder3D prod-synth; N=6+A/B4; stochastic first; Hi3DGen later. Старт commit/deploy multi. |
+| 2026-08-03 | Research multi/synth/N; Meshy-паттерн; rt6 recipe closed. |
+
+---
+
+### (legacy ниже) Product front / squeeze — детали сессий
+
+### Product front (best)
+
+```text
+1536 + remesh + 700k + steps50
++ guidance_interval [0,1]
++ rescale_t 6/6
+→ …-gi01-rt6.glb
+```
+e800 = mixed (не default).
+
+### Что ещё осталось на Trellis.2 (простыми словами)
+
+| # | Что | Зачем | Статус |
+|---|-----|--------|--------|
+| **A** | **Multi-view вход** (перед+бок+спина) | Community PR #104 style: `image_urls[]` + `multi_image_mode` (multidiffusion/stochastic); monkeypatch в образе | 🟡 **код готов**, не задеплоено; **нет side/back фото** для A/B |
+| **B** | Глаза **бока/спина** на rt6 | Preview Front/Side/Back; бок rt6 целый, орнамент soft | ✅ осмотр |
+| **C** | Skip-simplify / 1M faces | Последний denser-extreme | 🟡 дорого, e800 уже mixed |
+| **D** | Seeds best-of-N на rt6 | Другая «удача» орнамента | ⏸ later |
+| **E** | ss guidance 9–12 / interval 0.3 | тонкая настройка | 🟡 низкий шанс |
+| **F** | Post: meshlib / reconstruct (Comfy-стиль) | дыры после, не узор как на фото | R&D |
+| **G** | Hi3DGen | уже не T2 | после закрытия A–F |
+
+**Важно:** «сгенерировать от картинки со всех сторон» ≠ просто крутить knobs. Это **новый вход** `image_urls[]` + поддержка в `pipeline` (у нас сейчас только `image_url`). Для вау как Meshy часто делают **synth** multi-view внутри — у нас для текстур уже MV-Adapter; для **shape** multi-view ещё не проброшен.
+
+**Что крутили:** только `rescale_t` ss/shape **→ 6** (было 5/3). Interval `[0,1]`, steps 50.
+
+| | gi01 BEST | rt6 |
+|--|-----------|-----|
+| rescale_t ss/shape | 5 / 3 | **6 / 6** |
+| verts/faces | 328k / 664k | 331k / 670k |
+| infer_s | ~227 | ~228 |
+
+Preview: `?file=model-armor-clay-sampler50-pro-gi01-rt6.glb`  
+Дальше по очереди: denser **800k** на победителе (gi01 или rt6).
+
+### Шаг 5 готов
+`…-gi01-hole01.glb` = gi01 + `max_hole_perimeter=0.1`  
+328k V / 664k F; infer ~227s (как gi01).  
+Preview: `?file=model-armor-clay-sampler50-pro-gi01-hole01.glb`
+
+### Чеклист squeeze — итог
+
+| Шаг | Вердикт |
+|-----|---------|
+| 0 deploy 42d302c | ✅ |
+| 1 `guidance_interval [0,1]` | ✅ **big++** → **BEST** |
+| 2 steps 75 | ≈worse / unclear — не в recipe |
+| 3 shape guid 10 | ≈same — не в recipe |
+| 4 remesh_band 2 | ≈same good — не обязателен |
+| 5 hole perimeter 0.1 | ⏳ глаза (метрики ≈ gi01) |
+
+**Product front:** gi01 = 1536 + remesh + 700k + steps50 + interval `[0,1]`.
+
+### Research: что ещё можно (не в чеклисте 0–5)
+
+| Идея | Источник | Статус у нас | Приоритет |
+|------|----------|--------------|-----------|
+| **`shape rescale_t=6`** (ss тоже 6) | issue #92 max-q | у gi01 shape **3** / ss **5** — **не гоняли 6/6 на gi01** | 🟠 дешёвый A/B |
+| **decim 800k–1M** на gi01 | README / #92 | был 700k; E700 без interval | 🟠 |
+| **skip / слабый simplify** | #124 + CuMesh#28 | «без simplify = sharper, export slow» | 🟡 дорого по ETA |
+| **ss guidance 9–12** | сторонние гайды | пробовали shape 10 ≈same | 🟡 низкий |
+| **interval `[0.3,1]`** (ComfyUI) | visualbruno | у нас `[0,1]` уже big++ | 🟢 опц. mid |
+| **MeshRefiner / reconstruct quad / meshlib holes** | ComfyUI Trellis2 | нет в worker | 🟠 R&D |
+| **multi-view / лучше вход** | docs | single RGB; бока later | 🟠 product |
+| **Hi3DGen / TripoSG** | наша матрица H | ⏸ | 🔴 next-tier shape |
+| seeds best-of-N | community | отложено | ⏸ |
+
+Самый честный «упустили внутри T2»: **`rescale_t=6` на shape** и **decim ≥800k поверх gi01**. Остальное — postprocess fork или другая модель.
+
+
+**Шаг 4 вердикт:** также хорошо как gi01 → `remesh_band` не обязателен в recipe (default 1 ок).
+
+**Best front по-прежнему:** `…-gi01.glb` — 1536 + remesh + 700k + steps50 + `guidance_interval [0,1]`.
+
+**Осталось:**
+| # | Что | Зачем |
+|---|-----|--------|
+| **5** | `max_hole_perimeter 0.1` (на gi01) | последний T2 knob; на gi01 дыр уже мало — шанс малый |
+| — | Hi3DGen | другой shape, если хотим ещё micro сверх T2 |
+| ⏸ | seeds / TripoSG / кроп | later / не сейчас |
+
+s75 / sg10 / band2 → **не** в product recipe.
+
+**Что крутили:** только `shape_slat guidance_strength` **8.5 → 10**; steps 50; interval `[0,1]`.
+
+| | gi01 BEST | sg10 |
+|--|-----------|------|
+| shape guidance | 8.5 | **10** |
+| verts/faces | 328k / 664k | 332k / 677k |
+| infer_s | ~227 | ~230 |
+
+Preview: `?file=model-armor-clay-sampler50-pro-gi01-sg10.glb`  
+Критерий: резче/выразительнее gi01 или same/worse?
+
+### Вердикт шаг 1 (только перед) — **big++**
+шлем/нагрудник/пояс заметно лучше; дыр на поясе нет.  
+→ `guidance_interval [0,1]` в **best recipe**.
+
+### Шаг 2 артефакт
+`model-armor-clay-sampler50-pro-gi01-s75.glb` = gi01 + steps **75**  
+322k V / 652k F; infer **257s** (gi01 был 227s).  
+Preview: `?file=model-armor-clay-sampler50-pro-gi01-s75.glb`  
+Критерий: ещё резче gi01 или same/worse?
 
 ### Метрики front A/B (verts/faces + время)
 

@@ -172,7 +172,8 @@ Studio без этой переменной остаётся на v0 bake.
 4. ETA: если endpoint cold → показывать cold; если недавний job на том же endpoint → warm
 5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
 
-**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter`, `remove_small_cc`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.
+**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter`, `remove_small_cc`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.  
+**Multi-view (local code, needs deploy):** `image_urls` (2–8 URL) и/или `image_url`; `multi_image_mode` = `multidiffusion` (default) | `stochastic`. Реализация: `studio_bridge/trellis2_multi_image.py` (PR #104 monkeypatch; stock T2 main без этого). CLI: `test_req_trellis2.py --image-urls …`.
 
 **Sampler params (каждый блок):** `steps` (1–100), `guidance_strength`, `guidance_rescale`, `rescale_t`, `guidance_interval` `[lo,hi]` (CFG window on t; HF default SS/shape `[0.6,1.0]`, tex `[0.6,0.9]`).
 

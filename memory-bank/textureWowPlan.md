@@ -58,12 +58,14 @@ Meshy на той же картинке держит орнамент в Solid.
 ### Порядок
 
 ```
-1a. A/B нашего T2 (remesh / 1536 / denser) — дёшево, self-host
-1b. Если мало → shape spike EU (Hi3DGen …)
+1a. A/B нашего T2 (remesh / 1536 / denser / gi01+rt6) — ✅ DONE, recipe закрыт
+1b. Shape next (выбрать): synth MV→T2  |  Hi3DGen  |  user multi-view
 2. UV / poly (не убивая HF)
-3. Texture
+3. Texture (MV-Adapter W2 → W2b)
 4. PBR / viewer
 ```
+
+**2026-08-03:** Meshy UX = 1 фото → synth MV → shape/tex. У нас synth MV пока только на **texture**. T2 knobs recipe = rt6. **Hi3DGen отложен** до полного закрытия T2+texture (см. фазы T*/X* в `activeContext.md`).
 
 ### Кандидаты (сравнение «где лучше / где мы слабее»)
 
@@ -181,7 +183,7 @@ Seeds **отложены**. Best front: `sampler50-pro-1536-e700.glb`. Tokens 98
 | 1 | **Hi3DGen** (ось H) | ⏸ после knobs | другой shape; если табард всё ещё каша после 0–5 | после шагов 0–5 |
 | 2 | **`max_num_tokens` → 98304** @1536 | ✅ same | no-op глазами; infer 238s vs 183s | закрыто |
 | 3 | best-of-N seeds | ⏸ later | табард может быть seed-зависим; не сейчас | later |
-| 4 | **`guidance_interval`** в worker | 🔄 код готов → A/B (шаг 1) | deploy; A/B `0 1` (ss+shape) | шаг 1 после release |
+| 4 | **`guidance_interval`** | ✅ **big++** шаг1 | `[0,1]` = новый best front | зафиксировать в recipe |
 | 5 | shape steps/guidance >50 / >8.5 | 🔄 код готов → A/B (шаги 2–3) | steps max100; A/B steps75 + guid10 | шаги 2–3 |
 | 6 | `fill_holes` / `remove_small_cc` / `remesh_band` | 🔄 код готов → A/B (шаги 4–5) | A/B band2 + hole 0.1 | шаги 4–5 |
 | 7 | post-repair (pymeshlab) | ⏸ | topo/дыры, не HF узор | пауза |

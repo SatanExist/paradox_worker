@@ -76,13 +76,20 @@ def _sampler_dict(
 
 def build_input(args: argparse.Namespace) -> dict:
     job_input = {
-        "image_url": args.image_url,
         "pipeline_type": args.pipeline_type,
         "texture_mode": args.texture_mode,
         "seed": args.seed,
         "decimation_target": args.decimation_target,
         "return_base64": args.return_base64,
     }
+    if args.image_urls:
+        job_input["image_urls"] = list(args.image_urls)
+        # Keep first as image_url for older logs / compatibility.
+        job_input["image_url"] = args.image_urls[0]
+    else:
+        job_input["image_url"] = args.image_url
+    if args.multi_image_mode:
+        job_input["multi_image_mode"] = args.multi_image_mode
     if args.texture_mode == "textured":
         job_input["texture_size"] = args.texture_size
     if args.no_preprocess:
@@ -255,6 +262,18 @@ def save_output(final: dict, save_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="RunPod TRELLIS.2 smoke test.")
     parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL)
+    parser.add_argument(
+        "--image-urls",
+        nargs="+",
+        default=None,
+        help="Multi-view refs (2+). Uses TRELLIS.2 multi-image fusion when length>=2.",
+    )
+    parser.add_argument(
+        "--multi-image-mode",
+        choices=["stochastic", "multidiffusion"],
+        default=None,
+        help="Multi-view fusion (default worker: multidiffusion)",
+    )
     parser.add_argument(
         "--pipeline-type",
         default="1024_cascade",

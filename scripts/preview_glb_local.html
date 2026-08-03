@@ -21,6 +21,13 @@
   <div id="bar">
     <strong>GLB preview</strong>
     <select id="file">
+      <option value="../model-armor-clay-sampler50-pro-gi01-rt6-e800.glb">rt6+e800 — denser 800k</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01-rt6.glb">rt6 — gi01 + rescale_t 6/6 (BEST)</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01-hole01.glb">шаг5 — gi01 + hole perimeter 0.1</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01-band2.glb">шаг4 — gi01 + remesh_band 2 (≈same)</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01-sg10.glb">шаг3 — gi01 + shape guidance 10 (≈same)</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01-s75.glb">шаг2 — gi01 + steps75 (хуже/неясно)</option>
+      <option value="../model-armor-clay-sampler50-pro-gi01.glb">шаг1 — guidance_interval 0–1 (BEST)</option>
       <option value="../model-armor-clay-sampler50-pro-1536-tok98k.glb">tokens 98k — best + max_num_tokens</option>
       <option value="../model-armor-clay-sampler50-pro-1536-e700.glb">C+E — 1536 + remesh + 700k</option>
       <option value="../model-armor-clay-sampler50-pro-1536.glb">C@D' — 1536 + remesh + 500k</option>
@@ -50,6 +57,9 @@
       <option value="../model-clay.glb">clay</option>
     </select>
     <button id="reload">Reload</button>
+    <button type="button" id="viewFront" title="Front">Front</button>
+    <button type="button" id="viewSide" title="Right side">Side</button>
+    <button type="button" id="viewBack" title="Back">Back</button>
     <label><input type="checkbox" id="wireframe" /> Wireframe</label>
     <label><input type="checkbox" id="fixMat" checked /> Fix metallic (Blender-like)</label>
     <label>Key <input type="range" id="keyLight" min="0" max="40" value="18" style="width:90px;vertical-align:middle" /></label>
@@ -164,11 +174,28 @@
       });
     }
 
+    let framed = { center: new THREE.Vector3(), maxDim: 1 };
+
+    function setOrbitView(kind) {
+      const { center, maxDim } = framed;
+      const d = maxDim * 1.85;
+      const y = center.y + maxDim * 0.15;
+      if (kind === 'front') camera.position.set(center.x, y, center.z + d);
+      else if (kind === 'side') camera.position.set(center.x + d, y, center.z);
+      else if (kind === 'back') camera.position.set(center.x, y, center.z - d);
+      else camera.position.copy(center).add(new THREE.Vector3(maxDim * 1.2, maxDim * 0.9, maxDim * 1.2));
+      controls.target.copy(center);
+      controls.update();
+      camera.updateProjectionMatrix();
+    }
+    window.__setOrbitView = setOrbitView;
+
     function frameObject(obj) {
       const box = new THREE.Box3().setFromObject(obj);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      framed = { center: center.clone(), maxDim };
       controls.target.copy(center);
       camera.position.copy(center).add(new THREE.Vector3(maxDim * 1.2, maxDim * 0.9, maxDim * 1.2));
       camera.near = maxDim / 100;
@@ -216,6 +243,9 @@
     }
 
     document.getElementById('reload').onclick = () => load(fileSel.value);
+    document.getElementById('viewFront').onclick = () => setOrbitView('front');
+    document.getElementById('viewSide').onclick = () => setOrbitView('side');
+    document.getElementById('viewBack').onclick = () => setOrbitView('back');
     fileSel.onchange = () => load(fileSel.value);
     wireframe.onchange = () => { if (root) applyFixes(root); };
     fixMat.onchange = () => { if (root) applyFixes(root); };
