@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-04** — prod: `quality_tier` + OOM auto-downgrade в worker
+Последнее обновление: **2026-08-05** — P1 live; тиры ≠ per-asset; P2 holes на downgrade path
 
 ---
 
@@ -15,21 +15,24 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **Prod resilience** (tiers + OOM fallback) → потом MV2 Wonder3D |
+| Фокус | **P2** holes/gaps на `quality` (chest downgrade) → **MV2** Wonder3D |
 
-### Prod policy (как у крупных 3D SaaS) — GO 2026-08-04
+### Prod policy (как у крупных 3D SaaS) — GO 2026-08-04, live 2026-08-05
 
 | Тема | Решение |
 |------|---------|
 | Тиры | `preview` / `quality` (default product) / `ultra` (= rt6) |
-| Ultra | best-effort; на сложных входах может OOM |
+| **Не per-asset** | Тиры = **VRAM/ETA ladder**, не «пресет для сундука vs рыцаря». Разный вход → downgrade, не отдельный tier per SKU |
+| Ultra | best-effort; сложный вход (chest) → OOM на remesh |
 | При OOM | worker **auto-downgrade**: (1) remesh=false на том же меше → (2) полный re-infer `quality` |
 | Ответ | `quality_tier_requested/used`, `downgraded`, `downgrade_reason`, `downgrade_attempts` |
 | Выключить | `allow_downgrade=false` / CLI `--no-downgrade` |
-| UX Studio | не показывать CUDA OOM; Retry + «качество снижено» если downgraded |
+| UX Studio | не показывать CUDA OOM; «качество снижено» если downgraded |
 | Hi3DGen | после T2+texture |
 
-**Код:** `worker_trellis2.py` (`TIER_PRESETS`, `_quality_ladder_params`, export remesh fallback). CLI: `--quality-tier`, `--no-downgrade`.
+**Smoke 2026-08-05:** armor `ultra` ✅ full rt6; chest `ultra` → OOM → `quality` ✅ (`model-chest-ultra-downgrade2.glb`). Front сундука ок, **дыры/разрывы** на downgrade path — задача **P2**.
+
+**Код:** `worker_trellis2.py` (`TIER_PRESETS`, `_quality_ladder_params`). Deploy: `trellis2-sha-d69687b`, endpoint v14.
 
 ### Решения зафиксированы (Pedrokita, 2026-08-04)
 
@@ -46,24 +49,52 @@
 
 ### С чего начинаем сейчас
 
-1. ~~MV1 deploy + smoke~~ ✅ (armor rt6 ok; chest OOM = вход, не релиз)
-2. **Deploy** образа с quality_tier / OOM fallback + smoke chest на `--quality-tier ultra` (ожидаем downgrade, не FAIL)
-3. Дальше **MV2** — Wonder3D
+1. ~~P1 deploy + smoke~~ ✅
+2. **P2** — P2b post-remesh repair + deploy + smoke chest (ultra→quality path)
+3. **MV2** — Wonder3D spike (после P2 deploy или параллельно)
 
-### План фичи: 1 фото → ракурсы → T2
+### Единый план: shape + prod + texture (интеграция 2026-08-05)
 
 | # | Шаг | Зачем | Статус |
 |---|-----|--------|--------|
-| **MV0** | Single-view recipe = rt6 | baseline | ✅ |
-| **MV1** | Deploy T2 multi (`image_urls` + fusion) | T2 ест серию на RunPod | ✅ `trellis2-sha-9f9ff96` |
-| **P1** | `quality_tier` + OOM auto-downgrade | prod resilience как Meshy/Tripo | 🔄 код локально → deploy |
-| **MV2** | Spike **Wonder3D** (MIT, 6 views) | нарисовать ракурсы | ⏭ after P1 deploy |
+| **MV0** | Single-view recipe = rt6 | baseline knight | ✅ |
+| **MV1** | T2 multi (`image_urls` + fusion) | T2 ест серию | ✅ `9f9ff96` |
+| **P1** | `quality_tier` + OOM auto-downgrade | prod resilience | ✅ `d69687b` v14 |
+| **P2** | Mesh quality на **downgrade path** | hole 0.1 + P2b post-remesh repair в коде | 🔄 deploy + smoke |
+| **P3** | Studio: tier UX + downgraded badge | product front | ⏸ после P2 |
+| **MV2** | Spike **Wonder3D** (MIT, 6 views) | synth ракурсы для shape | ⏭ после P2 |
 | **MV3** | Worker: 1 foto → N views | Meshy-like UX | ⏸ |
-| **MV4** | synth → T2 multi (rt6 knobs) | полный pipeline | ⏸ |
+| **MV4** | synth → T2 multi (rt6 knobs) | полный shape pipeline | ⏸ |
 | **MV5** | A/B: single vs stoch vs multi; N=6 vs 4 | глаза | ⏸ |
 | **MV6** | Recipe freeze «1-photo shape» | product | ⏸ |
-| **X*** | Texture MV-Adapter на лучшем clay | вау | после MV5 |
-| **H0** | Hi3DGen | другой shape | ⏸ после T2+tex |
+| **X1** | MV-Adapter texture на best clay | вау tex | после MV5 / параллельно W2b |
+| **X2** | W2b holes (mesh repair, PNG, PBR) | tex polish | ⏸ `textureWowPlan.md` |
+| **H0** | Hi3DGen spike | next-tier shape | ⏸ после T2+tex |
+| **S0** | Studio 1-upload E2E | product | ⏸ |
+
+#### Что значит «пресеты» (важно)
+
+| Вопрос | Ответ |
+|--------|--------|
+| Нужен пресет «сундук vs рыцарь»? | **Нет** — один ladder тиров + auto-downgrade |
+| Почему рыцарь ultra ok, сундук нет? | Сложность occupancy/remesh VRAM на входе, не «сломанный» tier |
+| Почему сундук с дырами после downgrade? | `quality` = **1024 + 12 steps**, не rt6; export hole fill default 0.03 — на chest недостаточно |
+| Product default | `quality_tier=quality` — стабильный mid; `ultra` = «максимум, если влезет» |
+
+#### Tier presets (код `TIER_PRESETS`)
+
+| Tier | pipeline | decim | steps | interval | remesh | Когда |
+|------|----------|-------|-------|----------|--------|-------|
+| `preview` | 512 | 300k | 12 | [0.6,1] | on | ETA / демо |
+| `quality` | 1024 | 500k | 12 | [0.6,1] | on | **default prod**; `max_hole_perimeter=0.1` (P2) |
+| `ultra` | 1536 | 700k | 50 | [0,1] rt6 | on | best-effort → downgrade |
+
+### План фичи: 1 фото → ракурсы → T2 (деталь MV*)
+
+| # | Шаг | Статус |
+|---|-----|--------|
+| MV0–MV1 | см. таблицу выше | ✅ |
+| MV2–MV6 | synth shape pipeline | ⏸ |
 
 ### Research: MV1 / synth / N views (2026-08-04)
 
@@ -96,16 +127,20 @@
 - T2 multidiffusion: cost/VRAM ~×N; stochastic дешевле.
 - **v1 рекомендация:** стартовать **6** (как в литературе), A/B против **4 (F/L/R/B)** на рыцаре; не фиксировать N до MV5.
 
-#### Рекомендуемый порядок ( Pedrokita GO 2026-08-04 )
+#### Рекомендуемый порядок ( Pedrokita GO 2026-08-04, обновлено 2026-08-05 )
 1. **MV1** deploy multi worker — ✅
-2. **P1** quality_tier + OOM downgrade — 🔄 код готов, нужен deploy
-3. Spike synth: **Wonder3D**; Era3D только R&D
-4. N=6 default → A/B N=4; fusion stochastic first
+2. **P1** quality_tier + OOM downgrade — ✅
+3. **P2** holes на downgrade path (chest) — 🔄
+4. Spike synth: **Wonder3D**; Era3D только R&D
+5. N=6 default → A/B N=4; fusion stochastic first
 
 ### Журнал (свежее)
 
 | Дата | Что |
 |------|-----|
+| 2026-08-05 | **P2 A/B:** chest @ `quality` baseline vs `max_hole_perimeter=0.1` — оба ✅; hole01 −841 faces; tier default → 0.1 в коде. |
+| 2026-08-05 | **План:** тиры ≠ per-asset; P2 holes; единая таблица shape+prod+texture. |
+| 2026-08-05 | **P1 deploy:** `d69687b` → v14. Chest ultra→quality ✅; front ok, holes/gaps → P2. Armor ultra full rt6 ✅. Recycle warm workers после template PATCH. |
 | 2026-08-04 | **P1:** `quality_tier` preview/quality/ultra + OOM auto-downgrade (remesh=false → quality re-infer). Memory+techContext. Deploy pending. |
 | 2026-08-04 | **Diag1:** rt6 + armor на `9f9ff96` ✅; OOM сундука ≠ регресс. |
 | 2026-08-04 | MV1 smoke: lite ✅; rt6 chest CuMesh OOM. |

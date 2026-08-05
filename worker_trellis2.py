@@ -79,6 +79,7 @@ TIER_PRESETS: dict[str, dict] = {
         "decimation_target": 500_000,
         "preprocess_image": True,
         "remesh": True,
+        "max_hole_perimeter": 0.1,
         "max_num_tokens": 49_152,
         "sparse_structure_sampler_params": {
             "steps": 12,
@@ -327,7 +328,10 @@ def _generation_params(job_input: dict) -> dict:
         job_input.get("remesh_band"), 1.0, min_val=0.5, max_val=4.0
     )
     max_hole_perimeter = _coerce_float(
-        job_input.get("max_hole_perimeter"), 3e-2, min_val=0.0, max_val=1.0
+        job_input.get("max_hole_perimeter"),
+        tier_preset.get("max_hole_perimeter", 3e-2),
+        min_val=0.0,
+        max_val=1.0,
     )
     remove_small_cc = _coerce_float(
         job_input.get("remove_small_cc"), 1e-5, min_val=0.0, max_val=1e-2
@@ -563,6 +567,15 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
         if verbose:
             print(f"Clay after remesh: {cm.num_vertices} verts, {cm.num_faces} faces")
         cm.simplify(decimation_target, verbose=verbose)
+        cm.remove_duplicate_faces()
+        cm.repair_non_manifold_edges()
+        cm.remove_small_connected_components(remove_small_cc)
+        cm.fill_holes(max_hole_perimeter=max_hole_perimeter)
+        if verbose:
+            print(
+                f"Clay after post-remesh repair: {cm.num_vertices} verts, "
+                f"{cm.num_faces} faces"
+            )
     else:
         cm.simplify(decimation_target * 3, verbose=verbose)
         cm.remove_duplicate_faces()
@@ -749,13 +762,25 @@ def _quality_ladder_params(gen_params: dict) -> list[dict]:
         return ladder
 
     soft = copy.deepcopy(gen_params)
-    soft["pipeline_type"] = "1024_cascade"
-    soft["decimation_target"] = min(int(soft.get("decimation_target") or 500_000), 500_000)
-    soft["remesh"] = True
-    soft["max_num_tokens"] = min(int(soft.get("max_num_tokens") or 49_152), 49_152)
+    quality_preset = dict(TIER_PRESETS["quality"])
+    soft["pipeline_type"] = quality_preset["pipeline_type"]
+    soft["decimation_target"] = min(
+        int(soft.get("decimation_target") or quality_preset["decimation_target"]),
+        quality_preset["decimation_target"],
+    )
+    soft["remesh"] = quality_preset["remesh"]
+    soft["max_hole_perimeter"] = quality_preset.get("max_hole_perimeter", 0.1)
+    soft["max_num_tokens"] = min(
+        int(soft.get("max_num_tokens") or quality_preset["max_num_tokens"]),
+        quality_preset["max_num_tokens"],
+    )
     soft["quality_tier"] = "quality"
-    soft["sparse_structure_sampler_params"] = dict(DEFAULT_SS_SAMPLER)
-    soft["shape_slat_sampler_params"] = dict(DEFAULT_SHAPE_SLAT_SAMPLER)
+    soft["sparse_structure_sampler_params"] = dict(
+        quality_preset["sparse_structure_sampler_params"]
+    )
+    soft["shape_slat_sampler_params"] = dict(
+        quality_preset["shape_slat_sampler_params"]
+    )
     soft["tex_slat_sampler_params"] = dict(DEFAULT_TEX_SLAT_SAMPLER)
     ladder.append(soft)
     return ladder

@@ -65,7 +65,9 @@ Meshy на той же картинке держит орнамент в Solid.
 4. PBR / viewer
 ```
 
-**2026-08-03:** Meshy UX = 1 фото → synth MV → shape/tex. У нас synth MV пока только на **texture**. T2 knobs recipe = rt6. **Hi3DGen отложен** до полного закрытия T2+texture (см. фазы T*/X* в `activeContext.md`).
+**2026-08-03:** Meshy UX = 1 фото → synth MV → shape/tex. У нас synth MV пока только на **texture**. T2 knobs recipe = rt6 (= tier `ultra`). **Hi3DGen отложен** до полного закрытия T2+texture.
+
+**2026-08-05:** Prod tiers live (`preview`/`quality`/`ultra` + OOM downgrade). **Не** per-asset presets — ladder + downgrade. Chest на downgrade (`quality`) = front ok, holes → **P2** в `activeContext.md`. Texture **X1–X2** после shape MV5 или параллельно W2b.
 
 ### Кандидаты (сравнение «где лучше / где мы слабее»)
 
@@ -384,9 +386,11 @@ MV-Adapter = **не замена всего Meshy**. Это слой:
 |------|-----|------|--------|
 | **0** | Стоп-линия: paint frozen, T1c off, план в memory | 1 день | ✅ 2026-07-24 |
 | **1** | Cascade bake baseline; A/B vs Meshy | 3–7 дней | ✅ chest + **armor проигрыш по sharpness** |
-| **2** | Synth multi-view texture POC (MV-Adapter → MVPainter) | 2–4 нед | 🔄 **W2 smoke ✅** → **W2b tuning** |
-| **3** | Production `paradox-texture-v2` worker + Studio | 1–2 мес | ⬜ |
-| **4** | Polish: seams, upscale, viewer HDRI; опц. multi-image UX | 2–4 нед | ⬜ |
+| **1b** | Prod tiers P1 + mesh P2 (holes на downgrade) | 2026-08 | P1 ✅; P2 🔄 |
+| **2** | Synth multi-view texture POC (MV-Adapter → MVPainter) | 2–4 нед | 🔄 **W2 smoke ✅** → **W2b / X2** |
+| **2b** | Synth multi-view **shape** (Wonder3D → T2 multi) MV2–MV6 | 2–4 нед | ⏭ после P2 |
+| **3** | Production workers + Studio tier UX (P3) | 1–2 мес | ⬜ |
+| **4** | Polish: seams, upscale, viewer HDRI; multi-image UX | 2–4 нед | ⬜ |
 | **5** | Hard cases: characters, prompt retexture | ongoing | ⬜ |
 
 **Критерий успеха Фазы 2:** тот же рыцарь / сундук визуально ближе к Meshy по sharpness albedo и металлу, чем cascade bake.
