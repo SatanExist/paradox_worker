@@ -8,6 +8,7 @@ Deploy via Dockerfile.trellis2 on a dedicated 24GB+ endpoint.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import os
 import shutil
@@ -43,9 +44,80 @@ VALID_PIPELINE_TYPES = frozenset({"512", "1024", "1024_cascade", "1536_cascade"}
 VALID_TEXTURE_SIZES = frozenset({1024, 2048, 4096})
 VALID_TEXTURE_MODES = frozenset({"clay", "textured"})
 VALID_MULTI_IMAGE_MODES = frozenset({"stochastic", "multidiffusion"})
+VALID_QUALITY_TIERS = frozenset({"preview", "quality", "ultra"})
 DEFAULT_TEXTURE_MODE = "clay"
 DEFAULT_MULTI_IMAGE_MODE = "multidiffusion"
+DEFAULT_QUALITY_TIER = "quality"
 MAX_MULTI_IMAGES = 8
+
+# Product tiers (Meshy-like): default = quality; ultra = rt6 best-effort + OOM downgrade.
+# Explicit job_input knobs still override after the tier preset is applied.
+TIER_PRESETS: dict[str, dict] = {
+    "preview": {
+        "pipeline_type": "512",
+        "decimation_target": 300_000,
+        "preprocess_image": True,
+        "remesh": True,
+        "max_num_tokens": 49_152,
+        "sparse_structure_sampler_params": {
+            "steps": 12,
+            "guidance_strength": 7.5,
+            "guidance_rescale": 0.7,
+            "rescale_t": 5.0,
+            "guidance_interval": [0.6, 1.0],
+        },
+        "shape_slat_sampler_params": {
+            "steps": 12,
+            "guidance_strength": 7.5,
+            "guidance_rescale": 0.5,
+            "rescale_t": 3.0,
+            "guidance_interval": [0.6, 1.0],
+        },
+    },
+    "quality": {
+        "pipeline_type": "1024_cascade",
+        "decimation_target": 500_000,
+        "preprocess_image": True,
+        "remesh": True,
+        "max_num_tokens": 49_152,
+        "sparse_structure_sampler_params": {
+            "steps": 12,
+            "guidance_strength": 7.5,
+            "guidance_rescale": 0.7,
+            "rescale_t": 5.0,
+            "guidance_interval": [0.6, 1.0],
+        },
+        "shape_slat_sampler_params": {
+            "steps": 12,
+            "guidance_strength": 7.5,
+            "guidance_rescale": 0.5,
+            "rescale_t": 3.0,
+            "guidance_interval": [0.6, 1.0],
+        },
+    },
+    "ultra": {
+        # Product front rt6 recipe.
+        "pipeline_type": "1536_cascade",
+        "decimation_target": 700_000,
+        "preprocess_image": True,
+        "remesh": True,
+        "max_num_tokens": 65_536,
+        "sparse_structure_sampler_params": {
+            "steps": 50,
+            "guidance_strength": 8.0,
+            "guidance_rescale": 0.7,
+            "rescale_t": 6.0,
+            "guidance_interval": [0.0, 1.0],
+        },
+        "shape_slat_sampler_params": {
+            "steps": 50,
+            "guidance_strength": 8.5,
+            "guidance_rescale": 0.5,
+            "rescale_t": 6.0,
+            "guidance_interval": [0.0, 1.0],
+        },
+    },
+}
 
 
 def _runpod_billing_metadata(handler_ms: dict) -> dict:
@@ -178,11 +250,23 @@ MAXQ_SHAPE_SLAT_SAMPLER = {
 def _generation_params(job_input: dict) -> dict:
     quality_max = bool(job_input.get("quality_max", False))
 
-    # Explicit pipeline_type wins; quality_max defaults to 1536_cascade.
+    raw_tier = job_input.get("quality_tier")
+    quality_tier = None
+    if isinstance(raw_tier, str) and raw_tier.strip():
+        quality_tier = raw_tier.strip().lower()
+        if quality_tier not in VALID_QUALITY_TIERS:
+            quality_tier = None
+
+    # Tier preset fills defaults; explicit job_input keys still win.
+    tier_preset = dict(TIER_PRESETS[quality_tier]) if quality_tier else {}
+
+    # Explicit pipeline_type wins; else tier; else quality_max → 1536; else default.
     if job_input.get("pipeline_type"):
         pipeline_type = job_input.get("pipeline_type")
         if pipeline_type not in VALID_PIPELINE_TYPES:
             pipeline_type = DEFAULT_PIPELINE_TYPE
+    elif tier_preset.get("pipeline_type"):
+        pipeline_type = tier_preset["pipeline_type"]
     elif quality_max:
         pipeline_type = "1536_cascade"
     else:
@@ -203,25 +287,39 @@ def _generation_params(job_input: dict) -> dict:
         if texture_size not in VALID_TEXTURE_SIZES:
             texture_size = min(VALID_TEXTURE_SIZES, key=lambda x: abs(x - texture_size))
 
+    default_decim = tier_preset.get(
+        "decimation_target",
+        800_000 if quality_max else DEFAULT_DECIMATION_TARGET,
+    )
     decimation_target = _coerce_int(
         job_input.get("decimation_target"),
-        800_000 if quality_max else DEFAULT_DECIMATION_TARGET,
+        default_decim,
         min_val=50_000,
         max_val=1_000_000,
     )
     seed = _coerce_int(job_input.get("seed"), DEFAULT_SEED, min_val=0, max_val=2**31 - 1)
-    preprocess_image = bool(job_input.get("preprocess_image", not quality_max))
+
+    default_preprocess = tier_preset.get("preprocess_image", not quality_max)
+    preprocess_image = bool(job_input.get("preprocess_image", default_preprocess))
+
     if "remesh" in job_input:
         remesh = bool(job_input.get("remesh"))
+    elif "remesh" in tier_preset:
+        remesh = bool(tier_preset["remesh"])
     else:
         remesh = False if quality_max else True
+
     verbose = bool(job_input.get("verbose", True))
     remesh_project = _coerce_float(
         job_input.get("remesh_project"), 0.0, min_val=0.0, max_val=1.0
     )
+    default_tokens = tier_preset.get(
+        "max_num_tokens",
+        65_536 if quality_max else 49_152,
+    )
     max_num_tokens = _coerce_int(
         job_input.get("max_num_tokens"),
-        65_536 if quality_max else 49_152,
+        default_tokens,
         min_val=16_384,
         max_val=98_304,
     )
@@ -235,8 +333,16 @@ def _generation_params(job_input: dict) -> dict:
         job_input.get("remove_small_cc"), 1e-5, min_val=0.0, max_val=1e-2
     )
 
-    ss_defaults = MAXQ_SS_SAMPLER if quality_max else DEFAULT_SS_SAMPLER
-    shape_defaults = MAXQ_SHAPE_SLAT_SAMPLER if quality_max else DEFAULT_SHAPE_SLAT_SAMPLER
+    if quality_tier == "ultra":
+        ss_defaults = tier_preset["sparse_structure_sampler_params"]
+        shape_defaults = tier_preset["shape_slat_sampler_params"]
+    elif quality_tier and tier_preset.get("sparse_structure_sampler_params"):
+        ss_defaults = tier_preset["sparse_structure_sampler_params"]
+        shape_defaults = tier_preset["shape_slat_sampler_params"]
+    else:
+        ss_defaults = MAXQ_SS_SAMPLER if quality_max else DEFAULT_SS_SAMPLER
+        shape_defaults = MAXQ_SHAPE_SLAT_SAMPLER if quality_max else DEFAULT_SHAPE_SLAT_SAMPLER
+
     tex_defaults = DEFAULT_TEX_SLAT_SAMPLER
 
     multi_image_mode = str(
@@ -244,6 +350,27 @@ def _generation_params(job_input: dict) -> dict:
     ).strip().lower()
     if multi_image_mode not in VALID_MULTI_IMAGE_MODES:
         multi_image_mode = DEFAULT_MULTI_IMAGE_MODE
+
+    allow_downgrade = bool(job_input.get("allow_downgrade", True))
+
+    # Infer effective tier label for response when only raw knobs were sent.
+    if quality_tier is None:
+        if (
+            pipeline_type == "1536_cascade"
+            and remesh
+            and decimation_target >= 650_000
+            and _sampler_params_from_input(
+                job_input.get("sparse_structure_sampler_params"), ss_defaults
+            ).get("steps", 0)
+            >= 40
+        ):
+            quality_tier_label = "ultra"
+        elif pipeline_type in ("512",):
+            quality_tier_label = "preview"
+        else:
+            quality_tier_label = "quality"
+    else:
+        quality_tier_label = quality_tier
 
     return {
         "pipeline_type": pipeline_type,
@@ -259,6 +386,8 @@ def _generation_params(job_input: dict) -> dict:
         "remove_small_cc": remove_small_cc,
         "verbose": verbose,
         "quality_max": quality_max,
+        "quality_tier": quality_tier_label,
+        "allow_downgrade": allow_downgrade,
         "max_num_tokens": max_num_tokens,
         "multi_image_mode": multi_image_mode,
         "sparse_structure_sampler_params": _sampler_params_from_input(
@@ -584,12 +713,117 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
     return delivery
 
 
+def _is_oom_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "out of memory",
+        "oom",
+        "cuda error: 2",
+        "error code: 2",
+        "cudnn_status_alloc_failed",
+        "cuda out of memory",
+    )
+    return any(m in text for m in markers)
+
+
+def _cuda_cleanup() -> None:
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception as cleanup_exc:
+        print(f"cuda cleanup warning: {cleanup_exc}")
+
+
+def _quality_ladder_params(gen_params: dict) -> list[dict]:
+    """Ordered full re-infer attempts. Export remesh OOM is handled separately."""
+    ladder = [copy.deepcopy(gen_params)]
+    if not gen_params.get("allow_downgrade", True):
+        return ladder
+
+    heavy = (
+        gen_params.get("quality_tier") == "ultra"
+        or gen_params.get("pipeline_type") == "1536_cascade"
+    )
+    if not heavy:
+        return ladder
+
+    soft = copy.deepcopy(gen_params)
+    soft["pipeline_type"] = "1024_cascade"
+    soft["decimation_target"] = min(int(soft.get("decimation_target") or 500_000), 500_000)
+    soft["remesh"] = True
+    soft["max_num_tokens"] = min(int(soft.get("max_num_tokens") or 49_152), 49_152)
+    soft["quality_tier"] = "quality"
+    soft["sparse_structure_sampler_params"] = dict(DEFAULT_SS_SAMPLER)
+    soft["shape_slat_sampler_params"] = dict(DEFAULT_SHAPE_SLAT_SAMPLER)
+    soft["tex_slat_sampler_params"] = dict(DEFAULT_TEX_SLAT_SAMPLER)
+    ladder.append(soft)
+    return ladder
+
+
+def _run_inference(images: list, gen_params: dict):
+    multi = len(images) >= 2
+    if multi:
+        try:
+            from trellis2_multi_image import run_multi_image
+        except ImportError:
+            from studio_bridge.trellis2_multi_image import run_multi_image
+        return run_multi_image(
+            pipeline,
+            images,
+            seed=gen_params["seed"],
+            preprocess_image=gen_params["preprocess_image"],
+            pipeline_type=gen_params["pipeline_type"],
+            sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
+            shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
+            tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
+            max_num_tokens=gen_params["max_num_tokens"],
+            fusion_mode=gen_params["multi_image_mode"],
+        )
+    return pipeline.run(
+        images[0],
+        seed=gen_params["seed"],
+        preprocess_image=gen_params["preprocess_image"],
+        pipeline_type=gen_params["pipeline_type"],
+        sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
+        shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
+        tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
+        max_num_tokens=gen_params["max_num_tokens"],
+    )
+
+
+def _export_glb_with_remesh_fallback(mesh, gen_params: dict, attempts: list) -> tuple:
+    """Try export; on CuMesh/export OOM with remesh, retry once with remesh=false."""
+    try:
+        return _mesh_to_glb(mesh, gen_params), gen_params
+    except Exception as exc:
+        if not gen_params.get("allow_downgrade", True) or not gen_params.get("remesh"):
+            raise
+        if not _is_oom_error(exc):
+            raise
+        print(f"OOM during GLB export with remesh=true; retry remesh=false. err={exc}")
+        attempts.append(
+            {
+                "stage": "export",
+                "pipeline_type": gen_params.get("pipeline_type"),
+                "remesh": True,
+                "error": str(exc),
+                "action": "retry_remesh_false",
+            }
+        )
+        _cuda_cleanup()
+        soft = copy.deepcopy(gen_params)
+        soft["remesh"] = False
+        return _mesh_to_glb(mesh, soft), soft
+
+
 def handler(job):
     job_input = job.get("input", {})
     image_urls = _resolve_image_urls(job_input)
     gen_params = _generation_params(job_input)
     return_base64 = bool(job_input.get("return_base64", False))
     job_id = str(job.get("id") or f"local-{int(time.time())}")
+    quality_tier_requested = gen_params.get("quality_tier")
 
     if not image_urls:
         return {"error": "Missing image_url or image_urls in job input"}
@@ -600,15 +834,16 @@ def handler(job):
     try:
         t0 = time.perf_counter()
         handler_ms = {}
+        downgrade_attempts: list[dict] = []
 
         t_load = time.perf_counter()
         load_model()
         handler_ms["model_load_ms"] = int((time.perf_counter() - t_load) * 1000)
 
-        multi = len(image_urls) >= 2
         gen_params["num_images"] = len(image_urls)
         print(
             "TRELLIS.2 params: "
+            f"quality_tier={gen_params.get('quality_tier')}, "
             f"pipeline_type={gen_params['pipeline_type']}, "
             f"texture_mode={gen_params['texture_mode']}, "
             f"texture_size={gen_params['texture_size']}, "
@@ -616,8 +851,9 @@ def handler(job):
             f"seed={gen_params['seed']}, "
             f"quality_max={gen_params.get('quality_max')}, "
             f"remesh={gen_params['remesh']}, "
+            f"allow_downgrade={gen_params.get('allow_downgrade')}, "
             f"num_images={len(image_urls)}, "
-            f"multi_image_mode={gen_params['multi_image_mode'] if multi else 'n/a'}, "
+            f"multi_image_mode={gen_params['multi_image_mode'] if len(image_urls) >= 2 else 'n/a'}, "
             f"ss={gen_params['sparse_structure_sampler_params']}, "
             f"shape_slat={gen_params['shape_slat_sampler_params']}"
         )
@@ -629,41 +865,67 @@ def handler(job):
             img_paths.append(path)
             images.append(Image.open(path))
 
-        t_infer = time.perf_counter()
-        if multi:
+        ladder = _quality_ladder_params(gen_params)
+        last_error: BaseException | None = None
+        used_params = gen_params
+        mesh = None
+        glb = None
+        infer_ms_total = 0
+        export_ms_total = 0
+
+        for attempt_idx, attempt_params in enumerate(ladder):
+            attempt_params = copy.deepcopy(attempt_params)
+            attempt_params["num_images"] = len(image_urls)
+            print(
+                f"TRELLIS.2 attempt {attempt_idx + 1}/{len(ladder)}: "
+                f"tier={attempt_params.get('quality_tier')} "
+                f"pipeline={attempt_params['pipeline_type']} "
+                f"remesh={attempt_params['remesh']} "
+                f"decim={attempt_params['decimation_target']}"
+            )
+            if attempt_idx > 0:
+                _cuda_cleanup()
+
             try:
-                from trellis2_multi_image import run_multi_image
-            except ImportError:
-                from studio_bridge.trellis2_multi_image import run_multi_image
-            meshes = run_multi_image(
-                pipeline,
-                images,
-                seed=gen_params["seed"],
-                preprocess_image=gen_params["preprocess_image"],
-                pipeline_type=gen_params["pipeline_type"],
-                sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
-                shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
-                tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
-                max_num_tokens=gen_params["max_num_tokens"],
-                fusion_mode=gen_params["multi_image_mode"],
-            )
-        else:
-            meshes = pipeline.run(
-                images[0],
-                seed=gen_params["seed"],
-                preprocess_image=gen_params["preprocess_image"],
-                pipeline_type=gen_params["pipeline_type"],
-                sparse_structure_sampler_params=gen_params["sparse_structure_sampler_params"],
-                shape_slat_sampler_params=gen_params["shape_slat_sampler_params"],
-                tex_slat_sampler_params=gen_params["tex_slat_sampler_params"],
-                max_num_tokens=gen_params["max_num_tokens"],
-            )
-        handler_ms["inference_ms"] = int((time.perf_counter() - t_infer) * 1000)
+                t_infer = time.perf_counter()
+                meshes = _run_inference(images, attempt_params)
+                infer_ms_total += int((time.perf_counter() - t_infer) * 1000)
+                mesh = meshes[0]
 
-        mesh = meshes[0]
+                t_glb = time.perf_counter()
+                glb, used_params = _export_glb_with_remesh_fallback(
+                    mesh, attempt_params, downgrade_attempts
+                )
+                export_ms_total += int((time.perf_counter() - t_glb) * 1000)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                is_oom = _is_oom_error(exc)
+                print(f"Attempt {attempt_idx + 1} failed (oom={is_oom}): {exc}")
+                downgrade_attempts.append(
+                    {
+                        "stage": "infer_or_export",
+                        "pipeline_type": attempt_params.get("pipeline_type"),
+                        "remesh": attempt_params.get("remesh"),
+                        "quality_tier": attempt_params.get("quality_tier"),
+                        "error": str(exc),
+                        "oom": is_oom,
+                    }
+                )
+                if not is_oom or not attempt_params.get("allow_downgrade", True):
+                    raise
+                if attempt_idx + 1 >= len(ladder):
+                    raise
+                print("OOM/retryable failure — trying safer profile…")
+                continue
 
-        t_glb = time.perf_counter()
-        glb = _mesh_to_glb(mesh, gen_params)
+        if glb is None or last_error is not None:
+            raise last_error or RuntimeError("Generation failed with no GLB")
+
+        handler_ms["inference_ms"] = infer_ms_total
+        handler_ms["glb_export_ms"] = export_ms_total
+
         mesh_stats = {
             "vertices": int(len(glb.vertices)),
             "faces": int(len(glb.faces)),
@@ -672,21 +934,40 @@ def handler(job):
         glb_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".glb")
         glb_path = glb_temp.name
         glb_temp.close()
-        if gen_params["texture_mode"] == "clay":
+        if used_params["texture_mode"] == "clay":
             glb.export(glb_path)
         else:
             glb.export(glb_path, extension_webp=True)
-        handler_ms["glb_export_ms"] = int((time.perf_counter() - t_glb) * 1000)
 
         t_deliver = time.perf_counter()
         delivery = _deliver_glb(glb_path, job_id, return_base64=return_base64)
         handler_ms["deliver_ms"] = int((time.perf_counter() - t_deliver) * 1000)
         handler_ms["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
+        tier_used = used_params.get("quality_tier") or quality_tier_requested
+        downgraded = bool(downgrade_attempts) or (
+            tier_used != quality_tier_requested
+            or used_params.get("remesh") != gen_params.get("remesh")
+            or used_params.get("pipeline_type") != gen_params.get("pipeline_type")
+        )
+        downgrade_reason = None
+        if downgraded:
+            downgrade_reason = "oom_or_vram_pressure"
+            if downgrade_attempts:
+                downgrade_reason = downgrade_attempts[-1].get("error") or downgrade_reason
+
         return {
             "status": "success",
-            "message": "TRELLIS.2 model generated successfully",
-            "generation": gen_params,
+            "message": (
+                "TRELLIS.2 model generated successfully"
+                + (" (downgraded after OOM)" if downgraded else "")
+            ),
+            "generation": used_params,
+            "quality_tier_requested": quality_tier_requested,
+            "quality_tier_used": tier_used,
+            "downgraded": downgraded,
+            "downgrade_reason": downgrade_reason,
+            "downgrade_attempts": downgrade_attempts,
             "mesh_stats": mesh_stats,
             "billing": _runpod_billing_metadata(handler_ms),
             **delivery,
@@ -696,7 +977,15 @@ def handler(job):
         tb = traceback.format_exc()
         print(f"CRITICAL ERROR: {exc}")
         print(tb)
-        return {"error": f"Generation failed: {exc}"}
+        err = {"error": f"Generation failed: {exc}"}
+        if _is_oom_error(exc):
+            err["error_class"] = "oom"
+            err["retryable"] = True
+            err["suggestion"] = (
+                "Retry with quality_tier=quality or allow_downgrade=true "
+                "(ultra remesh can OOM on complex inputs / 24GB)."
+            )
+        return err
 
     finally:
         for img_path in img_paths:

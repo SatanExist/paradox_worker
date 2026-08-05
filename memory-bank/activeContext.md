@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-04** — решения MV зафиксированы; старт **MV1** (multi-image deploy)
+Последнее обновление: **2026-08-04** — prod: `quality_tier` + OOM auto-downgrade в worker
 
 ---
 
@@ -15,47 +15,49 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **MV1** → потом Wonder3D synth (MV2); Hi3DGen после T2+tex |
+| Фокус | **Prod resilience** (tiers + OOM fallback) → потом MV2 Wonder3D |
+
+### Prod policy (как у крупных 3D SaaS) — GO 2026-08-04
+
+| Тема | Решение |
+|------|---------|
+| Тиры | `preview` / `quality` (default product) / `ultra` (= rt6) |
+| Ultra | best-effort; на сложных входах может OOM |
+| При OOM | worker **auto-downgrade**: (1) remesh=false на том же меше → (2) полный re-infer `quality` |
+| Ответ | `quality_tier_requested/used`, `downgraded`, `downgrade_reason`, `downgrade_attempts` |
+| Выключить | `allow_downgrade=false` / CLI `--no-downgrade` |
+| UX Studio | не показывать CUDA OOM; Retry + «качество снижено» если downgraded |
+| Hi3DGen | после T2+texture |
+
+**Код:** `worker_trellis2.py` (`TIER_PRESETS`, `_quality_ladder_params`, export remesh fallback). CLI: `--quality-tier`, `--no-downgrade`.
 
 ### Решения зафиксированы (Pedrokita, 2026-08-04)
 
 | Тема | Решение |
 |------|---------|
 | Hi3DGen | **после** полного T2 + texture |
-| Single-view knobs | **закрыты** → recipe **rt6** |
-| MV1 | **делаем сейчас**: commit+deploy multi (`image_urls`), API **non-final** ок |
-| Synth prod | **Wonder3D (MIT)**; Era3D только R&D (AGPL); Zero123++ weights NC ❌ |
+| Single-view knobs | **закрыты** → recipe **rt6** = tier **ultra** |
+| MV1 | ✅ `trellis2-sha-9f9ff96`, endpoint v13 |
+| Synth prod | **Wonder3D (MIT)**; Era3D только R&D (AGPL) |
 | N views v1 | default **6**, A/B vs **4** |
 | Fusion A/B | сначала **stochastic**, потом multidiffusion |
 | Texture | после/параллельно MV5 на лучшем clay |
+| OOM / prod | **tiers + auto-downgrade** (см. выше) |
 
 ### С чего начинаем сейчас
 
-1. **MV1** — commit multi-image worker + push/CI/release T2 endpoint  
-2. Smoke: single `image_url` всё ещё ок (регрессия)  
-3. Дальше **MV2** — spike Wonder3D (6 views)
-
-### Что умеет T2 для «серии ракурсов» (и чего нет)
-
-| Возможность | Где | Статус у нас |
-|-------------|-----|--------------|
-| Single-image → 3D + все sampler/export knobs | stock T2 | ✅ выжато → recipe rt6 |
-| Принять **2+ готовых** видов (`image_urls`) | community PR #104 / наш monkeypatch | 🟡 → **MV1 deploy** |
-| Fusion **`multidiffusion`** (усреднение pred) | PR #104 | в коде; риск «раздуть» форму |
-| Fusion **`stochastic`** (цикл видов по steps) | PR #104 | в коде; часто стабильнее; **A/B first** |
-| Те же knobs на multi (1536, gi01, rt6, remesh…) | наш worker | да, поверх multi path |
-| **Сам** нарисовать ракурсы из 1 фото | **нет в T2** | **Wonder3D** (prod) / MV-Adapter overlap |
-| Официальный trained multi-view T2 | нет в main Microsoft | только tuning-free community |
-
-**Итог:** T2 = потребитель серии. Генератор ракурсов = отдельный зверь (**Wonder3D** для prod).
+1. ~~MV1 deploy + smoke~~ ✅ (armor rt6 ok; chest OOM = вход, не релиз)
+2. **Deploy** образа с quality_tier / OOM fallback + smoke chest на `--quality-tier ultra` (ожидаем downgrade, не FAIL)
+3. Дальше **MV2** — Wonder3D
 
 ### План фичи: 1 фото → ракурсы → T2
 
 | # | Шаг | Зачем | Статус |
 |---|-----|--------|--------|
 | **MV0** | Single-view recipe = rt6 | baseline | ✅ |
-| **MV1** | Deploy T2 multi (`image_urls` + fusion) | T2 ест серию на RunPod | 🔄 **сейчас** |
-| **MV2** | Spike **Wonder3D** (MIT, 6 views) | нарисовать ракурсы; Era3D≠prod | ⏭ next |
+| **MV1** | Deploy T2 multi (`image_urls` + fusion) | T2 ест серию на RunPod | ✅ `trellis2-sha-9f9ff96` |
+| **P1** | `quality_tier` + OOM auto-downgrade | prod resilience как Meshy/Tripo | 🔄 код локально → deploy |
+| **MV2** | Spike **Wonder3D** (MIT, 6 views) | нарисовать ракурсы | ⏭ after P1 deploy |
 | **MV3** | Worker: 1 foto → N views | Meshy-like UX | ⏸ |
 | **MV4** | synth → T2 multi (rt6 knobs) | полный pipeline | ⏸ |
 | **MV5** | A/B: single vs stoch vs multi; N=6 vs 4 | глаза | ⏸ |
@@ -95,16 +97,18 @@
 - **v1 рекомендация:** стартовать **6** (как в литературе), A/B против **4 (F/L/R/B)** на рыцаре; не фиксировать N до MV5.
 
 #### Рекомендуемый порядок ( Pedrokita GO 2026-08-04 )
-1. **MV1** deploy multi worker (non-final API ok) — **в работе**
-2. Spike synth: **Wonder3D** (+ опц. MV-Adapter views); Era3D только R&D глаз
-3. N=6 default → A/B N=4
-4. Fusion A/B: **stochastic first**, multidiffusion second
+1. **MV1** deploy multi worker — ✅
+2. **P1** quality_tier + OOM downgrade — 🔄 код готов, нужен deploy
+3. Spike synth: **Wonder3D**; Era3D только R&D
+4. N=6 default → A/B N=4; fusion stochastic first
 
 ### Журнал (свежее)
 
 | Дата | Что |
 |------|-----|
-| 2026-08-04 | Решения: MV1 сейчас; Wonder3D prod-synth; N=6+A/B4; stochastic first; Hi3DGen later. Старт commit/deploy multi. |
+| 2026-08-04 | **P1:** `quality_tier` preview/quality/ultra + OOM auto-downgrade (remesh=false → quality re-infer). Memory+techContext. Deploy pending. |
+| 2026-08-04 | **Diag1:** rt6 + armor на `9f9ff96` ✅; OOM сундука ≠ регресс. |
+| 2026-08-04 | MV1 smoke: lite ✅; rt6 chest CuMesh OOM. |
 | 2026-08-03 | Research multi/synth/N; Meshy-паттерн; rt6 recipe closed. |
 
 ---

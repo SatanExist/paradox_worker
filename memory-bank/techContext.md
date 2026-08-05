@@ -172,14 +172,16 @@ Studio без этой переменной остаётся на v0 bake.
 4. ETA: если endpoint cold → показывать cold; если недавний job на том же endpoint → warm
 5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
 
-**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter`, `remove_small_cc`, `return_base64`, `quality_max`, `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.  
-**Multi-view (local code, needs deploy):** `image_urls` (2–8 URL) и/или `image_url`; `multi_image_mode` = `multidiffusion` (default) | `stochastic`. Реализация: `studio_bridge/trellis2_multi_image.py` (PR #104 monkeypatch; stock T2 main без этого). CLI: `test_req_trellis2.py --image-urls …`.
+**T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter`, `remove_small_cc`, `return_base64`, `quality_max`, `quality_tier` (`preview`/`quality`/`ultra`), `allow_downgrade` (default true), `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.  
+**Multi-view:** `image_urls` (2–8 URL) и/или `image_url`; `multi_image_mode` = `multidiffusion` (default) | `stochastic`. CLI: `test_req_trellis2.py --image-urls …` / `--quality-tier ultra`.
 
 **Sampler params (каждый блок):** `steps` (1–100), `guidance_strength`, `guidance_rescale`, `rescale_t`, `guidance_interval` `[lo,hi]` (CFG window on t; HF default SS/shape `[0.6,1.0]`, tex `[0.6,0.9]`).
 
-**Ответ worker:** `generation` (params), `mesh_stats` `{vertices, faces}`, `billing.handler_ms` (`inference_ms`, `glb_export_ms`, `model_load_ms`, `total_ms`), R2 `model_url`.
+**Ответ worker:** `generation`, `mesh_stats`, `billing.handler_ms`, R2 `model_url`; плюс prod: `quality_tier_requested`, `quality_tier_used`, `downgraded`, `downgrade_reason`, `downgrade_attempts`. При финальном OOM: `error_class=oom`, `retryable=true`, `suggestion`.
 
-**`quality_max=true` preset:** `1536_cascade`, decim 800k, remesh false, preprocess false, ss/shape steps=50 + high guidance (issue #92). **Не** front recipe (дыры). Product front: 1536+remesh+700k+steps50+RGB.
+**Tiers:** `preview`=512; `quality`=1024_cascade (product default); `ultra`=rt6 (1536+remesh+700k+steps50+gi01+rt6). OOM ladder: remesh=false на том же меше → re-infer `quality`.
+
+**`quality_max=true` preset:** legacy max-q (не front). Product front ultra = tier `ultra` / knobs rt6.
 
 **Метрики A/B:** `scripts/summarize_t2_front_metrics.py`; CLI `test_req_trellis2.py` печатает `--- metrics ---` после save.
 

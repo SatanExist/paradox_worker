@@ -76,12 +76,25 @@ def _sampler_dict(
 
 def build_input(args: argparse.Namespace) -> dict:
     job_input = {
-        "pipeline_type": args.pipeline_type,
         "texture_mode": args.texture_mode,
         "seed": args.seed,
-        "decimation_target": args.decimation_target,
         "return_base64": args.return_base64,
     }
+    if args.quality_tier:
+        job_input["quality_tier"] = args.quality_tier
+    if args.no_downgrade:
+        job_input["allow_downgrade"] = False
+
+    # Tier owns pipeline/decimation unless force flags (or no tier).
+    if args.quality_tier and not args.force_pipeline:
+        pass
+    else:
+        job_input["pipeline_type"] = args.pipeline_type
+    if args.quality_tier and not args.force_decimation:
+        pass
+    else:
+        job_input["decimation_target"] = args.decimation_target
+
     if args.image_urls:
         job_input["image_urls"] = list(args.image_urls)
         # Keep first as image_url for older logs / compatibility.
@@ -223,6 +236,14 @@ def print_run_metrics(final: dict, save_path: Path | None) -> None:
         )
     if mesh:
         print(f"mesh_stats (worker): verts={mesh.get('vertices')} faces={mesh.get('faces')}")
+    if "downgraded" in output or output.get("quality_tier_used"):
+        print(
+            "quality:",
+            f"requested={output.get('quality_tier_requested')}",
+            f"used={output.get('quality_tier_used')}",
+            f"downgraded={output.get('downgraded')}",
+            f"reason={output.get('downgrade_reason')!r}",
+        )
     if save_path and save_path.is_file():
         local = glb_mesh_stats(save_path)
         print(
@@ -262,6 +283,17 @@ def save_output(final: dict, save_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="RunPod TRELLIS.2 smoke test.")
     parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL)
+    parser.add_argument(
+        "--quality-tier",
+        choices=["preview", "quality", "ultra"],
+        default=None,
+        help="Product tier preset (preview/quality/ultra=rt6). Owns pipeline/decim unless --force-*.",
+    )
+    parser.add_argument(
+        "--no-downgrade",
+        action="store_true",
+        help="Disable worker OOM auto-downgrade (allow_downgrade=false)",
+    )
     parser.add_argument(
         "--image-urls",
         nargs="+",
