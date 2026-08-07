@@ -73,6 +73,8 @@ def build_runpod_input(
     image_url: str,
     seed: int = 1,
     texture_mode: TextureMode | None = None,
+    soft_input: bool = False,
+    soft_input_strength: float = 0.75,
 ) -> dict:
     mode = texture_mode or tier.texture_mode
     payload: dict = {
@@ -85,4 +87,7 @@ def build_runpod_input(
     }
     if mode == "textured":
         payload["texture_size"] = tier.texture_size
+    if soft_input:
+        payload["soft_input"] = True
+        payload["soft_input_strength"] = float(soft_input_strength)
     return payload

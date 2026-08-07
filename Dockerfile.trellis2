@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64 \
     MAX_JOBS=2 \
     PYOPENGL_PLATFORM=egl \
-    PYTHONPATH=/app/TRELLIS.2 \
+    PYTHONPATH=/app:/app/TRELLIS.2 \
     OPENCV_IO_ENABLE_OPENEXR=1 \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     ATTN_BACKEND=sdpa \
@@ -55,7 +55,7 @@ RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/
       /app/TRELLIS.2/o-voxel/third_party/eigen
 
 RUN pip install --no-cache-dir \
-    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh scipy scikit-image \
     "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
     kornia timm plyfile filelock safetensors einops "triton>=3.2.0" && \
     pip install --no-cache-dir \
@@ -97,6 +97,9 @@ ENV PARADOX_WORKER_VARIANT=trellis2
 
 COPY worker_trellis2.py /app/worker_trellis2.py
 COPY runpod_billing.py /app/runpod_billing.py
+COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
+COPY studio_bridge/soft_input.py /app/studio_bridge/soft_input.py
+COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
 # Community PR #104 multi-image fusion (monkeypatch; stock TRELLIS.2 main lacks it)
 COPY studio_bridge/trellis2_multi_image.py /app/trellis2_multi_image.py
 

@@ -7,6 +7,9 @@ on:
       - "Dockerfile.trellis2"
       - "worker_trellis2.py"
       - "studio_bridge/trellis2_multi_image.py"
+      - "studio_bridge/soft_input.py"
+      - "studio_bridge/mesh_repair.py"
+      - "studio_bridge/__init__.py"
       - "docker/smoke_trellis2_imports.py"
       - ".github/workflows/build-trellis2.yml"
   workflow_dispatch:

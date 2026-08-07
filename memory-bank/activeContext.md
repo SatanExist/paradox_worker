@@ -4,9 +4,54 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-05** — P1 live; тиры ≠ per-asset; P2 holes на downgrade path
+Последнее обновление: **2026-08-07** — 🟢 soft GO (chest); lattice = industry limit (Meshy too); **next: productize soft → MV2**
 
 ---
+
+## 🟢 G1d WIN — soft-input (2026-08-07)
+
+| | |
+|--|--|
+| **Что** | Слегка залили тёмные борозды/тени на PNG (`ref_chest_soft75.png`, strength=0.75) → обычный T2 `quality` clay |
+| **Артефакт** | `model-chest-soft75-quality.glb` (~$0.10) |
+| **Метрики** | watertight=True, boundary=0 |
+| **Глаза Pedrokita** | **превосходно** — нет сквозных дыр даже в сложных местах |
+| **Вывод** | Дыры mid-prop часто = **входной shading** (щели досок, глубокие тени), не «рандом модели» |
+| **Не** | voxel (❌ aesthetic); не меняли T2 knobs |
+
+### G1e lattice (контроль) + Meshy
+
+| | |
+|--|--|
+| Наш T2 | open mesh слабо (raw крошка / soft куб-решётка) |
+| Meshy 6 | тоже плёнки в ячейках — **общая боль индустрии** |
+| Политика | open/lattice = best-effort / later; **не** блокер mid-prop gate |
+
+### План дальше ( Pedrokita GO 2026-08-07)
+
+| # | Шаг | Статус |
+|---|-----|--------|
+| 1 | **Productize soft-norm** в worker (`soft_input` / preprocess) + CLI | ⏭ **сейчас** |
+| 2 | Smoke на 1–2 других mid-prop (не cage) | ⏸ |
+| 3 | **MV2** Wonder3D 1→6 → T2 `image_urls` (короткий pod + terminate) | ⏸ after 1 |
+| 4 | Лёгкие режимы позже: `solid` (soft on) / `character` (soft off) — не 20 SKU | ⏸ |
+| ❌ | voxel prod, per-asset «сундук», open-mesh как MVP gate | — |
+
+## ⚠ INCIDENT 2026-08-06 — забытый pod
+
+| | |
+|--|--|
+| Pod | `dynmbd1jzzvd04` (`paradox-g1c-holes`, 4090 ~$0.74/ч) |
+| Что случилось | SSH fail → pod оставили RUNNING → деньги сгорели |
+| Сейчас | **terminate OK**, RUNNING pods **нет** |
+| **Правило** | Любой pod: **terminate в той же сессии**, даже если smoke не прошёл |
+
+```powershell
+.\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --list
+.\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --terminate <pod_id>
+```
+
+**Баланс 2026-08-07:** +$19. **G1b voxel = aesthetic NO-GO.** Идём soft-input → MV2; pod только для Wonder3D spike + terminate.
 
 ## Кто работал последним
 
@@ -15,7 +60,38 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **P2** holes/gaps на `quality` (chest downgrade) → **MV2** Wonder3D |
+| Фокус | 🔴 holes gate — **не voxel**; soft-input A/B → MV2 |
+
+### 🔴 BLOCKER: mid-prop без явных дыр (Pedrokita GO 2026-08-05)
+
+| | |
+|--|--|
+| **Суть** | На компактных mid-prop T2 даёт сквозные дыры; SaaS так не делает → **fail продукта** |
+| **Не** | preset «сундук»; voxel Minecraft; только knobs |
+| **Мастер-файл** | **`memory-bank/midPropHolesGate.md`** ← канон + decision matrix §5.2 |
+| **Repro** | chest / `model-chest-p2b-ultra.glb` |
+| **После 🟢** | resume MV2 (если ещё не) → MV3… |
+
+| # | Шаг | Статус |
+|---|-----|--------|
+| **G0** | Docs/issues + gate + мастер-файл | ✅ |
+| **G1a** | trimesh fill | ✅ no-op |
+| **G1b** | voxel solidify | ❌ **REJECTED** (pixel clay) |
+| **G1d** | soft-input PNG → T2 | ✅ **GO** (chest) |
+| **G1e** | intentional lattice A/B | ✅ done — industry limit |
+| **G2** | soft-norm в worker (не voxel) | ✅ code (`soft_input`) — deploy pending |
+| **MV2** | Wonder3D 1→6 → T2 | ⏭ after G2 |
+| **G4** | visibility / Meshlib | ⏸ last resort |
+
+**Пауза:** MV3–MV6, P3, X*, H0. Pod только MV2 oneshot + terminate.
+
+### Что делаем прямо сейчас
+
+| # | Действие | Статус |
+|---|----------|--------|
+| 1 | Soft productize в `worker_trellis2.py` | ✅ `soft_input` + `soft_input_strength` |
+| 2 | Deploy + smoke chest with `--soft-input` | ⏭ need commit/CI |
+| 3 | MV2 spike | ⏸ |
 
 ### Prod policy (как у крупных 3D SaaS) — GO 2026-08-04, live 2026-08-05
 
@@ -29,57 +105,69 @@
 | Выключить | `allow_downgrade=false` / CLI `--no-downgrade` |
 | UX Studio | не показывать CUDA OOM; «качество снижено» если downgraded |
 | Hi3DGen | после T2+texture |
+| **Mid-prop holes** | 🔴 blocker → `midPropHolesGate.md` |
 
-**Smoke 2026-08-05:** armor `ultra` ✅ full rt6; chest `ultra` → OOM → `quality` ✅ (`model-chest-ultra-downgrade2.glb`). Front сундука ок, **дыры/разрывы** на downgrade path — задача **P2**.
+**Smoke 2026-08-05:** armor `ultra` ✅; chest P2b live но **дыры** → gate. Deploy: `trellis2-sha-4c24928` v15.
 
-**Код:** `worker_trellis2.py` (`TIER_PRESETS`, `_quality_ladder_params`). Deploy: `trellis2-sha-d69687b`, endpoint v14.
-
-### Решения зафиксированы (Pedrokita, 2026-08-04)
+### Решения зафиксированы
 
 | Тема | Решение |
 |------|---------|
 | Hi3DGen | **после** полного T2 + texture |
 | Single-view knobs | **закрыты** → recipe **rt6** = tier **ultra** |
-| MV1 | ✅ `trellis2-sha-9f9ff96`, endpoint v13 |
-| Synth prod | **Wonder3D (MIT)**; Era3D только R&D (AGPL) |
-| N views v1 | default **6**, A/B vs **4** |
-| Fusion A/B | сначала **stochastic**, потом multidiffusion |
-| Texture | после/параллельно MV5 на лучшем clay |
-| OOM / prod | **tiers + auto-downgrade** (см. выше) |
+| MV1 | ✅ |
+| Synth / MV2 | **⏸ until holes gate 🟢** |
+| Per-asset presets | **нет** |
+| Mid-prop holes | **blocker**; post-repair (Meshlib) = путь; CuMesh недостаточен |
 
 ### С чего начинаем сейчас
 
-1. ~~P1 deploy + smoke~~ ✅
-2. **P2** — P2b post-remesh repair + deploy + smoke chest (ultra→quality path)
-3. **MV2** — Wonder3D spike (после P2 deploy или параллельно)
+1. 🔴 **G1–G3** mid-prop holes — см. `midPropHolesGate.md`
+2. ~~MV2~~ **paused**
+3. Основной план (MV2→MV6) — **только после 🟢 gate**
 
-### Единый план: shape + prod + texture (интеграция 2026-08-05)
+### Единый план (с blocker)
 
-| # | Шаг | Зачем | Статус |
-|---|-----|--------|--------|
-| **MV0** | Single-view recipe = rt6 | baseline knight | ✅ |
-| **MV1** | T2 multi (`image_urls` + fusion) | T2 ест серию | ✅ `9f9ff96` |
-| **P1** | `quality_tier` + OOM auto-downgrade | prod resilience | ✅ `d69687b` v14 |
-| **P2** | Mesh quality на **downgrade path** | hole 0.1 + P2b post-remesh repair в коде | 🔄 deploy + smoke |
-| **P3** | Studio: tier UX + downgraded badge | product front | ⏸ после P2 |
-| **MV2** | Spike **Wonder3D** (MIT, 6 views) | synth ракурсы для shape | ⏭ после P2 |
-| **MV3** | Worker: 1 foto → N views | Meshy-like UX | ⏸ |
-| **MV4** | synth → T2 multi (rt6 knobs) | полный shape pipeline | ⏸ |
-| **MV5** | A/B: single vs stoch vs multi; N=6 vs 4 | глаза | ⏸ |
+```
+✅ MV0–MV1 → ✅ P1–P2 → ✅ R1
+                    ↓
+               🔴 G0–G3 mid-prop holes   ← МЫ ЗДЕСЬ
+                    ↓
+               🟢 gate
+                    ↓
+               ⏸ MV2 → MV3 → MV4 → MV5 → MV6
+                    ↓
+               ⏸ X* / P3 / H0
+```
+
+| # | Шаг | Статус |
+|---|-----|--------|
+| MV0–MV1 / P1–P2 / R1 | infra | ✅ |
+| **G0–G3** | mid-prop holes gate | 🔴 G1 |
+| **MV2** | Wonder3D | ⏸ after gate |
+| MV3–MV6 | synth shape product | ⏸ |
+| X* / P3 / H0 | texture / studio / Hi3DGen | ⏸ |
 | **MV6** | Recipe freeze «1-photo shape» | product | ⏸ |
-| **X1** | MV-Adapter texture на best clay | вау tex | после MV5 / параллельно W2b |
-| **X2** | W2b holes (mesh repair, PNG, PBR) | tex polish | ⏸ `textureWowPlan.md` |
+| **P2c** | Meshlib hole fill | жёстче CuMesh | ⏸ if still needed post-MV4 |
+| **P3** | Studio: tier UX + downgraded badge | product front | ⏸ parallel later |
+| **X1** | MV-Adapter texture на best clay | вау tex | после MV5 / \|\| W2b |
+| **X2** | W2b holes (mesh repair, PNG, PBR) | tex polish | ⏸ |
 | **H0** | Hi3DGen spike | next-tier shape | ⏸ после T2+tex |
 | **S0** | Studio 1-upload E2E | product | ⏸ |
 
-#### Что значит «пресеты» (важно)
+#### Что значит «пресеты» (важно — обновлено research R1)
 
 | Вопрос | Ответ |
 |--------|--------|
-| Нужен пресет «сундук vs рыцарь»? | **Нет** — один ladder тиров + auto-downgrade |
-| Почему рыцарь ultra ok, сундук нет? | Сложность occupancy/remesh VRAM на входе, не «сломанный» tier |
-| Почему сундук с дырами после downgrade? | `quality` = **1024 + 12 steps**, не rt6; export hole fill default 0.03 — на chest недостаточно |
-| Product default | `quality_tier=quality` — стабильный mid; `ultra` = «максимум, если влезет» |
+| Нужен пресет «сундук vs рыцарь»? | **Нет** — docs Microsoft/HF/CuMesh **не дают** per-asset class; только knobs |
+| Наши `preview/quality/ultra` | **VRAM/ETA/resolution ladder**, не «уровень моделирования объекта» |
+| Почему рыцарь без дыр, сундук с дырами? | Глаз: сундук «проще». T2: **thin spikes, cracks-as-gaps, lid/body, skull joints** = дороже для occupancy, чем thick armor |
+| Почему ultra на сундуке OOM? | remesh VRAM на denser occupancy — не «сломанный» tier |
+| Что говорит HF card? | *Geometric Artifacts (Small Holes)* — **known limitation**; hole-fill scripts |
+| Что говорит community (Comfy)? | remesh → simplify → **FillHoles Meshlib** (сильнее CuMesh perimeter) |
+| Issues | [#25](https://github.com/microsoft/TRELLIS.2/issues/25) remesh/inner hull; [#105](https://github.com/microsoft/TRELLIS.2/issues/105) no-remesh → holes |
+| Product default | `quality` = mid stable; `ultra` = best-effort |
+| Не делать | 20 asset presets до synth multi-view — оверинжиниринг vs docs |
 
 #### Tier presets (код `TIER_PRESETS`)
 
@@ -89,12 +177,59 @@
 | `quality` | 1024 | 500k | 12 | [0.6,1] | on | **default prod**; `max_hole_perimeter=0.1` (P2) |
 | `ultra` | 1536 | 700k | 50 | [0,1] rt6 | on | best-effort → downgrade |
 
+### Research R1: дыры, «простой» prop, presets (2026-08-05)
+
+#### Официальные docs / HF / README
+- Input = **single image**; export recipe один: `to_glb(remesh=True, remesh_band=1, …)`.
+- **Нет** tutorial «preset for props / characters / difficulty».
+- HF **Limitations**: small holes / topological discontinuities — ожидаемо; для watertight → hole-filling.
+- CuMesh `fill_holes(max_hole_perimeter)` — только **boundary loops** заданного размера; не weld стыков, не «трещина → рельеф».
+
+#### Глаз vs voxel-сложность (Pedrokita observation)
+
+| | Рыцарь | Сундук (example TRELLIS chest) |
+|--|--------|--------------------------------|
+| Для глаза | сложный character | «простой» prop |
+| Для T2 occupancy | thick continuous silhouette | thin spikes, wood cracks→gaps, multi-part joints |
+| Ultra | ✅ влезает | часто OOM → `quality` |
+| Типичный дефект | мыло орнамента (micro) | **дыры / щели** (topology) |
+
+**Миф:** «проще скульптура ⇒ меньше дыр».  
+**Факт:** дыры коррелируют с **тонкими / открытыми / стыкующимися** структурами + known O-Voxel artifacts, не с «количеством полигонов в голове художника».
+
+#### Community export ladder (не официальный Microsoft product API)
+```
+raw O-Voxel mesh
+  → remesh (CuMesh)
+  → simplify
+  → fill_holes (CuMesh perimeter)     ← у нас P2/P2b
+  → [опц.] Meshlib / reconstruct      ← P2c R&D
+```
+Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMeshlib** после remesh — сигнал, что CuMesh hole fill **недостаточен** на hard cases.
+
+#### Следствия для плана
+1. **Не** плодить per-SKU presets.
+2. P2 CuMesh — закрыт; остаточные дыры chest → **P2c Meshlib** (дешёвый A/B) **и/или** **MV2** (корневой shape).
+3. Честный A/B дыр: один `quality_tier` на armor и chest (не ultra-armor vs quality-chest).
+4. Studio UX: «дыры на props» = expected mid; wow через synth MV + post, не обещать watertight на single-view T2.
+
 ### План фичи: 1 фото → ракурсы → T2 (деталь MV*)
 
 | # | Шаг | Статус |
 |---|-----|--------|
-| MV0–MV1 | см. таблицу выше | ✅ |
-| MV2–MV6 | synth shape pipeline | ⏸ |
+| MV0–MV1 / P1–P2 / R1 | закрыты | ✅ |
+| **MV2** Wonder3D views only (не их mesh) | spike doc ✅; pod smoke 🔄 | 🔄 |
+| MV3–MV6 | worker → T2 wire → A/B → freeze | ⏸ |
+| P2c Meshlib | только если нужно после MV4 | ⏸ |
+
+### MV2 notes (2026-08-05)
+
+- Чеклист: `scripts/wonder3d_mv2_spike.md`
+- Scope: **RGB×6** для `image_urls` → T2; Instant-NSR/NeuS Wonder3D mesh = **out of scope**
+- HF: `flamehaze1115/wonder3d-v1.0` + custom pipeline; gen **256²**; azimuth 0/45/90/180/-90/-45
+- Wonder3D++ branch — later if v1 weak
+- Spike env: **RunPod Linux 4090**, не Windows marathon
+- Success: armor + chest view grids + optional T2 multi smoke
 
 ### Research: MV1 / synth / N views (2026-08-04)
 
@@ -127,18 +262,22 @@
 - T2 multidiffusion: cost/VRAM ~×N; stochastic дешевле.
 - **v1 рекомендация:** стартовать **6** (как в литературе), A/B против **4 (F/L/R/B)** на рыцаре; не фиксировать N до MV5.
 
-#### Рекомендуемый порядок ( Pedrokita GO 2026-08-04, обновлено 2026-08-05 )
-1. **MV1** deploy multi worker — ✅
-2. **P1** quality_tier + OOM downgrade — ✅
-3. **P2** holes на downgrade path (chest) — 🔄
-4. Spike synth: **Wonder3D**; Era3D только R&D
-5. N=6 default → A/B N=4; fusion stochastic first
+#### Рекомендуемый порядок ( Pedrokita GO — freeze 2026-08-05 )
+1. ~~MV1 / P1 / P2 / R1~~ ✅
+2. **MV2** Wonder3D spike (views) — 🔄
+3. **MV3** worker 1→N
+4. **MV4** → T2 multi
+5. **MV5** A/B (N=6 vs 4; stochastic first; **chest stress**) → **MV6** freeze
+6. P2c / P3 / X* / H0 — по необходимости, не блокируют MV2–MV4
 
 ### Журнал (свежее)
 
 | Дата | Что |
 |------|-----|
-| 2026-08-05 | **P2 A/B:** chest @ `quality` baseline vs `max_hole_perimeter=0.1` — оба ✅; hole01 −841 faces; tier default → 0.1 в коде. |
+| 2026-08-05 | **BLOCKER mid-prop holes:** мастер `midPropHolesGate.md`; MV2 paused; G1a fill no-op (236 boundary edges). |
+| 2026-08-05 | **R1 research:** HF small-holes; нет per-asset presets; chest «проще глазу» ≠ проще T2; +P2c later. |
+| 2026-08-05 | **P2b deploy:** `4c24928` → v15. Chest ultra→quality; `max_hole=0.1`; post-remesh; `model-chest-p2b-ultra.glb`. Preview dropdown + chest. |
+| 2026-08-05 | **P2 A/B:** chest @ `quality` baseline vs hole 0.1; tier default → 0.1 + P2b в коде. |
 | 2026-08-05 | **План:** тиры ≠ per-asset; P2 holes; единая таблица shape+prod+texture. |
 | 2026-08-05 | **P1 deploy:** `d69687b` → v14. Chest ultra→quality ✅; front ok, holes/gaps → P2. Armor ultra full rt6 ✅. Recycle warm workers после template PATCH. |
 | 2026-08-04 | **P1:** `quality_tier` preview/quality/ultra + OOM auto-downgrade (remesh=false → quality re-infer). Memory+techContext. Deploy pending. |

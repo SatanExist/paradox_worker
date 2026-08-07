@@ -117,6 +117,12 @@ def build_input(args: argparse.Namespace) -> dict:
         job_input["max_hole_perimeter"] = args.max_hole_perimeter
     if args.remove_small_cc is not None:
         job_input["remove_small_cc"] = args.remove_small_cc
+    if getattr(args, "mesh_repair", None) and args.mesh_repair != "none":
+        job_input["mesh_repair"] = args.mesh_repair
+        job_input["mesh_repair_resolution"] = args.mesh_repair_resolution
+    if getattr(args, "soft_input", False):
+        job_input["soft_input"] = True
+        job_input["soft_input_strength"] = args.soft_input_strength
     if args.quality_max:
         job_input["quality_max"] = True
         # Full tutorial/community preset; CLI flags still override when set.
@@ -351,6 +357,29 @@ def main() -> int:
         type=float,
         default=None,
         help="remove_small_connected_components threshold (no-remesh path; default 1e-5)",
+    )
+    parser.add_argument(
+        "--mesh-repair",
+        choices=["none", "voxel", "trimesh", "pymeshlab"],
+        default="none",
+        help="Post-export holes repair (G2). Prefer voxel for mid-prop see-through gaps.",
+    )
+    parser.add_argument(
+        "--mesh-repair-resolution",
+        type=int,
+        default=256,
+        help="Voxel repair resolution along longest axis (default 256)",
+    )
+    parser.add_argument(
+        "--soft-input",
+        action="store_true",
+        help="Soft-norm input: lift dark grooves/shadows (G1d mid-prop holes fix)",
+    )
+    parser.add_argument(
+        "--soft-input-strength",
+        type=float,
+        default=0.75,
+        help="Soft-norm strength 0..1 (default 0.75 = chest GO)",
     )
     parser.add_argument(
         "--quality-max",

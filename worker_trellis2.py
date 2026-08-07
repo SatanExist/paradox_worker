@@ -337,6 +337,36 @@ def _generation_params(job_input: dict) -> dict:
         job_input.get("remove_small_cc"), 1e-5, min_val=0.0, max_val=1e-2
     )
 
+    # Post-export mesh repair (G1/G2 holes gate). Off by default until eyes GO.
+    raw_repair = str(job_input.get("mesh_repair") or "none").strip().lower()
+    if raw_repair in ("", "0", "false", "off", "none", "null"):
+        mesh_repair = "none"
+    elif raw_repair in ("voxel", "pymeshlab", "trimesh"):
+        mesh_repair = raw_repair
+    else:
+        mesh_repair = "none"
+    mesh_repair_resolution = _coerce_int(
+        job_input.get("mesh_repair_resolution") or job_input.get("repair_resolution"),
+        256,
+        min_val=64,
+        max_val=512,
+    )
+    mesh_repair_max_hole_size = _coerce_int(
+        job_input.get("mesh_repair_max_hole_size") or job_input.get("max_hole_size"),
+        5000,
+        min_val=10,
+        max_val=50_000,
+    )
+
+    # Soft-norm: lift dark grooves on input RGB (G1d mid-prop holes). Opt-in.
+    soft_input = bool(job_input.get("soft_input", False))
+    soft_input_strength = _coerce_float(
+        job_input.get("soft_input_strength"),
+        0.75,
+        min_val=0.0,
+        max_val=1.0,
+    )
+
     if quality_tier == "ultra":
         ss_defaults = tier_preset["sparse_structure_sampler_params"]
         shape_defaults = tier_preset["shape_slat_sampler_params"]
@@ -388,6 +418,11 @@ def _generation_params(job_input: dict) -> dict:
         "remesh_band": remesh_band,
         "max_hole_perimeter": max_hole_perimeter,
         "remove_small_cc": remove_small_cc,
+        "mesh_repair": mesh_repair,
+        "mesh_repair_resolution": mesh_repair_resolution,
+        "mesh_repair_max_hole_size": mesh_repair_max_hole_size,
+        "soft_input": soft_input,
+        "soft_input_strength": soft_input_strength,
         "verbose": verbose,
         "quality_max": quality_max,
         "quality_tier": quality_tier_label,
@@ -608,12 +643,78 @@ def _mesh_to_clay_glb(mesh, gen_params: dict):
         roughnessFactor=0.85,
         doubleSided=False if remesh else True,
     )
-    return trimesh.Trimesh(
+    clay = trimesh.Trimesh(
         vertices=vertices_np,
         faces=faces_np,
         process=False,
         visual=trimesh.visual.TextureVisuals(material=material),
     )
+    return _apply_mesh_repair(clay, gen_params)
+
+
+def _apply_mesh_repair(mesh, gen_params: dict):
+    """Optional CPU post-repair after CuMesh clay export (holes gate G2)."""
+    mode = str(gen_params.get("mesh_repair") or "none").strip().lower()
+    if mode in ("", "none", "off", "false"):
+        return mesh
+    verbose = bool(gen_params.get("verbose", True))
+    try:
+        from studio_bridge.mesh_repair import mesh_stats, repair_pymeshlab, repair_voxel
+    except ImportError:
+        from mesh_repair import mesh_stats, repair_pymeshlab, repair_voxel  # type: ignore
+
+    before = mesh_stats(mesh)
+    if verbose:
+        print(f"mesh_repair={mode} before={before}")
+
+    if mode == "voxel":
+        repaired, extra = repair_voxel(
+            mesh,
+            resolution=int(gen_params.get("mesh_repair_resolution") or 256),
+        )
+        if verbose:
+            print(f"mesh_repair voxel extra={extra} after={mesh_stats(repaired)}")
+        return repaired
+    if mode == "trimesh":
+        import trimesh as _trimesh
+
+        repaired = mesh.copy()
+        _trimesh.repair.fix_normals(repaired)
+        try:
+            _trimesh.repair.fill_holes(repaired)
+        except Exception as exc:
+            print(f"WARN: trimesh fill_holes: {exc}")
+        if verbose:
+            print(f"mesh_repair trimesh after={mesh_stats(repaired)}")
+        return repaired
+    if mode == "pymeshlab":
+        import tempfile
+        from pathlib import Path
+
+        try:
+            from studio_bridge.mesh_repair import load_glb_mesh as _load
+        except ImportError:
+            from mesh_repair import load_glb_mesh as _load  # type: ignore
+
+        in_tmp = Path(tempfile.mkstemp(suffix=".glb")[1])
+        out_tmp = Path(tempfile.mkstemp(suffix=".glb")[1])
+        try:
+            mesh.export(in_tmp)
+            repair_pymeshlab(
+                in_tmp,
+                out_tmp,
+                max_hole_size=int(gen_params.get("mesh_repair_max_hole_size") or 5000),
+            )
+            repaired = _load(out_tmp)
+        finally:
+            in_tmp.unlink(missing_ok=True)
+            out_tmp.unlink(missing_ok=True)
+        if verbose:
+            print(f"mesh_repair pymeshlab after={mesh_stats(repaired)}")
+        return repaired
+
+    print(f"WARN: unknown mesh_repair={mode!r}; skipping")
+    return mesh
 
 
 def _mesh_to_glb(mesh, gen_params: dict):
@@ -842,8 +943,57 @@ def _export_glb_with_remesh_fallback(mesh, gen_params: dict, attempts: list) -> 
         return _mesh_to_glb(mesh, soft), soft
 
 
+def _handler_mesh_repair(
+    job_input: dict, repair_mode: str, mesh_url: str, *, job_id: str = ""
+) -> dict:
+    """Fast path: mesh repair without loading TRELLIS (G1/G2 holes gate)."""
+    t0 = time.perf_counter()
+    return_base64 = bool(job_input.get("return_base64", False))
+    job_id = job_id or f"repair-{int(time.time())}"
+    resolution = int(job_input.get("repair_resolution") or job_input.get("resolution") or 256)
+    max_hole_size = int(job_input.get("max_hole_size") or 5000)
+    glb_path: str | None = None
+
+    try:
+        from studio_bridge.mesh_repair import run_repair
+
+        glb_path_str, meta = run_repair(
+            mesh_url,
+            mode=repair_mode,
+            resolution=resolution,
+            max_hole_size=max_hole_size,
+        )
+        glb_path = glb_path_str
+        handler_ms = {"total_ms": int((time.perf_counter() - t0) * 1000)}
+        delivery = _deliver_glb(glb_path, job_id, return_base64=return_base64)
+        return {
+            "status": "success",
+            "message": f"Mesh repair ({repair_mode}) completed",
+            "repair_mode": repair_mode,
+            "repair_meta": meta,
+            "mesh_stats": meta.get("after"),
+            "billing": _runpod_billing_metadata(handler_ms),
+            **delivery,
+        }
+    except Exception as exc:
+        tb = traceback.format_exc()
+        print(f"REPAIR ERROR: {exc}")
+        print(tb)
+        return {"error": f"Mesh repair failed: {exc}", "repair_mode": repair_mode}
+    finally:
+        if glb_path and os.path.exists(glb_path):
+            os.remove(glb_path)
+
+
 def handler(job):
     job_input = job.get("input", {})
+    repair_mode = str(job_input.get("repair_mode") or "").strip().lower()
+    mesh_url = job_input.get("mesh_url") or job_input.get("glb_url")
+    if repair_mode and mesh_url:
+        return _handler_mesh_repair(
+            job_input, repair_mode, str(mesh_url), job_id=str(job.get("id") or "")
+        )
+
     image_urls = _resolve_image_urls(job_input)
     gen_params = _generation_params(job_input)
     return_base64 = bool(job_input.get("return_base64", False))
@@ -876,6 +1026,8 @@ def handler(job):
             f"seed={gen_params['seed']}, "
             f"quality_max={gen_params.get('quality_max')}, "
             f"remesh={gen_params['remesh']}, "
+            f"soft_input={gen_params.get('soft_input')}"
+            f"(strength={gen_params.get('soft_input_strength')}), "
             f"allow_downgrade={gen_params.get('allow_downgrade')}, "
             f"num_images={len(image_urls)}, "
             f"multi_image_mode={gen_params['multi_image_mode'] if len(image_urls) >= 2 else 'n/a'}, "
@@ -888,7 +1040,16 @@ def handler(job):
             print(f"Downloading image[{i}]: {url}")
             path = _download_image(url)
             img_paths.append(path)
-            images.append(Image.open(path))
+            images.append(Image.open(path).convert("RGB"))
+
+        if gen_params.get("soft_input"):
+            strength = float(gen_params.get("soft_input_strength") or 0.75)
+            try:
+                from studio_bridge.soft_input import soften_images
+            except ImportError:
+                from soft_input import soften_images  # type: ignore
+            print(f"Applying soft_input strength={strength} to {len(images)} image(s)")
+            images = soften_images(images, strength=strength)
 
         ladder = _quality_ladder_params(gen_params)
         last_error: BaseException | None = None
