@@ -1,8 +1,9 @@
 # Mid-prop holes gate — мастер-файл проблемы
 
-> **Статус:** 🔴 **BLOCKER** — не возвращаемся к MV2 / основному плану, пока gate не зелёный.  
+> **Статус:** 🟢 **CLOSED** (2026-08-07) — soft_input на T2 v16; mid-prop chest GO глазами.  
 > **Создан:** 2026-08-05 (Pedrokita)  
-> **Связь:** `activeContext.md` § G0–G3; research R1; P2 CuMesh уже недостаточен.
+> **Связь:** `activeContext.md`; research R1; P2 CuMesh недостаточен → **G1d soft-norm** = win.  
+> **После close:** resume **MV2** Wonder3D (`scripts/wonder3d_mv2_spike.md`).
 
 ---
 
@@ -159,6 +160,7 @@
 |------|-----|
 | 2026-08-05 | Проблема сформулирована: mid-prop hole gate; docs/issues; MV2 paused |
 | 2026-08-07 | **G1e eyes (agent+Pedrokita):** lattice raw = **2425 components**, «рассыпанные» прутья; soft75 = куб-решётка лучше, но не чистая cage. **Вывод:** T2 плохо держит intentional open mesh; soft ≠ убийца сетки в первую очередь — лимит модели. Soft остаётся для mid-prop с ложными щелями (chest). |
+| 2026-08-07 | **GATE 🟢 CLOSED.** Soft live `trellis2-sha-91f8441` / endpoint v16; `model-chest-soft-worker-v16.glb` глаза OK. Stale-worker after deploy = ops checklist (heal). → **MV2**. |
 | 2026-08-07 | **G1d soft75 = 🟢 GO глазами (Pedrokita):** ни одной сквозной дыры, сложные зоны OK, clay smooth. `model-chest-soft75-quality.glb`. Гипотеза «дыры = тёмные борозды/тени на входе» подтверждена. |
 | 2026-08-07 | **G1d soft75 smoke ✅** (~$0.10): `model-chest-soft75-quality.glb` — worker quality, seed42. Metrics: **watertight=True, boundary=0** (vs P2b ultra boundary=236). Aesthetic vs baseline — **глаза**. |
 | 2026-08-07 | **G1b voxel REJECTED** глазами: watertight OK, но Minecraft/pixel clay — **не SaaS bar**. Gate = smooth clay без сквозных щелей. Дальше: soft-input A/B → MV2 → G4/Meshlib. |

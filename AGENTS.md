@@ -8,10 +8,12 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 ## С чего начать
 
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
-2. `@memory-bank/cursor-shpargalka.md` — полная шпаргалка по Cursor и памяти
-3. `@memory-bank/teamWorkflow.md` — синхронизация двух разработчиков через git
-4. `@memory-bank/techContext.md` — API, RunPod, карта файлов
-5. `@memory-bank/systemPatterns.md` — архитектура и решения
+2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
+3. `@memory-bank/cursor-shpargalka.md` — полная шпаргалка по Cursor и памяти
+4. `@memory-bank/teamWorkflow.md` — синхронизация двух разработчиков через git
+5. `@memory-bank/techContext.md` — API, RunPod, карта файлов
+6. `@memory-bank/systemPatterns.md` — архитектура и решения
+7. **`@scripts/wonder3d_mv2_spike.md`** — **MV2** текущий фокус (1 photo → 6 views → T2)
 
 ## Команды
 
@@ -37,7 +39,9 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | Файл | Назначение |
 |------|------------|
 | `memory-bank/projectbrief.md` | Зачем существует проект |
+| `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
 | `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
+| `scripts/wonder3d_mv2_spike.md` | **MV2** Wonder3D (🔄 current) |
 | `scripts/mvadapter_w2_spike.md` | Чеклист Pod smoke `texture_i2tex` |
 | `Dockerfile.mvadapter` | MV-Adapter texture worker image |
 | `worker_mvadapter.py` | RunPod handler: mesh+image → MV-Adapter textured GLB |

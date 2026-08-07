@@ -4,38 +4,32 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-07** — 🟢 soft GO (chest); lattice = industry limit (Meshy too); **next: productize soft → MV2**
+Последнее обновление: **2026-08-07** — 🟢 **mid-prop holes gate CLOSED** (soft v16); **фокус = MV2 Wonder3D**
 
 ---
 
-## 🟢 G1d WIN — soft-input (2026-08-07)
+## 🟢 Mid-prop holes gate — CLOSED (2026-08-07)
 
 | | |
 |--|--|
-| **Что** | Слегка залили тёмные борозды/тени на PNG (`ref_chest_soft75.png`, strength=0.75) → обычный T2 `quality` clay |
-| **Артефакт** | `model-chest-soft75-quality.glb` (~$0.10) |
-| **Метрики** | watertight=True, boundary=0 |
-| **Глаза Pedrokita** | **превосходно** — нет сквозных дыр даже в сложных местах |
-| **Вывод** | Дыры mid-prop часто = **входной shading** (щели досок, глубокие тени), не «рандом модели» |
-| **Не** | voxel (❌ aesthetic); не меняли T2 knobs |
+| **Win** | `soft_input` на T2 (strength 0.75) — chest без сквозных дыр, clay smooth |
+| **Live** | image `trellis2-sha-91f8441`, endpoint **v16** |
+| **Артефакт глаз** | `model-chest-soft-worker-v16.glb` — Pedrokita: **замечательно** |
+| **Не путь** | voxel (Minecraft), CuMesh knobs alone, trimesh fill |
+| **Lattice/open** | industry limit (Meshy тоже плёнки) — best-effort, не блокер |
+| **Ops** | после deploy: recycle workers (stale idle); echo `generation.soft_input` |
 
-### G1e lattice (контроль) + Meshy
+Мастер: `memory-bank/midPropHolesGate.md` (исторический канон; статус 🟢).
 
-| | |
-|--|--|
-| Наш T2 | open mesh слабо (raw крошка / soft куб-решётка) |
-| Meshy 6 | тоже плёнки в ячейках — **общая боль индустрии** |
-| Политика | open/lattice = best-effort / later; **не** блокер mid-prop gate |
-
-### План дальше ( Pedrokita GO 2026-08-07)
+### План дальше
 
 | # | Шаг | Статус |
 |---|-----|--------|
-| 1 | **Productize soft-norm** в worker (`soft_input` / preprocess) + CLI | ⏭ **сейчас** |
-| 2 | Smoke на 1–2 других mid-prop (не cage) | ⏸ |
-| 3 | **MV2** Wonder3D 1→6 → T2 `image_urls` (короткий pod + terminate) | ⏸ after 1 |
-| 4 | Лёгкие режимы позже: `solid` (soft on) / `character` (soft off) — не 20 SKU | ⏸ |
-| ❌ | voxel prod, per-asset «сундук», open-mesh как MVP gate | — |
+| ✅ | Soft productize + deploy + smoke | done |
+| 🔄 | **MV2** Wonder3D 1→6 RGB → T2 `image_urls` | **сейчас** |
+| ⏸ | MV3 wrap API / Studio | after MV2 GO |
+| ⏸ | Режимы `solid`/`character` (soft on/off) | later |
+| ❌ | voxel prod, per-SKU presets | — |
 
 ## ⚠ INCIDENT 2026-08-06 — забытый pod
 
@@ -43,15 +37,12 @@
 |--|--|
 | Pod | `dynmbd1jzzvd04` (`paradox-g1c-holes`, 4090 ~$0.74/ч) |
 | Что случилось | SSH fail → pod оставили RUNNING → деньги сгорели |
-| Сейчас | **terminate OK**, RUNNING pods **нет** |
 | **Правило** | Любой pod: **terminate в той же сессии**, даже если smoke не прошёл |
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --list
 .\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --terminate <pod_id>
 ```
-
-**Баланс 2026-08-07:** +$19. **G1b voxel = aesthetic NO-GO.** Идём soft-input → MV2; pod только для Wonder3D spike + terminate.
 
 ## Кто работал последним
 
@@ -60,38 +51,31 @@
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | 🔴 holes gate — **не voxel**; soft-input A/B → MV2 |
+| Фокус | 🔄 **MV2 Wonder3D** (holes gate 🟢) |
 
-### 🔴 BLOCKER: mid-prop без явных дыр (Pedrokita GO 2026-08-05)
+### 🔄 MV2 — сейчас
 
 | | |
 |--|--|
-| **Суть** | На компактных mid-prop T2 даёт сквозные дыры; SaaS так не делает → **fail продукта** |
-| **Не** | preset «сундук»; voxel Minecraft; только knobs |
-| **Мастер-файл** | **`memory-bank/midPropHolesGate.md`** ← канон + decision matrix §5.2 |
-| **Repro** | chest / `model-chest-p2b-ultra.glb` |
-| **После 🟢** | resume MV2 (если ещё не) → MV3… |
+| **Цель** | 1 user photo → Wonder3D 6 RGB views → T2 multi (`image_urls`) |
+| **Spike** | `scripts/wonder3d_mv2_spike.md` |
+| **Не** | Wonder3D mesh как product shape; Era3D (AGPL) |
+| **Ops** | короткий GPU pod + **terminate сразу**; бюджет беречь (~$19) |
+
+| # | Шаг MV2 | Статус |
+|---|---------|--------|
+| 1 | Pod oneshot Wonder3D → 6 views (armor + chest) | 🔄 |
+| 2 | Eyes consistency F/L/R/B | ⏸ |
+| 3 | Optional: views → T2 multi smoke | ⏸ |
+| 4 | Verdict GO/NO-GO → MV3 | ⏸ |
+
+### Holes gate (архив статуса)
 
 | # | Шаг | Статус |
 |---|-----|--------|
-| **G0** | Docs/issues + gate + мастер-файл | ✅ |
-| **G1a** | trimesh fill | ✅ no-op |
-| **G1b** | voxel solidify | ❌ **REJECTED** (pixel clay) |
-| **G1d** | soft-input PNG → T2 | ✅ **GO** (chest) |
-| **G1e** | intentional lattice A/B | ✅ done — industry limit |
-| **G2** | soft-norm в worker (не voxel) | ✅ code (`soft_input`) — deploy pending |
-| **MV2** | Wonder3D 1→6 → T2 | ⏭ after G2 |
-| **G4** | visibility / Meshlib | ⏸ last resort |
-
-**Пауза:** MV3–MV6, P3, X*, H0. Pod только MV2 oneshot + terminate.
-
-### Что делаем прямо сейчас
-
-| # | Действие | Статус |
-|---|----------|--------|
-| 1 | Soft productize в `worker_trellis2.py` | ✅ `soft_input` + `soft_input_strength` |
-| 2 | Deploy + smoke chest with `--soft-input` | ⏭ need commit/CI |
-| 3 | MV2 spike | ⏸ |
+| **G0–G1e** | research / fill / voxel / soft / lattice | ✅ closed |
+| **G2** | soft in worker + deploy v16 | ✅ |
+| **G3** | eyes soft worker | ✅ GO |
 
 ### Prod policy (как у крупных 3D SaaS) — GO 2026-08-04, live 2026-08-05
 
@@ -105,7 +89,7 @@
 | Выключить | `allow_downgrade=false` / CLI `--no-downgrade` |
 | UX Studio | не показывать CUDA OOM; «качество снижено» если downgraded |
 | Hi3DGen | после T2+texture |
-| **Mid-prop holes** | 🔴 blocker → `midPropHolesGate.md` |
+| **Mid-prop holes** | 🟢 closed (soft_input v16) → `midPropHolesGate.md` |
 
 **Smoke 2026-08-05:** armor `ultra` ✅; chest P2b live но **дыры** → gate. Deploy: `trellis2-sha-4c24928` v15.
 
