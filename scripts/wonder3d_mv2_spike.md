@@ -120,13 +120,15 @@ Normals: keep for later (mesh refine / debug); **v1 product path = RGB → T2**.
 ## Ops (reuse W2 pattern)
 
 ```powershell
-# Create cheap GPU pod when ready (do not leave running):
-.\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --create --name paradox-wonder3d-mv2
+# Preferred: create → oneshot → download → terminate (always):
+.\.venv\Scripts\python.exe scripts\wonder3d_mv2_pod.py
+
+# Manual / Web Terminal only (still terminate same session):
+.\.venv\Scripts\python.exe scripts\wonder3d_mv2_pod.py --no-run
+.\.venv\Scripts\python.exe scripts\mvadapter_create_pod.py --terminate <pod_id>
 ```
 
-Or dedicated script later: `scripts/wonder3d_create_pod.py` if W2 helper is too MV-Adapter-specific.
-
-Download views via pod HTTP `python -m http.server` (gateway SSH has no SCP) — same as W2.
+Uses public `runpod/pytorch` (no GHCR). Download views via SCP after DONE, or HTTP `python -m http.server 8888` on pod.
 
 ---
 
