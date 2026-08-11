@@ -9,11 +9,18 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
 2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
-3. `@memory-bank/cursor-shpargalka.md` — полная шпаргалка по Cursor и памяти
-4. `@memory-bank/teamWorkflow.md` — синхронизация двух разработчиков через git
-5. `@memory-bank/techContext.md` — API, RunPod, карта файлов
-6. `@memory-bank/systemPatterns.md` — архитектура и решения
-7. **`@scripts/wonder3d_mv2_spike.md`** — **MV2** текущий фокус (1 photo → 6 views → T2)
+3. **`@memory-bank/t2FinishPlan.md`** — **дожим T2** (prod recipe, side/back pass, tex; Hi3DGen после)
+4. **`@memory-bank/sideBackUnblock.md`** — Side/Back после тупика (A/B/C; C1 abort)
+5. **`@memory-bank/postSideBackPlan.md`** — **roadmap после тупика** (P1 UX → P2 tex → P3 freeze → P4 Hi3DGen)
+6. **`@memory-bank/reconViaGenMvRefiner.md`** — **D-track MASTER:** ReconViaGen + умный fusion (vs naive T2)
+7. **`@memory-bank/multiViewFusionResearch.md`** — multi-view series ↔ 3D fusion (research)
+8. **`@memory-bank/productMultiUx.md`** — **путь A:** честный 1-фото + слоты реальных ракурсов (spec)
+9. **`@memory-bank/synthMultiViewProd.md`** — synth MV→shape MIT path (🔴 NO-GO; audit only)
+10. `@memory-bank/cursor-shpargalka.md` — полная шпаргалка по Cursor и памяти
+11. `@memory-bank/teamWorkflow.md` — синхронизация двух разработчиков через git
+12. `@memory-bank/techContext.md` — API, RunPod, карта файлов
+13. `@memory-bank/systemPatterns.md` — архитектура и решения
+14. **`@scripts/unique3d_mv2b_spike.md`** — MV2b Unique3D spike (views); prod gate → `synthMultiViewProd.md`
 
 ## Команды
 
@@ -26,6 +33,7 @@ python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 
 python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v2 MV-Adapter (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier preview
+python scripts/reconviagen_hf_smoke.py --image path1.png --image path2.png --save out.glb
 python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
@@ -40,8 +48,16 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 |------|------------|
 | `memory-bank/projectbrief.md` | Зачем существует проект |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
+| `memory-bank/t2FinishPlan.md` | **Дожим TRELLIS.2** (T0–T5; Hi3DGen после) |
+| `memory-bank/sideBackUnblock.md` | **Side/Back unblock** — A/B/C после тупика MIT→T2 |
+| `memory-bank/postSideBackPlan.md` | **Roadmap после тупика** (P1–P4) |
+| `memory-bank/reconViaGenMvRefiner.md` | **D-track MASTER:** ReconViaGen integration + smart fusion |
+| `memory-bank/multiViewFusionResearch.md` | **Research:** multi-view series ↔ 3D fusion (T2/Meshy/papers) |
+| `memory-bank/productMultiUx.md` | **Путь A:** честный 1-фото + реальные ракурсы (Studio UX spec) |
+| `memory-bank/synthMultiViewProd.md` | Synth MV→shape (🔴 NO-GO MIT path) |
 | `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
-| `scripts/wonder3d_mv2_spike.md` | **MV2** Wonder3D (🔄 current) |
+| `scripts/wonder3d_mv2_spike.md` | MV2 Wonder3D (soft-NO-GO 2026-08-07) |
+| `scripts/unique3d_mv2b_spike.md` | **MV2b** Unique3D MIT (🔄 criteria freeze) |
 | `scripts/mvadapter_w2_spike.md` | Чеклист Pod smoke `texture_i2tex` |
 | `Dockerfile.mvadapter` | MV-Adapter texture worker image |
 | `worker_mvadapter.py` | RunPod handler: mesh+image → MV-Adapter textured GLB |
