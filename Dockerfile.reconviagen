@@ -6,6 +6,7 @@
 # - o-voxel --no-deps (avoid torch override)
 # - triton>=3.2 before flex_gemm (flex_gemm requires it; torch 2.4 bundles 3.0)
 # - o-voxel path: wheels/TRELLIS.2/o-voxel (not repo root)
+# - pillow-simd: skip in Docker (source build); use Pillow from pip wheels
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
@@ -38,6 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libjpeg-dev \
     libpng-dev \
+    zlib1g-dev \
+    libwebp-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libglvnd0 \
@@ -66,12 +69,20 @@ RUN rm -rf /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen && \
 
 RUN pip install --no-cache-dir \
     imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy scikit-image ninja \
-    rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
-    kornia==0.8.2 "transformers==5.3.0" zstandard pillow-simd rtree fast-simplification \
+    rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph lpips \
+    kornia==0.8.2 "transformers==5.3.0" zstandard rtree fast-simplification \
     einops safetensors filelock plyfile timm && \
     pip install --no-cache-dir \
-      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
-    pip install --no-cache-dir xformers==0.0.27.post2 \
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+
+# open3d-cpu + headless patch (same as Dockerfile.mvadapter; buildx has no libcuda).
+COPY docker/patch_open3d_headless.py /tmp/patch_open3d_headless.py
+COPY docker/open3d_headless_init.py /tmp/open3d_headless_init.py
+RUN pip install --no-cache-dir --no-deps "open3d-cpu==0.18.0" && \
+    python /tmp/patch_open3d_headless.py
+
+# Pillow already installed (line 55); skip pillow-simd — no wheels, CI zlib build fails.
+RUN pip install --no-cache-dir xformers==0.0.27.post2 \
       --index-url https://download.pytorch.org/whl/cu121
 
 RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
