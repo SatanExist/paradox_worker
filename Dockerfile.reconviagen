@@ -62,11 +62,6 @@ RUN git clone --recursive -b v0.5 --depth 1 \
     https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen.git /app/ReconViaGen && \
     ln -sfn wheels/TRELLIS.2/o-voxel /app/ReconViaGen/o-voxel
 
-# o-voxel eigen (shallow clone breaks submodule init).
-RUN rm -rf /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen && \
-    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
-      /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen
-
 RUN pip install --no-cache-dir \
     imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy scikit-image ninja \
     rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph lpips \
@@ -107,7 +102,15 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
     rm -rf /tmp/FlexGEMM
 
 # Do not let o-voxel setup.py pull a different torch (D3 lesson).
-RUN pip install --no-cache-dir --no-build-isolation --no-deps \
+# RVG vendored o-voxel ships stale build/ + egg-info (not in upstream TRELLIS.2); eigen submodule empty on shallow clone.
+RUN rm -rf /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen \
+           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/build \
+           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/o_voxel.egg-info && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen && \
+    test -f /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/src/ext.cpp && \
+    test -f /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen/Eigen/Core && \
+    pip install --no-cache-dir --no-build-isolation --no-deps \
     /app/ReconViaGen/wheels/TRELLIS.2/o-voxel
 
 RUN pip install --no-cache-dir spconv-cu120 && \
