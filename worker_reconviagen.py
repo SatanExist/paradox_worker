@@ -22,6 +22,8 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("SPCONV_ALGO", "native")
 os.environ.setdefault("XFORMERS_DISABLED", "1")
+os.environ.setdefault("ATTN_BACKEND", "flash_attn")
+os.environ.setdefault("SPARSE_ATTN_BACKEND", "flash_attn")
 os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface_cache")
 
 RVG_REPO = Path(os.environ.get("RVG_REPO", "/app/ReconViaGen"))

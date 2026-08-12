@@ -8,6 +8,7 @@
 # - huggingface_hub==1.7.2 (not 0.33.4) for transformers==5.3.0
 # - o-voxel: isolated stage (no ReconViaGen on disk during compile)
 # - triton>=3.2 before flex_gemm
+# - flash-attn: NEVER compile on GHA (OOM); use Dao-AILab prebuilt wheel for torch2.6+cu12+cp311
 # - pillow-simd: skip (no wheels on py3.11)
 
 # ── Stage 1: o-voxel (mirror Dockerfile.trellis2 extension stack) ──
@@ -72,6 +73,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     SPCONV_ALGO=native \
     XFORMERS_DISABLED=1 \
+    ATTN_BACKEND=flash_attn \
+    SPARSE_ATTN_BACKEND=flash_attn \
     HF_HOME=/runpod-volume/huggingface_cache \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
 
@@ -160,18 +163,19 @@ RUN pip install --no-cache-dir spconv-cu121==2.3.8
 RUN pip install --no-cache-dir --no-deps \
     https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.6.0_cu124/kaolin-0.18.0-cp311-cp311-linux_x86_64.whl
 
-RUN pip install --no-cache-dir --no-build-isolation flash-attn==2.7.0.post2
-
+# Never compile flash-attn on GHA — OOM / runner disconnect. Prebuilt after final torch pin.
 RUN git clone --recurse-submodules --depth 1 \
     https://github.com/autonomousvision/mip-splatting.git /tmp/mip-splatting && \
-    pip install --no-cache-dir --no-build-isolation \
+    MAX_JOBS=1 pip install --no-cache-dir --no-build-isolation \
       /tmp/mip-splatting/submodules/diff-gaussian-rasterization/ && \
     rm -rf /tmp/mip-splatting
 
 RUN pip install --no-cache-dir --force-reinstall \
       torch==2.6.0 torchvision==0.21.0 \
       --index-url https://download.pytorch.org/whl/cu124 && \
-    pip install --no-cache-dir "triton>=3.2.0"
+    pip install --no-cache-dir "triton>=3.2.0" && \
+    pip install --no-cache-dir \
+      https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 COPY docker/smoke_reconviagen_imports.py /tmp/smoke_reconviagen_imports.py
 RUN python /tmp/smoke_reconviagen_imports.py
