@@ -156,7 +156,8 @@ RUN git clone --recursive -b v0.5 --depth 1 \
 # spconv-cu120 JIT breaks on torch 2.6+cu124 (cumm compile); cu121 wheel OK (spconv#743).
 RUN pip install --no-cache-dir spconv-cu121==2.3.8
 
-RUN pip install --no-cache-dir \
+# kaolin METADATA pulls usd-core + jupyter (CI fail); wheel is prebuilt for torch2.6/cu124.
+RUN pip install --no-cache-dir --no-deps \
     https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.6.0_cu124/kaolin-0.18.0-cp311-cp311-linux_x86_64.whl
 
 RUN pip install --no-cache-dir --no-build-isolation flash-attn==2.7.0.post2
