@@ -12,8 +12,8 @@ os.environ.setdefault("XFORMERS_DISABLED", "1")
 os.environ.setdefault("SPCONV_ALGO", "native")
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-os.environ.setdefault("ATTN_BACKEND", "flash_attn")
-os.environ.setdefault("SPARSE_ATTN_BACKEND", "flash_attn")
+os.environ.setdefault("ATTN_BACKEND", "sdpa")
+os.environ.setdefault("SPARSE_ATTN_BACKEND", "xformers")
 
 RVG = pathlib.Path(os.environ.get("RVG_REPO", "/app/ReconViaGen"))
 TRELLIS2 = RVG / "wheels" / "TRELLIS.2"
@@ -21,12 +21,12 @@ for p in (str(TRELLIS2), str(RVG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# No flash_attn — GHA cannot compile/host it; sdpa+xformers like trellis2.
 BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
     ("cumesh", "cumesh"),
     ("flex_gemm", "flex_gemm"),
     ("o_voxel", "o_voxel"),
     ("xformers", "xformers"),
-    ("flash_attn", "flash_attn"),
     ("spconv", "spconv"),
     ("kaolin", "kaolin"),
 )

@@ -1,71 +1,21 @@
-# ReconViaGen v0.5 hybrid pipeline — CUDA 12.4 base, PyTorch 2.6 cu124.
+# ReconViaGen v0.5 hybrid — CUDA 12.4, PyTorch 2.6 cu124.
 # Tags: ghcr.io/satanexist/paradox_worker:reconviagen-sha-<short>
 #
-# Torch 2.6 cu124: required for o-voxel CUDA compile (CI-proven in Dockerfile.trellis2).
-# RVG upstream setup.sh pins 2.4; Docker aligns extension stack with TRELLIS.2.
+# GHA survival (ubuntu-latest ~7GB RAM):
+# - Single stage (no multi-stage double CUDA compile)
+# - Match Dockerfile.trellis2 extension order (proven green)
+# - No flash-attn compile/wheel (180MB+); ATTN=sdpa + SPARSE=xformers
+# - No mip-splatting (gaussian render optional; GLB path uses o_voxel)
+# - ReconViaGen clone WITHOUT --recursive (dust3r/vggt blow disk/RAM)
 #
-# Lessons from D3 pod:
-# - huggingface_hub==1.7.2 (not 0.33.4) for transformers==5.3.0
-# - o-voxel: isolated stage (no ReconViaGen on disk during compile)
-# - triton>=3.2 before flex_gemm
-# - flash-attn: NEVER compile on GHA (OOM); use Dao-AILab prebuilt wheel for torch2.6+cu12+cp311
-# - pillow-simd: skip (no wheels on py3.11)
+# Torch 2.6 cu124: required for o-voxel (CI-proven in Dockerfile.trellis2).
 
-# ── Stage 1: o-voxel (mirror Dockerfile.trellis2 extension stack) ──
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 AS ovoxel-builder
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    CUDA_HOME=/usr/local/cuda \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64 \
-    MAX_JOBS=1 \
-    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
-
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-      torch==2.6.0 torchvision==0.21.0 \
-      --index-url https://download.pytorch.org/whl/cu124
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    cmake \
-    ninja-build \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /build/TRELLIS.2 && \
-    rm -rf /build/TRELLIS.2/o-voxel/third_party/eigen && \
-    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
-      /build/TRELLIS.2/o-voxel/third_party/eigen
-
-RUN pip install --no-cache-dir \
-    numpy easydict plyfile trimesh tqdm zstandard scipy ninja
-
-RUN git clone --depth 1 https://github.com/JeffreyXiang/CuMesh.git /tmp/CuMesh && \
-    rm -rf /tmp/CuMesh/third_party/cubvh && \
-    git clone --depth 1 --branch trellis.2 https://github.com/JeffreyXiang/cubvh.git /tmp/CuMesh/third_party/cubvh && \
-    rm -rf /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
-    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
-      /tmp/CuMesh/third_party/cubvh/third_party/eigen && \
-    pip install --no-cache-dir --no-build-isolation /tmp/CuMesh && \
-    rm -rf /tmp/CuMesh
-
-RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGEMM && \
-    pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
-    rm -rf /tmp/FlexGEMM
-
-RUN pip install --no-cache-dir --no-build-isolation --no-deps /build/TRELLIS.2/o-voxel && \
-    python -c "import importlib.util; s=importlib.util.find_spec('o_voxel'); assert s; print('o_voxel', s.origin)" && \
-    mkdir -p /export/dist-packages && \
-    cp -r /usr/local/lib/python3.11/dist-packages/o_voxel /export/dist-packages/ && \
-    cp -r /usr/local/lib/python3.11/dist-packages/o_voxel-*.dist-info /export/dist-packages/
-
-# ── Stage 2: ReconViaGen runtime image ──
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64 \
-    MAX_JOBS=2 \
+    MAX_JOBS=1 \
     PYOPENGL_PLATFORM=egl \
     RVG_REPO=/app/ReconViaGen \
     PYTHONPATH=/app/ReconViaGen:/app/ReconViaGen/wheels/TRELLIS.2 \
@@ -73,8 +23,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     SPCONV_ALGO=native \
     XFORMERS_DISABLED=1 \
-    ATTN_BACKEND=flash_attn \
-    SPARSE_ATTN_BACKEND=flash_attn \
+    ATTN_BACKEND=sdpa \
+    SPARSE_ATTN_BACKEND=xformers \
+    SPARSE_CONV_BACKEND=flex_gemm \
     HF_HOME=/runpod-volume/huggingface_cache \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9+PTX"
 
@@ -95,7 +46,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     zlib1g-dev \
     libwebp-dev \
-    libeigen3-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libglvnd0 \
@@ -112,23 +62,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub==1.7.2 boto3
 
+# ReconViaGen v0.5 — shallow, no recursive submodules (GHA disk/RAM).
+RUN git clone -b v0.5 --depth 1 --single-branch \
+    https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen.git /app/ReconViaGen && \
+    ln -sfn wheels/TRELLIS.2/o-voxel /app/ReconViaGen/o-voxel && \
+    test -d /app/ReconViaGen/wheels/TRELLIS.2 && \
+    test -d /app/ReconViaGen/trellis && \
+    rm -rf /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen \
+           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/build \
+           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/o_voxel.egg-info && \
+    mkdir -p /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen
+
 RUN pip install --no-cache-dir \
     numpy \
-    imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy scikit-image ninja \
-    rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph lpips \
-    kornia==0.8.2 "transformers==5.3.0" zstandard rtree fast-simplification \
-    einops safetensors filelock plyfile timm && \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh scipy scikit-image \
+    rembg onnxruntime xatlas pyvista pymeshfix igraph lpips zstandard rtree fast-simplification \
+    kornia==0.8.2 "transformers==5.3.0" einops safetensors filelock plyfile timm && \
     pip install --no-cache-dir \
-      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
+    pip install --no-cache-dir xformers==0.0.29.post3 \
+      --index-url https://download.pytorch.org/whl/cu124
 
 COPY docker/patch_open3d_headless.py /tmp/patch_open3d_headless.py
 COPY docker/open3d_headless_init.py /tmp/open3d_headless_init.py
 RUN pip install --no-cache-dir --no-deps "open3d-cpu==0.18.0" && \
     python /tmp/patch_open3d_headless.py
 
-RUN pip install --no-cache-dir xformers==0.0.29.post3 \
-      --index-url https://download.pytorch.org/whl/cu124
-
+# Extension stack — same order as Dockerfile.trellis2 (GHA-proven).
 RUN git clone -b v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast && \
     pip install --no-cache-dir --no-build-isolation /tmp/nvdiffrast && \
     rm -rf /tmp/nvdiffrast
@@ -150,32 +112,17 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
     pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
     rm -rf /tmp/FlexGEMM
 
-COPY --from=ovoxel-builder /export/dist-packages/ /usr/local/lib/python3.11/dist-packages/
+# Prefer clean microsoft o-voxel if RVG vendored tree is polluted; else RVG path.
+RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /tmp/t2ov && \
+    rm -rf /tmp/t2ov/o-voxel/third_party/eigen && \
+    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
+      /tmp/t2ov/o-voxel/third_party/eigen && \
+    pip install --no-cache-dir --no-build-isolation --no-deps /tmp/t2ov/o-voxel && \
+    rm -rf /tmp/t2ov
 
-RUN git clone --recursive -b v0.5 --depth 1 \
-    https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen.git /app/ReconViaGen && \
-    ln -sfn wheels/TRELLIS.2/o-voxel /app/ReconViaGen/o-voxel
-
-# spconv-cu120 JIT breaks on torch 2.6+cu124 (cumm compile); cu121 wheel OK (spconv#743).
-RUN pip install --no-cache-dir spconv-cu121==2.3.8
-
-# kaolin METADATA pulls usd-core + jupyter (CI fail); wheel is prebuilt for torch2.6/cu124.
-RUN pip install --no-cache-dir --no-deps \
-    https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.6.0_cu124/kaolin-0.18.0-cp311-cp311-linux_x86_64.whl
-
-# Never compile flash-attn on GHA — OOM / runner disconnect. Prebuilt after final torch pin.
-RUN git clone --recurse-submodules --depth 1 \
-    https://github.com/autonomousvision/mip-splatting.git /tmp/mip-splatting && \
-    MAX_JOBS=1 pip install --no-cache-dir --no-build-isolation \
-      /tmp/mip-splatting/submodules/diff-gaussian-rasterization/ && \
-    rm -rf /tmp/mip-splatting
-
-RUN pip install --no-cache-dir --force-reinstall \
-      torch==2.6.0 torchvision==0.21.0 \
-      --index-url https://download.pytorch.org/whl/cu124 && \
-    pip install --no-cache-dir "triton>=3.2.0" && \
-    pip install --no-cache-dir \
-      https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+RUN pip install --no-cache-dir spconv-cu121==2.3.8 && \
+    pip install --no-cache-dir --no-deps \
+      https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.6.0_cu124/kaolin-0.18.0-cp311-cp311-linux_x86_64.whl
 
 COPY docker/smoke_reconviagen_imports.py /tmp/smoke_reconviagen_imports.py
 RUN python /tmp/smoke_reconviagen_imports.py
