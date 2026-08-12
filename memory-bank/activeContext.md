@@ -4,21 +4,22 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-11** — D-track MASTER `reconViaGenMvRefiner.md`; HF eyes ОГО; интеграция = отдельный engine
+Последнее обновление: **2026-08-12** — D4 scaffold готов; next = commit + CI build
 
 ---
 
-## 🟢 D-track MASTER — ReconViaGen (2026-08-11)
+## 🟡 D-track MASTER — ReconViaGen (2026-08-12)
 
 | | |
 |--|--|
 | **Мастер задачи** | `memory-bank/reconViaGenMvRefiner.md` |
-| **Статус** | 🟢 HOT — HF eyes GO-ish; naive T2 multi 🔴 closed |
-| **Eyes** | Pedrokita «ОГО» — sharp side/back, 1 меч, PBR |
-| **Screens** | `preview_textures/reconviagen/r_eyes_*.png` |
-| **Prod plan** | отдельный ReconViaGen endpoint; T2 ultra остаётся 1-photo default |
-| **Smoke** | `scripts/reconviagen_hf_smoke.py` |
-| **Next** | D2: GLB + A/B vs Armor ultra → D3 pod |
+| **Статус** | HF eyes 🟢 GO-ish; D3 pod 🔴 ABORT; **D4 scaffold** 🟡 IN PROGRESS |
+| **Правило ops** | Тяжёлые стеки → **Dockerfile + CI**, не голый pod+setup.sh |
+| **Архитектура prod** | **Отдельный endpoint** `worker_reconviagen`; T2 ultra = default 1-photo |
+| **D4 фазы** | scaffold → **CI build** → pod smoke F+B → endpoint + bridge tier |
+| **Параллельно** | P1 Studio UX (слоты, честный copy) — без GPU, не блокирует D4 |
+| **Не делать** | monolith в `Dockerfile.trellis2`; HF API prod; второй голый pod |
+| **Next** | push → `build-reconviagen.yml` green → smoke Armor F+B на image |
 
 ---
 
@@ -146,7 +147,7 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** (`postSideBackPlan
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | T2 finish: **P0 user multi** → P1 ReconViaGen; pod `lcngfljlglwtoz` EXITED |
+| Фокус | **D4** `Dockerfile.reconviagen` + worker + CI; перспективный план в memory |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -376,6 +377,9 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-08-12 | **D4 план в memory:** отдельный endpoint; CI gate → smoke A/B → tier; P1 UX параллельно; scaffold Dockerfile+worker+CI |
+| 2026-08-11 | **D3 ABORT** pod terminate; правило Dockerfile; next D4 image. HF eyes всё ещё GO. |
+| 2026-08-11 | **D3 pod hell** → правило: тяжёлые стеки **только через Dockerfile**, не голый pod+setup.sh. Дожимаем текущий pod для GLB; prod = D4 image. |
 | 2026-08-11 | **D-track MASTER:** `reconViaGenMvRefiner.md` — naive T2 multi closed; prod = отдельный RVG endpoint; HF eyes ОГО; D2→D4 roadmap |
 | 2026-08-05 | **BLOCKER mid-prop holes:** мастер `midPropHolesGate.md`; MV2 paused; G1a fill no-op (236 boundary edges). |
 | 2026-08-05 | **R1 research:** HF small-holes; нет per-asset presets; chest «проще глазу» ≠ проще T2; +P2c later. |
@@ -872,6 +876,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-12 | Pedrokita | D4 scaffold: `Dockerfile.reconviagen`, worker, smoke, CI workflow; перспективный план в memory | push → CI green → pod smoke F+B |
 | 2026-08-11 | Pedrokita | D-track MASTER `reconViaGenMvRefiner.md`; HF eyes ОГО; naive multi closed; prod=RVG endpoint; smoke script | D2 GLB + A/B; D3 pod |
 | 2026-08-03 | Pedrokita | Front best+метрики; knobs code; чеклист шагов 0–5; tokens=same | Шаг 0 commit/push/release |
 | 2026-08-03 | Pedrokita | Front матрица: best=1536+remesh+700k+steps50; табард каша; seeds⏸; memory обновлена | Таблица остатка → tokens98k или Hi3DGen |

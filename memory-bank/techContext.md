@@ -18,9 +18,11 @@
 |------|------------|
 | `worker.py` | RunPod handler v1: картинка → TRELLIS → GLB → base64 |
 | `worker_trellis2.py` | Quality: TRELLIS.2 → GLB на volume / R2 / base64 (cap) |
+| `worker_reconviagen.py` | Multi-view: ReconViaGen v0.5 hybrid → GLB (отдельный endpoint) |
 | `worker_texture.py` | Texture v1: mesh+image → `Trellis2TexturingPipeline` → GLB |
 | `Dockerfile` | v1 контейнер (CUDA 11.8) |
 | `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
+| `Dockerfile.reconviagen` | ReconViaGen v0.5 hybrid (CUDA 12.4, torch 2.4 cu121, triton≥3.2, extensions) |
 | `Dockerfile.texture` | mesh paint (тот же стек, CMD → `worker_texture.py`) |
 | `worker_mvadapter.py` | MV-Adapter texture: mesh+image → `texture_i2tex` subprocess → R2 GLB |
 | `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |
@@ -34,7 +36,9 @@
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
 | `scripts/studio_api.py` | POC HTTP API: `POST/GET /api/jobs` для Studio |
-| `scripts/studio_smoke.py` | Smoke без HTTP (image/text → RunPod poll) |
+| `scripts/reconviagen_infer.py` | Headless RVG infer (pod smoke / local with GPU) |
+| `scripts/reconviagen_hf_smoke.py` | HF Space API smoke (eyes only; не prod) |
+| `docker/smoke_reconviagen_imports.py` | Build-time import/.so checks для `Dockerfile.reconviagen` |
 | `studio_bridge/` | Tier mapping + normalize status + text2image hook |
 | `scripts/save_glb_from_status.py` | Скачать GLB по job id без base64 в терминале |
 | `scripts/view_model.html` | Локальный GLB viewer (`python -m http.server` + `?model=/file.glb`) |
@@ -58,6 +62,7 @@
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
   - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ad1bca9`)
+  - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (CI: `build-reconviagen.yml`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
 - **Network volume** (mount `/runpod-volume` на Pod часто как `/workspace`):
@@ -218,7 +223,7 @@ Studio без этой переменной остаётся на v0 bake.
 #### `POST /api/jobs`
 Создать async job. RunPod ключ **только на сервере**, не в браузере.
 
-Request:
+Request (single photo):
 ```json
 {
   "mode": "image",
@@ -228,11 +233,30 @@ Request:
 }
 ```
 
+Request (user multi-photo, 2–4 views → T2 `image_urls`):
+```json
+{
+  "mode": "image",
+  "tier": "quality",
+  "imageUrls": [
+    "https://example.com/front.png",
+    "https://example.com/side.png",
+    "https://example.com/back.png"
+  ],
+  "multiImageMode": "stochastic",
+  "softInput": true,
+  "seed": 1
+}
+```
+
 | Поле | Тип | Обязательно | Описание |
 |------|-----|-------------|----------|
 | `mode` | `"image"` \| `"text"` | нет (default `image`) | `text` — позже, нужен `OPENAI_API_KEY` на бэке |
 | `tier` | `"preview"` \| `"quality"` | нет (default `preview`) | preview=512/tex1024; quality=1024_cascade/tex2048 |
-| `imageUrl` | string | да для `mode=image` | Публичный https URL картинки |
+| `imageUrl` | string | да для `mode=image` (если нет `imageUrls`) | Публичный https URL одной картинки |
+| `imageUrls` | string[] | да для multi (2–4 URL) | User multi-photo → RunPod `image_urls`; `imageUrl` в ответе = первый элемент |
+| `multiImageMode` | `"stochastic"` \| `"multidiffusion"` | нет (default **`stochastic`**) | T2 fusion mode при `imageUrls` |
+| `softInput` | bool | нет (default false) | Mid-prop holes gate: soft-norm входа (strength 0.75) |
 | `prompt` | string | да для `mode=text` | Текстовый prompt |
 | `seed` | int | нет (default 1) | Seed генерации |
 
@@ -244,6 +268,8 @@ Response `200`:
   "tier": "preview",
   "endpointId": "ynzpzjvcbfl656",
   "imageUrl": "https://...",
+  "imageUrls": ["https://...", "https://..."],
+  "multiImageMode": "stochastic",
   "prompt": null,
   "etaSecondsCold": 360,
   "etaSecondsWarm": 45,
@@ -251,7 +277,10 @@ Response `200`:
 }
 ```
 
-Ошибки: `400` (нет imageUrl/prompt), `501` (text mode не настроен), `500`.
+Ошибки: `400` (нет imageUrl/imageUrls/prompt; imageUrls не 2–4), `501` (text mode не настроен), `500`.
+
+Smoke (без HTTP): `python scripts/studio_smoke.py --dry-run --image-urls url1 url2`  
+Live: `python scripts/studio_smoke.py --tier preview --image-urls url1 url2 --soft-input`
 
 #### `GET /api/jobs/{jobId}?tier=preview`
 Poll статуса. **Параметр `tier` обязателен совпадать с тем, что был при POST.**

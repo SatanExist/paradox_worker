@@ -38,6 +38,7 @@ python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
+docker build -f Dockerfile.reconviagen -t paradox-reconviagen .  # ReconViaGen multi-view hybrid
 docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
 docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow texture
 ```

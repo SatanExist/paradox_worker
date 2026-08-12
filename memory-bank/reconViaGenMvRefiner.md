@@ -206,13 +206,30 @@ Prod idea: `1 foto → ultra` → optional refine если юзер дал Side/
 |-------|--------|--------|
 | D0 | Research + Comfy noise filter | ✅ |
 | D1 | HF eyes (Pedrokita ОГО) | ✅ |
-| D2 | GLB via `reconviagen_hf_smoke.py` + A/B vs Armor ultra | ⏳ |
-| D3 | Pod spike `v0.5` / `app_v05.py` (не HF) | ⏳ после D2 |
-| D4 | `Dockerfile.reconviagen` + RunPod handler + bridge tier | ⏳ |
-| D5 | (opt.) fusion patch в `trellis2_multi_image.py` | ⏸ |
+| D2 | GLB via HF smoke (API) | 🔴 HF queue/timeout — skip for prod |
+| D3 | Pod spike `v0.5` / oneshot F+B | 🔴 **ABORT** 2026-08-11 — deps hell (ToS/torch/sudo/hub/o-voxel/triton); pod terminated |
+| D4 | **`Dockerfile.reconviagen`** + handler + CI | 🟡 **IN PROGRESS** — scaffold готов; CI build = gate |
+| D4.1 | CI `build-reconviagen.yml` green | ⏳ **NEXT** после push |
+| D4.2 | Pod smoke на image: Armor F+B vs T2 ultra / naive multi | ⏳ после CI |
+| D4.3 | Endpoint + `RUNPOD_ENDPOINT_ID_RECONVIAGEN` + bridge tier | ⏳ после GO smoke |
+| D5 | (opt.) fusion patch в `trellis2_multi_image.py` | ⏸ после A/B |
 | D6 | (opt.) MV Refiner Comfy spike | ⏸ |
 
 **Stop rule:** 2× same/worse vs Armor ultra → soft-NO-GO метод.
+
+### D4 — перспективный план (зафиксирован 2026-08-12)
+
+| Шаг | Действие | Gate |
+|-----|----------|------|
+| 1 | Commit scaffold + push → CI | build green |
+| 2 | Чинить только падающие layers (flash-attn, kaolin, …) | build green |
+| 3 | Pod smoke **на готовом image** (не setup.sh) | GLB ≈ HF eyes |
+| 4 | Отдельный RunPod endpoint + bridge `multi_shape` | E2E job OK |
+| 5 | Studio P1 слоты → tier выбирает endpoint | UX честность |
+
+**Параллельно (не блокирует D4):** P1 Studio UX (`productMultiUx.md`); P2 texture W2 на best clay после стабильного shape.
+
+**Не делать:** monolith RVG в `Dockerfile.trellis2`; HF Space API в prod; голый pod + `setup.sh`.
 
 ---
 
@@ -238,14 +255,16 @@ Prod idea: `1 foto → ultra` → optional refine если юзер дал Side/
 | 2026-08-11 | HF eyes: Pedrokita «ОГО» — sharp side/back, 1 sword |
 | 2026-08-11 | **Не** chain synth→RVG→наш T2; RVG = цельный GLB |
 | 2026-08-11 | **Prod path:** отдельный ReconViaGen endpoint; fusion-only patch = optional R&D |
-| 2026-08-11 | HF API + `scripts/reconviagen_hf_smoke.py` |
-| | **Next:** D2 GLB download + A/B; D3 pod если better |
+| 2026-08-11 | HF API smoke timeout ×3 — D2 skip; **D3 pod** = next (own GPU) |
+| 2026-08-11 | **D3 ABORT:** pod terminated; Франкенштейн env (torch↔o_voxel↔flex_gemm/triton). Eyes HF всё ещё GO. |
+| 2026-08-11 | **Правило:** тяжёлые GPU-стеки — **сразу Dockerfile + image**, не голый pod + setup.sh |
+| 2026-08-12 | **D4 план:** CI build = gate; smoke на image; отдельный endpoint; P1 UX параллельно; D5 fusion patch только после A/B |
+| | **Next:** push scaffold → CI green → pod smoke F+B Armor |
 
 ---
 
 ## 12. Статус одной строкой
 
 ```
-D-track HOT: ReconViaGen = умный multi (VGGT + adaptive fusion). Naive T2 multi closed.
-Next: smoke GLB → pod → worker_reconviagen tier. Master = this file.
+D-track: D4 scaffold ready. Next = CI build → pod smoke on image → endpoint. P1 UX parallel.
 ```
