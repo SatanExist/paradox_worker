@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     zlib1g-dev \
     libwebp-dev \
+    libeigen3-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libglvnd0 \
@@ -63,6 +64,7 @@ RUN git clone --recursive -b v0.5 --depth 1 \
     ln -sfn wheels/TRELLIS.2/o-voxel /app/ReconViaGen/o-voxel
 
 RUN pip install --no-cache-dir \
+    numpy \
     imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy scikit-image ninja \
     rembg onnxruntime trimesh xatlas pyvista pymeshfix igraph lpips \
     kornia==0.8.2 "transformers==5.3.0" zstandard rtree fast-simplification \
@@ -101,16 +103,19 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
     pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
     rm -rf /tmp/FlexGEMM
 
-# o-voxel: build from clean microsoft/TRELLIS.2 (CI-proven in Dockerfile.trellis2).
-# Do not use RVG vendored copy — ships stale build/egg-info; third_party/ may be missing on shallow clone.
-RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /tmp/trellis2-ovoxel && \
-    rm -rf /tmp/trellis2-ovoxel/o-voxel/third_party/eigen && \
-    mkdir -p /tmp/trellis2-ovoxel/o-voxel/third_party && \
-    git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
-      /tmp/trellis2-ovoxel/o-voxel/third_party/eigen && \
-    mv /tmp/trellis2-ovoxel/o-voxel/pyproject.toml /tmp/trellis2-ovoxel/o-voxel/pyproject.toml.bak && \
-    pip install --no-cache-dir --no-build-isolation --no-deps /tmp/trellis2-ovoxel/o-voxel && \
-    rm -rf /tmp/trellis2-ovoxel
+# o-voxel: sparse-clone only o-voxel/ (full TRELLIS.2 clone OOMs disk after ReconViaGen).
+# Match Dockerfile.trellis2 install; eigen from apt (CI gitlab flake on 2nd clone).
+RUN git clone -b main --depth 1 --filter=blob:none --sparse \
+      https://github.com/microsoft/TRELLIS.2.git /tmp/t2ov && \
+    cd /tmp/t2ov && git sparse-checkout set o-voxel && \
+    rm -rf /tmp/t2ov/o-voxel/third_party/eigen && \
+    mkdir -p /tmp/t2ov/o-voxel/third_party && \
+    ln -sfn /usr/include/eigen3 /tmp/t2ov/o-voxel/third_party/eigen && \
+    test -f /tmp/t2ov/o-voxel/src/ext.cpp && \
+    test -f /tmp/t2ov/o-voxel/third_party/eigen/Eigen/Core && \
+    MAX_JOBS=1 pip install --no-cache-dir --no-build-isolation --no-deps /tmp/t2ov/o-voxel && \
+    python -c "import importlib.util; s=importlib.util.find_spec('o_voxel'); assert s; print('o_voxel', s.origin)" && \
+    rm -rf /tmp/t2ov
 
 RUN pip install --no-cache-dir spconv-cu120 && \
     pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html
