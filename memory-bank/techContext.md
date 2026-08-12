@@ -22,7 +22,7 @@
 | `worker_texture.py` | Texture v1: mesh+image → `Trellis2TexturingPipeline` → GLB |
 | `Dockerfile` | v1 контейнер (CUDA 11.8) |
 | `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
-| `Dockerfile.reconviagen` | ReconViaGen v0.5 hybrid (CUDA 12.4, torch 2.4 cu121, triton≥3.2, extensions) |
+| `Dockerfile.reconviagen` | ReconViaGen v0.5 hybrid (CUDA 12.4, torch 2.6 cu124, triton≥3.2, extensions) |
 | `Dockerfile.texture` | mesh paint (тот же стек, CMD → `worker_texture.py`) |
 | `worker_mvadapter.py` | MV-Adapter texture: mesh+image → `texture_i2tex` subprocess → R2 GLB |
 | `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |

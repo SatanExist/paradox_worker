@@ -62,8 +62,8 @@ def verify_torch_pin() -> None:
     import torch
 
     ver = torch.__version__
-    if not ver.startswith("2.4.0"):
-        raise RuntimeError(f"expected torch 2.4.0*, got {ver}")
+    if not ver.startswith("2.6.0"):
+        raise RuntimeError(f"expected torch 2.6.0*, got {ver}")
     print(f"torch=={ver}: OK")
 
 
