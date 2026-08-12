@@ -3,7 +3,7 @@
 #
 # Lessons from D3 pod (do NOT repeat on raw pod):
 # - huggingface_hub==1.7.2 (not 0.33.4) for transformers==5.3.0
-# - o-voxel --no-deps (avoid torch override)
+# - o-voxel: install from microsoft/TRELLIS.2 clone (not RVG vendored tree)
 # - triton>=3.2 before flex_gemm (flex_gemm requires it; torch 2.4 bundles 3.0)
 # - o-voxel path: wheels/TRELLIS.2/o-voxel (not repo root)
 # - pillow-simd: skip in Docker (source build); use Pillow from pip wheels
@@ -101,17 +101,16 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
     pip install --no-cache-dir --no-build-isolation /tmp/FlexGEMM && \
     rm -rf /tmp/FlexGEMM
 
-# Do not let o-voxel setup.py pull a different torch (D3 lesson).
-# RVG vendored o-voxel ships stale build/ + egg-info (not in upstream TRELLIS.2); eigen submodule empty on shallow clone.
-RUN rm -rf /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen \
-           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/build \
-           /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/o_voxel.egg-info && \
+# o-voxel: build from clean microsoft/TRELLIS.2 (CI-proven in Dockerfile.trellis2).
+# Do not use RVG vendored copy — ships stale build/egg-info; third_party/ may be missing on shallow clone.
+RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /tmp/trellis2-ovoxel && \
+    rm -rf /tmp/trellis2-ovoxel/o-voxel/third_party/eigen && \
+    mkdir -p /tmp/trellis2-ovoxel/o-voxel/third_party && \
     git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git \
-      /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen && \
-    test -f /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/src/ext.cpp && \
-    test -f /app/ReconViaGen/wheels/TRELLIS.2/o-voxel/third_party/eigen/Eigen/Core && \
-    pip install --no-cache-dir --no-build-isolation --no-deps \
-    /app/ReconViaGen/wheels/TRELLIS.2/o-voxel
+      /tmp/trellis2-ovoxel/o-voxel/third_party/eigen && \
+    mv /tmp/trellis2-ovoxel/o-voxel/pyproject.toml /tmp/trellis2-ovoxel/o-voxel/pyproject.toml.bak && \
+    pip install --no-cache-dir --no-build-isolation --no-deps /tmp/trellis2-ovoxel/o-voxel && \
+    rm -rf /tmp/trellis2-ovoxel
 
 RUN pip install --no-cache-dir spconv-cu120 && \
     pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html
