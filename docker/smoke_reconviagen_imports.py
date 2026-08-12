@@ -25,6 +25,8 @@ BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
     ("o_voxel", "o_voxel"),
     ("xformers", "xformers"),
     ("flash_attn", "flash_attn"),
+    ("spconv", "spconv"),
+    ("kaolin", "kaolin"),
 )
 
 
