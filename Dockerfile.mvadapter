@@ -94,7 +94,7 @@ RUN mkdir -p /app/MV-Adapter/checkpoints && \
         https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt
 
 # ── runpod handler deps ─────────────────────────────────────────────
-RUN pip install --no-cache-dir runpod boto3 Pillow requests trimesh
+RUN pip install --no-cache-dir runpod boto3 Pillow requests trimesh xatlas
 
 # ── build-time smoke (no GPU import on CI buildx) ───────────────────
 COPY docker/smoke_mvadapter_imports.py /tmp/smoke_mvadapter_imports.py

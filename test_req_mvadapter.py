@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 from pathlib import Path
 
@@ -89,7 +90,13 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--remove-bg", action="store_true", default=True)
     parser.add_argument("--no-remove-bg", dest="remove_bg", action="store_false")
-    parser.add_argument("--preprocess-mesh", action="store_true", default=True)
+    parser.add_argument(
+        "--preprocess-mesh",
+        dest="preprocess_mesh",
+        action="store_true",
+        default=False,
+        help="Enable mesh preprocess (default off; xatlas path)",
+    )
     parser.add_argument("--no-preprocess-mesh", dest="preprocess_mesh", action="store_false")
     parser.add_argument("--fast-texture", action="store_true", default=True)
     parser.add_argument("--no-fast-texture", dest="fast_texture", action="store_false")
@@ -134,7 +141,10 @@ def main() -> int:
 
     print(f"Final endpoint: {endpoint_used}")
     print("Final status:")
-    print(sanitize(final))
+    try:
+        print(sanitize(final), flush=True)
+    except UnicodeEncodeError:
+        print(json.dumps(sanitize(final), ensure_ascii=True, default=str)[:4000], flush=True)
 
     if final.get("status") != "COMPLETED":
         return 1

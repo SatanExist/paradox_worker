@@ -272,7 +272,8 @@ def handler(job):
 
     seed = _coerce_int(job_input.get("seed"), DEFAULT_SEED, min_val=0, max_val=2**31 - 1)
     remove_bg = _coerce_bool(job_input.get("remove_bg"), True)
-    preprocess_mesh = _coerce_bool(job_input.get("preprocess_mesh"), True)
+    # Default off: xatlas UV path already unwraps; preprocess_mesh caused SIGSEGV on stale bake.
+    preprocess_mesh = _coerce_bool(job_input.get("preprocess_mesh"), False)
     fast_texture = _coerce_bool(job_input.get("fast_texture"), DEFAULT_FAST_TEXTURE)
 
     if not mesh_url:
