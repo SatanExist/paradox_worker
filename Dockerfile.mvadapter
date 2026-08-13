@@ -59,14 +59,13 @@ RUN echo "torch==2.4.1+cu124" > /tmp/constraints.txt && \
     PIP_CONSTRAINT=/tmp/constraints.txt \
         pip install --no-cache-dir -r /tmp/mvadapter_texture_reqs.txt
 
-# ── re-pin torch (deps may have pulled a different version) ──────────
-# Retry once: GH Actions occasionally flakes on large cu124 wheels.
-RUN pip install --no-cache-dir --force-reinstall \
+# ── verify torch pin (deps may have pulled a different version) ──────
+# Avoid --force-reinstall on GH runners (disk/net flake; ~4m fail loops).
+# Constraints above should keep 2.4.1+cu124; only reinstall if drifted.
+RUN python -c "import torch, torchvision; v=torch.__version__; print('torch', v, 'tv', torchvision.__version__); assert v.startswith('2.4.1'), v" || \
+    pip install --no-cache-dir \
         "torch==2.4.1+cu124" "torchvision==0.19.1+cu124" "torchaudio==2.4.1+cu124" \
-        --index-url "${TORCH_INDEX}" || \
-    (sleep 15 && pip install --no-cache-dir --force-reinstall \
-        "torch==2.4.1+cu124" "torchvision==0.19.1+cu124" "torchaudio==2.4.1+cu124" \
-        --index-url "${TORCH_INDEX}")
+        --index-url "${TORCH_INDEX}"
 
 # ── nvdiffrast (needs CUDA dev headers from base image) ──────────────
 RUN pip install --no-cache-dir --no-build-isolation --ignore-installed \
