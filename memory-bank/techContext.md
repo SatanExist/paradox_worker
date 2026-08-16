@@ -35,7 +35,7 @@
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
-| `scripts/studio_api.py` | POC HTTP API: jobs + `GET /api/product-copy` + `viewSlots` |
+| `scripts/studio_api.py` | POC HTTP + lab UI: jobs, product-copy, `studio_lab.html` |
 | `studio_bridge/product_multi_ux.py` | P1: slot order, Studio copy, normalize viewSlots |
 | `scripts/reconviagen_infer.py` | Headless RVG infer (pod smoke / local with GPU) |
 | `scripts/reconviagen_hf_smoke.py` | HF Space API smoke (eyes only; не prod) |
@@ -62,7 +62,7 @@
 
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
-  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ad1bca9`)
+  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ffd6d36`, endpoint v17)
   - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (актуальный: `reconviagen-sha-a48c0e3`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
@@ -211,8 +211,10 @@ Studio без этой переменной остаётся на v0 bake.
 
 ### Studio Bridge API (POC, 2026-07-20)
 
-Локально: `python scripts/studio_api.py` → `http://127.0.0.1:8787` (Swagger `/docs`).  
-Код: `studio_bridge/`, smoke: `scripts/studio_smoke.py`.  
+Локально: `python scripts/studio_api.py` → `http://127.0.0.1:8787` (lab `/`, Swagger `/docs`).  
+Код: `studio_bridge/`, lab UI: `scripts/studio_lab.html` + `scripts/model_review.html` + `scripts/studio_viewer.js` (не `.mjs`: Windows `http.server` отдаёт `.mjs` как `text/plain`). Smoke: `scripts/studio_smoke.py`.  
+**Пресеты:** `low` / `medium` / `high` / `realistic` в `GET /api/product-copy` (`qualityPresets`). Default **medium**. Clay только при `textureMode: "clay"`.  
+**Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-ffd6d36` endpoint **v17**. Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish).  
 **P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.
 
 **Base URL (dev):** `http://127.0.0.1:8787`

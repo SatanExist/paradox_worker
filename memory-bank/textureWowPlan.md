@@ -58,12 +58,13 @@ Meshy на той же картинке держит орнамент в Solid.
 ### Порядок (обновлено 2026-08-13)
 
 ```
-1a. T2 clay recipe ultra rt6 — ✅
+1a. T2 clay recipe ultra rt6 — ✅ (исторический; персонаж больше не clay)
 1b. Synth MV→T2 — 🔴 FROZEN
 1c. Real multi / RVG — ⏸ (товарищ UI; GPU позже)
-1d. Texture MV-Adapter W2b — 🟢 PROD PATH #1 (сейчас)
-1e. PBR tier (MVPainter) — после стабильного albedo W2b
-1f. Hi3DGen shape — отдельно, если снова нужен Meshy-микро
+1d. Texture MV-Adapter W2b — ❌ character (фольга); только чистый проп
+1e. Native T2 PBR + W3a polish — 🟢 PROD PATH (v17 High/Realistic)
+1f. MVPainter W3b — ⏸ только если polish мало
+1g. Hi3DGen — микро-геометрия, не параллельно
 ```
 
 **2026-08-16:** Аудит глаз W2b 80k vs 200k → § «Аудит W2b / T2». «Плывёт» = mesh + baked light + albedo-only; не баг xatlas.
@@ -666,9 +667,9 @@ Shape-upgrade: Hi3DGen / реальные слоты → RVG
 
 ### Next texture (W3)
 
-1. 🟢 **W3a PASS** 2026-08-16 (Pedrokita): delight+bump убедительнее; Env on/off ок  
-2. W3b MVPainter ⏸ не next (дорого, W3a хватило)  
-3. Product: `glb_delight_pbr.py` post-step на textured T2; Studio IBL; PNG export  
+1. 🟢 **W3a PASS** + **в worker v17** (High/Realistic `material_polish`)  
+2. W3b MVPainter ⏸ не next  
+3. Product: IBL-карточка у товарища позже (`productMultiUx.md` §11)  
 4. Hi3DGen — только микро-геометрия, не параллельно
 
 ---

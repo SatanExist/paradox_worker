@@ -12,7 +12,6 @@
       color: #eee;
     }
     #stage { width: 100vw; height: 100vh; }
-    canvas { display: block; }
     #hud {
       position: fixed; top: 14px; left: 14px; right: 14px;
       display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -31,6 +30,7 @@
       background: rgba(0,0,0,.45); color: #fff; font-size: 18px; z-index: 5;
     }
     #drop.on { display: grid; }
+    a { color: #ff8aa8; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -38,18 +38,31 @@
   <div id="drop">Отпустите GLB</div>
   <div id="hud">
     <strong>Review</strong>
+    <a href="./studio_lab.html">Generate lab</a>
     <input id="pick" type="file" accept=".glb,.gltf" hidden />
     <button type="button" id="open">Open GLB</button>
     <select id="preset">
-      <option value="../preview_textures/armor_t2_ultra_native_pbr_delight.glb">Knight — PBR + polish</option>
+      <option value="../preview_textures/armor_t2_v17_realistic.png.glb">Knight — v17 Realistic PNG+polish</option>
+      <option value="../preview_textures/armor_t2_ultra_native_pbr_delight.glb">Knight — PBR + polish (local)</option>
       <option value="../preview_textures/armor_t2_ultra_native_pbr_png.glb">Knight — native PBR PNG</option>
       <option value="../preview_textures/armor_t2_ultra_native_pbr.glb">Knight — native PBR WebP</option>
     </select>
     <button type="button" id="front">Front</button>
     <button type="button" id="side">Side</button>
     <button type="button" id="back">Back</button>
+    <button type="button" id="modeStudio">Карточка</button>
+    <button type="button" id="modeInspect">Стандарт</button>
+    <select id="light" title="Освещение">
+      <option value="studio">Свет: Studio</option>
+      <option value="gallery">Свет: Gallery</option>
+      <option value="outdoor">Свет: Outdoor</option>
+      <option value="neon">Свет: Neon</option>
+      <option value="night">Свет: Night</option>
+    </select>
     <label><input type="checkbox" id="spin" checked /> Auto orbit</label>
     <label><input type="checkbox" id="env" checked /> IBL</label>
+    <label><input type="checkbox" id="wire" /> Каркас</label>
+    <label><input type="checkbox" id="albedo" /> Только albedo</label>
     <span id="status">…</span>
   </div>
   <script type="importmap">
@@ -61,188 +74,58 @@
   }
   </script>
   <script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { createStudioViewer } from "./studio_viewer.js";
 
-    const stage = document.getElementById('stage');
-    const status = document.getElementById('status');
-    const spinEl = document.getElementById('spin');
-    const envEl = document.getElementById('env');
-    const preset = document.getElementById('preset');
-    const drop = document.getElementById('drop');
+    const status = document.getElementById("status");
+    const spinEl = document.getElementById("spin");
+    const envEl = document.getElementById("env");
+    const preset = document.getElementById("preset");
+    const drop = document.getElementById("drop");
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    stage.appendChild(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x101014);
-    scene.fog = new THREE.Fog(0x101014, 8, 28);
-
-    const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 80);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 1.1;
-
-    const hemi = new THREE.HemisphereLight(0xe8f0ff, 0x1a120c, 0.35);
-    scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xfff2dc, 2.2);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.bias = -0.00025;
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x9ec5ff, 0.55);
-    fill.position.set(-4, 2, 1);
-    scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xff7a3d, 1.35);
-    rim.position.set(-1.2, 2.4, -4);
-    scene.add(rim);
-
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
-    scene.environment = envRT.texture;
-    pmrem.dispose();
-    scene.environmentIntensity = 1.2;
-
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(6, 64),
-      new THREE.MeshStandardMaterial({
-        color: 0x151518,
-        metalness: 0.85,
-        roughness: 0.18,
-      }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-
-    let root = null;
-    let framed = { center: new THREE.Vector3(), maxDim: 1 };
-    let objectUrl = null;
-
-    function resize() {
-      const w = stage.clientWidth;
-      const h = stage.clientHeight;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / Math.max(1, h);
-      camera.updateProjectionMatrix();
-    }
-    window.addEventListener('resize', resize);
-    resize();
-
-    function syncEnv() {
-      scene.environmentIntensity = envEl.checked ? 1.2 : 0.0;
-    }
-    envEl.onchange = syncEnv;
-    spinEl.onchange = () => { controls.autoRotate = spinEl.checked; };
-
-    function setView(kind) {
-      const { center, maxDim } = framed;
-      const d = maxDim * 2.15;
-      const y = center.y + maxDim * 0.12;
-      if (kind === 'front') camera.position.set(center.x, y, center.z + d);
-      else if (kind === 'side') camera.position.set(center.x + d, y, center.z);
-      else camera.position.set(center.x, y, center.z - d);
-      controls.target.copy(center);
-      controls.update();
-    }
-
-    function frameObject(obj) {
-      const box = new THREE.Box3().setFromObject(obj);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
-      framed = { center: center.clone(), maxDim };
-      floor.position.set(center.x, box.min.y - 0.002, center.z);
-      floor.scale.setScalar(Math.max(1.4, maxDim * 1.6));
-      key.position.set(center.x + maxDim * 2.2, center.y + maxDim * 2.8, center.z + maxDim * 1.4);
-      key.target.position.copy(center);
-      key.target.updateMatrixWorld();
-      const e = maxDim * 2.4;
-      key.shadow.camera.near = maxDim / 40;
-      key.shadow.camera.far = maxDim * 18;
-      key.shadow.camera.left = -e;
-      key.shadow.camera.right = e;
-      key.shadow.camera.top = e;
-      key.shadow.camera.bottom = -e;
-      key.shadow.camera.updateProjectionMatrix();
-      camera.near = maxDim / 120;
-      camera.far = maxDim * 80;
-      setView('front');
-    }
-
-    async function loadFromUrl(url, label) {
-      status.textContent = 'Loading…';
-      if (root) {
-        scene.remove(root);
-        root = null;
-      }
-      const loader = new GLTFLoader();
-      try {
-        const gltf = await loader.loadAsync(url);
-        root = gltf.scene;
-        let verts = 0;
-        let tris = 0;
-        root.traverse((c) => {
-          if (!c.isMesh) return;
-          c.castShadow = true;
-          c.receiveShadow = true;
-          const g = c.geometry;
-          verts += g.attributes.position?.count || 0;
-          tris += g.index ? g.index.count / 3 : verts / 3;
-        });
-        scene.add(root);
-        frameObject(root);
-        status.textContent = `${label} · ${Math.round(verts).toLocaleString()} v / ${Math.round(tris).toLocaleString()} t`;
-      } catch (err) {
-        status.textContent = err.message + ' · python -m http.server 8765 from repo root';
-      }
-    }
-
-    function loadFile(file) {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = URL.createObjectURL(file);
-      loadFromUrl(objectUrl, file.name);
-    }
-
-    document.getElementById('open').onclick = () => document.getElementById('pick').click();
-    document.getElementById('pick').onchange = (e) => {
-      const f = e.target.files && e.target.files[0];
-      if (f) loadFile(f);
-    };
-    document.getElementById('front').onclick = () => setView('front');
-    document.getElementById('side').onclick = () => setView('side');
-    document.getElementById('back').onclick = () => setView('back');
-    preset.onchange = () => loadFromUrl(preset.value, preset.selectedOptions[0].text);
-
-    window.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('on'); });
-    window.addEventListener('dragleave', () => drop.classList.remove('on'));
-    window.addEventListener('drop', (e) => {
-      e.preventDefault();
-      drop.classList.remove('on');
-      const f = e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) loadFile(f);
+    const viewer = createStudioViewer(document.getElementById("stage"), {
+      initialMode: "studio",
+      onStatus: (msg) => { status.textContent = msg; },
     });
 
-    const q = new URLSearchParams(location.search).get('file');
-    const initial = q
-      ? (q.startsWith('../') || q.startsWith('http') ? q : `../${q.replace(/^\/+/, '')}`)
-      : preset.value;
-    loadFromUrl(initial, q || preset.selectedOptions[0].text);
+    document.getElementById("open").onclick = () => document.getElementById("pick").click();
+    document.getElementById("pick").onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) viewer.loadFile(f);
+    };
+    document.getElementById("front").onclick = () => viewer.setView("front");
+    document.getElementById("side").onclick = () => viewer.setView("side");
+    document.getElementById("back").onclick = () => viewer.setView("back");
+    document.getElementById("modeStudio").onclick = () => {
+      viewer.setMode("studio");
+      spinEl.checked = true;
+      viewer.setAutoOrbit(true);
+    };
+    document.getElementById("modeInspect").onclick = () => {
+      viewer.setMode("inspect");
+      spinEl.checked = false;
+      viewer.setAutoOrbit(false);
+    };
+    spinEl.onchange = () => viewer.setAutoOrbit(spinEl.checked);
+    envEl.onchange = () => viewer.setIbl(envEl.checked);
+    document.getElementById("light").onchange = (e) => viewer.setLightRig(e.target.value);
+    document.getElementById("wire").onchange = (e) => viewer.setWireframe(e.target.checked);
+    document.getElementById("albedo").onchange = (e) => viewer.setAlbedoOnly(e.target.checked);
+    preset.onchange = () => viewer.loadFromUrl(preset.value, preset.selectedOptions[0].text);
 
-    function tick() {
-      requestAnimationFrame(tick);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    tick();
+    window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
+    window.addEventListener("dragleave", () => drop.classList.remove("on"));
+    window.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("on");
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) viewer.loadFile(f);
+    });
+
+    const q = new URLSearchParams(location.search).get("file");
+    const initial = q
+      ? (q.startsWith("../") || q.startsWith("http") ? q : `../${q.replace(/^\/+/, "")}`)
+      : preset.value;
+    viewer.loadFromUrl(initial, q || preset.selectedOptions[0].text);
   </script>
 </body>
 </html>

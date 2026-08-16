@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 import sys
 from pathlib import Path
 from typing import Literal
 
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
+mimetypes.add_type("text/javascript", ".mjs")
 
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
 from studio_bridge.service import create_job, get_job  # noqa: E402
@@ -28,7 +36,19 @@ from studio_bridge.tiers import (  # noqa: E402
     TierName,
 )
 
-app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.4.0")
+app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.5.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
+        "http://127.0.0.1:8765",
+        "http://localhost:8765",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ViewSlots(BaseModel):
@@ -71,9 +91,40 @@ class CreateJobRequest(BaseModel):
         return self
 
 
+@app.get("/")
+def lab_index() -> RedirectResponse:
+    return RedirectResponse("/scripts/studio_lab.html")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/proxy-glb")
+def proxy_glb(url: str) -> StreamingResponse:
+    """Local-only helper so the browser can inspect an R2/https GLB."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="url must be https")
+    request = Request(url, headers={"User-Agent": "paradox-studio-lab"})
+    try:
+        upstream = urlopen(request, timeout=90)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    content_type = upstream.headers.get("Content-Type") or "model/gltf-binary"
+
+    def _chunks():
+        try:
+            while True:
+                chunk = upstream.read(256 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(_chunks(), media_type=content_type)
 
 
 @app.get("/api/product-copy")
@@ -113,6 +164,16 @@ def get_job_status(job_id: str, tier: TierName = DEFAULT_PRESET) -> dict:
         return get_job(job_id, tier=tier)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+_preview_dir = ROOT / "preview_textures"
+if _preview_dir.is_dir():
+    app.mount(
+        "/preview_textures",
+        StaticFiles(directory=_preview_dir),
+        name="preview_textures",
+    )
+app.mount("/scripts", StaticFiles(directory=ROOT / "scripts"), name="scripts")
 
 
 def main() -> None:

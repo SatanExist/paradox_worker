@@ -34,8 +34,10 @@ python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 
 python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v2 MV-Adapter (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier medium --dry-run
-# Local model review (studio card): python -m http.server 8765
-#   http://127.0.0.1:8765/scripts/model_review.html
+# Local Studio lab (generate + review): py -3 scripts/studio_api.py
+#   http://127.0.0.1:8787/  →  /scripts/studio_lab.html
+# Card-only review: http://127.0.0.1:8765/scripts/model_review.html?file=preview_textures/armor_t2_v17_realistic.png.glb
+#   (http.server: .js MIME ok; .mjs is text/plain on Windows)
 python scripts/reconviagen_hf_smoke.py --image path1.png --image path2.png --save out.glb
 python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
@@ -57,7 +59,7 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/postSideBackPlan.md` | **Roadmap после тупика** (P1–P4) |
 | `memory-bank/reconViaGenMvRefiner.md` | **D-track MASTER:** ReconViaGen integration + smart fusion |
 | `memory-bank/multiViewFusionResearch.md` | **Research:** multi-view series ↔ 3D fusion (T2/Meshy/papers) |
-| `memory-bank/productMultiUx.md` | **Путь A:** честный 1-фото + реальные ракурсы (Studio UX spec) |
+| `memory-bank/productMultiUx.md` | **Путь A** + **§11 пакет товарищу** (ещё не слали) |
 | `memory-bank/synthMultiViewProd.md` | Synth/img2mv→shape (**🔴 FROZEN 2026-08-13**) |
 | `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
 | `scripts/wonder3d_mv2_spike.md` | MV2 Wonder3D (soft-NO-GO 2026-08-07) |

@@ -121,7 +121,7 @@ Worker допускает до 8 URL; **продукт Studio = max 4** (не р
 |-----|-----|--------|
 | 1. Эта спека | `paradox_worker` memory | ✅ |
 | 1b. Bridge `viewSlots` + `/api/product-copy` | `studio_bridge` | ✅ 2026-08-13; **2026-08-16:** пресеты low/medium/high/realistic + native PBR |
-| 2. Слоты + copy в Studio UI | **AI_MESH** | ⏳ **товарищ** (визуал); bridge готов |
+| 2. Слоты + copy в Studio UI | **AI_MESH** | ⏳ пакет §11 **ещё не слали**. Прототип: `studio_lab.html` |
 | 3. Smoke: 3–4 **реальных** фото → multi vs single глазами | paradox worker / R2 | ⏳ когда есть съёмка |
 | 4. Help-статья на сайте | AI_MESH | ⏳ вместе с UI |
 
@@ -130,5 +130,56 @@ Worker допускает до 8 URL; **продукт Studio = max 4** (не р
 ## 10. Статус одной строкой
 
 ```
-A UX: locked. Bridge viewSlots + product-copy ✅. Studio UI still AI_MESH (other PC).
+A UX: locked. Bridge + presets ✅. Lab прототип ✅. Пакет товарищу ещё НЕ слали (§11).
 ```
+
+---
+
+## 11. Пакет товарищу (AI_MESH) — ещё не отправляли
+
+> **2026-08-16 Pedrokita:** копипаст когда скажем «шли». Не слать сами. Этот репо = API + прототип, не сайт.
+
+### Что уже есть у нас (не верстать заново)
+
+| Что | Где смотреть |
+|-----|----------------|
+| Copy + пресеты | `GET /api/product-copy` → `qualityPresets`, слоты, честный потолок |
+| Слоты | Front обязателен; Side/Back/Extra опционально; пустые не слать |
+| Пресеты | **low / medium / high / realistic**, default **medium**. Legacy: preview→low, quality→medium, ultra→high |
+| Clay | только если явно `textureMode: "clay"` — не default |
+| Прототип экрана | `scripts/studio_lab.html` (generate + слоты + пресеты + inspect) |
+| Прототип карточки | `scripts/model_review.html` + общий `scripts/studio_viewer.js` |
+| Контракт | `studio_bridge/product_multi_ux.py`, `studio_bridge/tiers.py` |
+
+### Пресеты (для селектора, как Rodin-полка — не их ETA)
+
+| Кнопка | Worker | Tex | Soft | Polish | ETA cold/warm (4090, честно) |
+|--------|--------|-----|------|--------|------------------------------|
+| Low | preview / 512 | 1024 | нет | нет | ~6 мин / ~45 с |
+| Medium | quality / 1024 | 2048 | да, hole 0.1 | нет | ~8 мин / ~4 мин |
+| High | ultra / 1536 | 2048 | нет | да | ~10 мин / ~5 мин |
+| Realistic | ultra / 1536 | **4096** | нет | да | ~12 мин / ~6 мин |
+
+Не писать «4–80 секунд» как у Rodin. Cold = поднятие воркера.
+
+### Карточка модели (обязательно IBL)
+
+- Референс света: Hyper3D Rodin — ~70% вау = HDRI/rim/пол, не другая физика меша.
+- Режимы света в прототипе: **Studio** (судить PBR) / **Gallery** (честный цвет) / Outdoor / Neon / Night.
+- Studio/Gallery/Outdoor = циклорама (без серого диска на горизонте). Neon/Night = чёрная пустота + контактная тень.
+- Neon/Night = wow only, не для приёмки материала.
+- Visual сайта: **ruby-jelly** (rose/coral), не cosmic cyan.
+- Файл вьюера: **`.js`**, не `.mjs` (Windows `http.server` ломает modules).
+
+### Честный продукт (не обещать)
+
+- 1 фото = сильный **перед**; бок/зад = догадка T2.
+- Реальные ракурсы улучшают форму **если** свет/масштаб согласованы.
+- AI-sheet / Gemini turnaround — не режим.
+- img2mv / MV-Adapter 80k на персонаже — закрыто.
+
+### Живой движок (для них не трогать GPU)
+
+- Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ffd6d36`, **v17**.
+- Smoke рыцарь Realistic: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish).
+- Публичный GLB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb`

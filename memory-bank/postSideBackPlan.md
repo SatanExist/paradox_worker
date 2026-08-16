@@ -63,19 +63,20 @@
 
 ### Фаза P2 — вау без новой формы (GPU texture)
 
-| # | Задача | Где | Примечание |
-|---|--------|-----|------------|
-| P2.1 | MV-Adapter W2b на **best clay** (Armor ultra / prod) | Track A / `textureWowPlan.md` | F3 |
-| P2.2 | Не красить «мыло» и чужой Meshy-mesh | правило | |
-| P2.3 | Сравнить глаза: clay vs textured на том же GLB | preview | |
+| # | Задача | Примечание |
+|---|--------|------------|
+| P2.1 | MV-Adapter W2b на clay персонажа | ❌ фольга 80k/200k; только чистый проп |
+| P2.1b | Native T2 PBR + W3a polish (High/Realistic) | ✅ v17 live, рыцарь глаза OK |
+| P2.2 | Не красить «мыло» и чужой Meshy-mesh | правило |
+| P2.3 | Глаза: clay vs textured vs native PBR | победил native PBR |
 
-**Критерий P2:** текстура тянет восприятие; форма та же, но «дороже» выглядит.
+**Критерий P2 (character):** закрыт native PBR, не MV-Adapter.
 
 ### Фаза P3 — freeze T2 в продукте
 
 | # | Задача | Примечание |
 |---|--------|------------|
-| P3.1 | Tier copy: preview / quality / ultra (если ultra в Studio) | F5 |
+| P3.1 | Tier copy: **low / medium / high / realistic** | bridge ✅ 2026-08-16; UI ⏳ |
 | P3.2 | Docs: soft_input для mid-props; character = best-effort back | `techContext` + Studio |
 | P3.3 | Не открывать заново synth→T2 / remesh-for-back | locked |
 
@@ -152,6 +153,6 @@
 ## 6. Статус одной строкой
 
 ```
-img2mv: FROZEN. Generation focus: P2 W2b. Studio UI = teammate.
-Next: W2b on ultra clay → P3 freeze. RVG later for real slots.
+img2mv: FROZEN. T2 v17 PNG+polish live. Character tex = native PBR, не W2b.
+Next: пакет UI товарищу позже (`productMultiUx.md` §11). RVG только на реальные фото.
 ```

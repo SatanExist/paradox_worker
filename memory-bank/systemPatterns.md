@@ -232,3 +232,10 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 - `print()` для логов в RunPod dashboard
 - Комментарии в worker могут быть на русском; новый код — комментарии на английском
 - Не коммитить `.env`, ключи, бинарные GLB
+
+## Studio lab viewer (не продукт)
+
+- `scripts/studio_viewer.js` — общий Three.js для `studio_lab.html` и `model_review.html`.
+- Расширение **`.js`**, не `.mjs`: `python -m http.server` на Windows отдаёт `.mjs` как `text/plain`, importmap не стартует.
+- Studio = IBL + циклорама (GroundedSkybox) + тень на полу, без серого диска. Inspect = сетка, без IBL.
+- Свет: Studio / Gallery / Outdoor / Neon / Night. Neon/Night не для приёмки материала.

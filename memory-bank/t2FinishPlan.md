@@ -1,6 +1,6 @@
 # TRELLIS.2 finish — prod master
 
-> **Статус:** 🟡 **ACTIVE** — shape front/props ✅; side/back mid accepted; **img2mv frozen**; дальше P1 UX + P2 tex  
+> **Статус:** 🟢 **shape+tex freeze в worker** — v17 PNG+polish live; P1 сайт у товарища позже; P2 W2b character ❌  
 > **Создан:** 2026-08-10 (Pedrokita)  
 > **Решение:** класс synth/img2mv 🔴 FROZEN; **не** бросаем T2 — freeze prod + tex + optional real multi UX; Meshy-back с 1 фото ≠ T2 knobs  
 > **Связь:** `t2InternetAudit.md` (как пользоваться T2), `postSideBackPlan.md`, `synthMultiViewProd.md` (§14 freeze)
@@ -101,11 +101,11 @@
 
 ### T5 — Product freeze
 
-| # | Задача |
-|---|--------|
-| T5.1 | Studio: 1 upload, tier preview/quality/ultra, soft toggle props |
-| T5.2 | Badge «quality reduced» on downgrade |
-| T5.3 | **Recipe freeze doc** — «1-photo T2 bar» vs Meshy (честно) |
+| # | Задача | Статус |
+|---|--------|--------|
+| T5.1 | Studio: 1 upload, пресеты **low/medium/high/realistic** | bridge ✅; UI AI_MESH ⏳ |
+| T5.2 | Badge «quality reduced» on downgrade | worker умеет; UI ⏳ |
+| T5.3 | **Recipe freeze doc** — «1-photo T2 bar» vs Meshy (честно) | `t2InternetAudit.md` + canvas |
 
 ---
 
@@ -128,9 +128,9 @@
 |---|----------|-----|
 | F1 | Prod ultra = rt6 live + smoke | ✅ |
 | F2 | T1 side/back pass | ✅ **CLOSED** 2026-08-10 — all same; ceiling = ultra rt6 |
-| F3 | Texture W2b на best clay | ≥ cascade; eyes |
+| F3 | Вау-tex на персонаже | ✅ native PBR + W3a (не W2b 80k) |
 | F4 | Props chest soft v16 | уже ✅ |
-| F5 | Product tier UX | Studio or bridge complete |
+| F5 | Product tier UX | bridge ✅; lab ✅; сайт ⏳ |
 
 **После F1–F5:** можно открывать **H0 Hi3DGen** для character back/side без чувства «бросили T2».
 

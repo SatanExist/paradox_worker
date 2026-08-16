@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-16 вечер** — Studio пресеты **low/medium/high/realistic** (native PBR). High/Realistic = `material_polish` (W3a). Review UI: `scripts/model_review.html`.
+Последнее обновление: **2026-08-16 вечер** — T2 **v17** (`trellis2-sha-ffd6d36`) Realistic PNG+polish глазами OK. Lab: generate + Review (Studio/Gallery/Neon). Пакет товарищу **ещё не слали**.
 
 ---
 
@@ -42,7 +42,7 @@
 | **Baseline** | native PBR PNG — 528k V / 669k F |
 | **W3a** | 🟢 PASS + **в worker** (High/Realistic `material_polish`) |
 | **W3b** | ⏸ MVPainter ≥40GB только если polish мало |
-| **Next** | commit/push T2 image (PNG + polish) → New Release; Studio пресеты |
+| **Next** | пакет в AI_MESH **позже**; GPU не жечь; MVPainter не next |
 | **W2b** | закрыт как prod character path |
 
 ## ⚪ P2 Texture W2b — closed for character
@@ -61,7 +61,8 @@
 |--|--|
 | **Мастер** | `memory-bank/productMultiUx.md` |
 | **Bridge** | ✅ `viewSlots` + `/api/product-copy` |
-| **Studio UI** | ⏳ товарищ в AI_MESH |
+| **Локальный lab** | ✅ `studio_lab.html` + `model_review.html` + `studio_viewer.js` (свет Studio/Gallery/Outdoor/Neon/Night) |
+| **Studio UI** | ⏳ товарищ в AI_MESH — **пакет ещё не отправляли** |
 | **Наш next по P1** | не блокер; smoke реальных фото когда будут |
 
 ---
@@ -100,12 +101,12 @@
 |--|--|
 | **Мастер** | `memory-bank/postSideBackPlan.md` |
 | **Честно** | Meshy-зад с 1 фото на T2/RVG = **не цель** |
-| **P1** | Studio UX honesty (`productMultiUx.md`) — **без GPU, первый** |
-| **P2** | Texture W2b на best clay — вау с 1 фото |
-| **P3** | Tier freeze T2 shape |
+| **P1** | Studio UX honesty — bridge ✅; lab ✅; **сайт у товарища позже** (`productMultiUx.md` §11) |
+| **P2 character** | ❌ W2b 80k закрыт; вау = native PBR + W3a polish |
+| **P3** | Tier freeze в продукте (пресеты уже в `product-copy`) |
 | **P4.0** | RVG только под реальные слоты |
-| **P4.1** | Hi3DGen / TripoSG — если снова 1-photo back |
-| **Next** | **P2 W2b generation** (UI Studio = товарищ) |
+| **P4.1** | Hi3DGen / TripoSG — микро-геометрия, не «золотее» |
+| **Next** | не слать пакет пока; GPU off; дожим lab viewer |
 
 ---
 
@@ -117,7 +118,7 @@
 | **Решение** | Default = 1 фото + честный потолок; опция Front+Side+Back+Extra (**реальные** фото) |
 | **Fusion** | naive T2 stochastic пока; RVG tier когда endpoint и реальные виды |
 | **Не продукт** | Gemini/AI sheet / synth img2mv |
-| **Next** | Слоты+copy в AI_MESH |
+| **Next** | пакет §11 `productMultiUx.md` — **ещё не слали** |
 
 ---
 
@@ -146,7 +147,7 @@
 | **C2** | Hi3DGen / TripoSG — ⏸ P4.1 |
 | **D** | RVG — fusion для real multi, не 1-photo Meshy |
 
-T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
+T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge ✅ / сайт ⏳.
 
 ---
 
@@ -155,7 +156,8 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
 | | |
 |--|--|
 | **Win** | `soft_input` на T2 (strength 0.75) — chest без сквозных дыр, clay smooth |
-| **Live** | image `trellis2-sha-91f8441`, endpoint **v16** |
+| **Live (holes-gate)** | закрыто на `trellis2-sha-91f8441` / v16 |
+| **Live T2 сейчас** | `trellis2-sha-ffd6d36`, endpoint **v17** (PNG + polish) |
 | **Артефакт глаз** | `model-chest-soft-worker-v16.glb` — Pedrokita: **замечательно** |
 | **Не путь** | voxel (Minecraft), CuMesh knobs alone, trimesh fill |
 | **Lattice/open** | industry limit (Meshy тоже плёнки) — best-effort, не блокер |
@@ -177,12 +179,14 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
 
 ```
 ✅ T2 ultra + soft + T1 remesh identical
-✅ img2mv класс frozen (W3D/U3D/Gemini/лицензии)
-→ P1  Studio слоты + честный copy
-→ P2  MV-Adapter W2b на ultra clay
-→ P3  tier freeze
-→ D   RVG endpoint если есть реальные фото
-→ P4.1 Hi3DGen/TripoSG только если снова 1-photo back
+✅ img2mv класс frozen
+✅ v17 native PBR PNG + W3a polish (High/Realistic)
+✅ локальный lab + свет (не сайт)
+→ P1  Studio UI у товарища — пакет позже
+→ P3  tier freeze в продукте (пресеты уже в bridge)
+→ D   RVG только на реальных фото
+→ P4.1 Hi3DGen только микро-геометрия
+❌ P2 W2b character path
 ```
 
 | # | Шаг | Статус |
@@ -191,9 +195,10 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
 | ✅ | Synth / img2mv класс | 🔴 FROZEN 2026-08-13 |
 | ✅ | B Gemini → T2 | 🔴 |
 | ✅ | C1 Wonder3D++ | ❌ AGPL/deps |
-| ⏸ | **P1** Product honesty / слоты Studio | bridge ✅; **UI в AI_MESH** ⏳ |
-| 🔄 | **P2 / F3** MV-Adapter W2b | **HOT** — generation focus |
-| ⏸ | **P3 / F5** Tier freeze copy | |
+| ✅ | T2 v17 PNG + polish; Realistic smoke рыцарь | 2026-08-16 job `13796711…e2` ~97MB |
+| ⏸ | **P1** Product honesty / слоты Studio | bridge ✅; lab прототип ✅; **UI в AI_MESH позже** |
+| ✅ | **P2 character** MV-Adapter 80k | закрыт (фольга); только чистый проп |
+| 🔄 | **P3 / F5** Tier freeze copy на сайте | API готов; вёрстка у товарища |
 | ⏸ | **D** RVG endpoint | image live; ждать реальные виды |
 | ⏸ | **P4.1 / C2** Hi3DGen / TripoSG | later |
 | ❌ | Повтор Unique3D/W3D/Gemini→T2 / remesh knobs / новый img2mv | closed |
@@ -219,7 +224,7 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **P2 W2b** texture на ultra clay; UI Studio = товарищ |
+| Фокус | T2 v17 freeze + lab viewer; пакет AI_MESH **позже** |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -949,6 +954,10 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-16 веч | Pedrokita | Memory: v17 + пакет §11 не слали; lab циклорама вместо диска | commit lab когда скажет; GPU off |
+| 2026-08-16 веч | Pedrokita | Realistic v17 PNG+polish OK (`13796711…e2` ~97MB); Review UI глаза «чудесно» | memory; сайт позже |
+| 2026-08-16 веч | Pedrokita | T2 New Release v17 `trellis2-sha-ffd6d36` (PNG+polish) | smoke Realistic; lab UI; продукт у товарища |
+| 2026-08-16 веч | Pedrokita | Локальный lab: generate + studio/inspect viewer | продукт UI у товарища; CI → New Release T2 |
 | 2026-08-16 веч | Pedrokita | Пресеты low/medium/high/realistic; PNG GLB; polish в worker; `model_review.html` | push → CI trellis2 → New Release; Studio selector у товарища |
 | 2026-08-16 | Pedrokita | Интернет-аудит T2 → `t2InternetAudit.md`; стоп кругам | нативный T2 PBR vs clay vs MV на рыцаре |
 | 2026-08-16 | Pedrokita | W2b 80k+200k COMPLETED; аудит «плывёт»=T2 mesh+baked light | вердикт 200k / PBR later / не img2mv |
