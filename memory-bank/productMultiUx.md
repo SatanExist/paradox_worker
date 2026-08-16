@@ -130,14 +130,46 @@ Worker допускает до 8 URL; **продукт Studio = max 4** (не р
 ## 10. Статус одной строкой
 
 ```
-A UX: locked. Bridge + presets ✅. Lab прототип ✅. Пакет товарищу ещё НЕ слали (§11).
+A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
+Пакет товарищу: §11 + git push feat/trellis2-poc. UI делать в AI_MESH.
 ```
 
 ---
 
-## 11. Пакет товарищу (AI_MESH) — ещё не отправляли
+## 11. Пакет товарищу (AI_MESH) — для Cursor на другом ПК
 
-> **2026-08-16 Pedrokita:** копипаст когда скажем «шли». Не слать сами. Этот репо = API + прототип, не сайт.
+> Репо сайта = **AI_MESH**. Этот репо = API + прототип + контракт. GPU не трогать.
+> Ветка worker: `feat/trellis2-poc`. Сначала `git pull`.
+
+### Промпт в новый чат Cursor (AI_MESH)
+
+```
+Работай в AI_MESH (сайт). GPU/RunPod не трогай — это paradox_worker.
+
+Контракт (можно открыть соседним окном paradox_worker):
+@memory-bank/productMultiUx.md
+Смотри §11 и GET /api/product-copy.
+
+Сделай Studio:
+1. Селектор Low / Medium / High / Realistic из qualityPresets. Default medium.
+2. Слоты: Front обязателен; Side / Back / Extra опционально. Пустые не слать.
+3. Карточка модели: IBL + орбита. Идеи света из paradox_worker/scripts/studio_viewer.js
+   (Studio/Gallery судить материал; Neon/Night только wow). Визуал сайта: ruby-jelly
+   (rose/coral), не cosmic cyan. Файл вьюера копируй как .js, не .mjs.
+4. ETA в минутах из etaSecondsCold/Warm. Не писать «4–80 секунд» как у Rodin.
+5. Если job.qualityReduced === true — бейдж текстом qualityReducedCopy
+   («Качество снижено, чтобы модель собралась»). Не показывать CUDA/OOM.
+6. GLB приходит modelUrl с R2 (25–100 MB). Карточка грузит этот URL.
+   Не ждать base64. Превью-меш/Draco — не в этой задаче.
+
+Демо без генерации:
+- Realistic рыцарь (~97 MB):
+  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb
+- Medium сундук (~25 MB):
+  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb
+
+Честно: 1 фото = сильный перед; бок/зад = догадка. AI-sheet не режим.
+```
 
 ### Что уже есть у нас (не верстать заново)
 
@@ -147,20 +179,45 @@ A UX: locked. Bridge + presets ✅. Lab прототип ✅. Пакет тов�
 | Слоты | Front обязателен; Side/Back/Extra опционально; пустые не слать |
 | Пресеты | **low / medium / high / realistic**, default **medium**. Legacy: preview→low, quality→medium, ultra→high |
 | Clay | только если явно `textureMode: "clay"` — не default |
-| Прототип экрана | `scripts/studio_lab.html` (generate + слоты + пресеты + inspect) |
-| Прототип карточки | `scripts/model_review.html` + общий `scripts/studio_viewer.js` |
-| Контракт | `studio_bridge/product_multi_ux.py`, `studio_bridge/tiers.py` |
+| Job status | `modelUrl`, `qualityReduced`, `qualityReducedCopy`, `modelBytes`, ETA |
+| Прототип экрана | `scripts/studio_lab.html` |
+| Прототип карточки | `scripts/model_review.html` + `scripts/studio_viewer.js` |
+| Контракт | `studio_bridge/product_multi_ux.py`, `studio_bridge/tiers.py`, `studio_bridge/normalize.py` |
 
 ### Пресеты (для селектора, как Rodin-полка — не их ETA)
 
-| Кнопка | Worker | Tex | Soft | Polish | ETA cold/warm (4090, честно) |
-|--------|--------|-----|------|--------|------------------------------|
-| Low | preview / 512 | 1024 | нет | нет | ~6 мин / ~45 с |
-| Medium | quality / 1024 | 2048 | да, hole 0.1 | нет | ~8 мин / ~4 мин |
-| High | ultra / 1536 | 2048 | нет | да | ~10 мин / ~5 мин |
-| Realistic | ultra / 1536 | **4096** | нет | да | ~12 мин / ~6 мин |
+| Кнопка | Worker | Tex | Soft | Polish | ETA cold/warm (4090, честно) | Типичный GLB |
+|--------|--------|-----|------|--------|------------------------------|--------------|
+| Low | preview / 512 | 1024 | нет | нет | ~6 мин / ~45 с | маленький |
+| Medium | quality / 1024 | 2048 | да, hole 0.1 | нет | ~8 мин / ~4 мин | ~25 MB (сундук) |
+| High | ultra / 1536 | 2048 | нет | да | ~10 мин / ~5 мин | меньше Realistic |
+| Realistic | ultra / 1536 | **4096** | нет | да | ~12 мин / ~6 мин | ~97 MB (рыцарь) |
 
 Не писать «4–80 секунд» как у Rodin. Cold = поднятие воркера.
+
+Пресеты = **лестница детализации одного T2 PBR**, не «реализм vs стилизация». Стиль задаёт фото.
+
+### Тяжёлый GLB — как делают крупные (и что делаем мы)
+
+Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут полный файл, чтобы показать карточку:
+
+| Слой | У них | У нас сейчас |
+|------|--------|----------------|
+| Превью в ленте | рендер / короткий ролик / маленький proxy | можно постер с фото входа; live GLB на карточке |
+| Вьюер | Draco / meshopt + сжатые текстуры (KTX2/WebP), CDN | Three.js грузит `modelUrl` с R2 как есть |
+| Скачать | тот же или «оригинал» | тот же `modelUrl` |
+| 4K PNG | редко в веб-карточке | Realistic = PNG 4K специально для Blender/совместимости |
+
+**Не делать в этой задаче UI:** второй worker «сжать в Draco». Карточка честно грузит R2. Если тормозит — позже Low как proxy или Draco, не сейчас.
+
+### Бейдж `qualityReduced` (это не стиль)
+
+Иногда GPU не влезает в VRAM на High/Realistic. Worker **сам** повторяет легче (тот же job): сначала без remesh, потом как Medium. Юзер просил Realistic, получил более лёгкий меш.
+
+- Поле: `qualityReduced: true`
+- Текст: `qualityReducedCopy` — «Качество снижено, чтобы модель собралась.»
+- **Не** показывать `downgrade_reason`, CUDA, OOM.
+- На удачных смоках рыцаря/сундука этого не было (`false`).
 
 ### Карточка модели (обязательно IBL)
 
@@ -169,7 +226,7 @@ A UX: locked. Bridge + presets ✅. Lab прототип ✅. Пакет тов�
 - Studio/Gallery/Outdoor = циклорама (без серого диска на горизонте). Neon/Night = чёрная пустота + контактная тень.
 - Neon/Night = wow only, не для приёмки материала.
 - Visual сайта: **ruby-jelly** (rose/coral), не cosmic cyan.
-- Файл вьюера: **`.js`**, не `.mjs` (Windows `http.server` ломает modules).
+- Файл вьюера: **`.js`**, не `.mjs`.
 
 ### Честный продукт (не обещать)
 
@@ -181,5 +238,5 @@ A UX: locked. Bridge + presets ✅. Lab прототип ✅. Пакет тов�
 ### Живой движок (для них не трогать GPU)
 
 - Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ffd6d36`, **v17**.
-- Smoke рыцарь Realistic: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish).
-- Публичный GLB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb`
+- Realistic рыцарь: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb`
+- Medium сундук: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb`

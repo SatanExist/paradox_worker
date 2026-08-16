@@ -43,7 +43,22 @@ def normalize_job_payload(
         "handlerMs": handler_ms or None,
         "delayTimeMs": runpod_payload.get("delayTime"),
         "executionTimeMs": runpod_payload.get("executionTime"),
+        "qualityReduced": False,
+        "qualityTierRequested": None,
+        "qualityTierUsed": None,
+        "modelBytes": None,
     }
+    if isinstance(output, dict):
+        reduced = bool(output.get("downgraded"))
+        result["qualityReduced"] = reduced
+        result["qualityTierRequested"] = output.get("quality_tier_requested")
+        result["qualityTierUsed"] = output.get("quality_tier_used")
+        result["modelBytes"] = output.get("model_bytes")
+        if reduced:
+            # Never forward CUDA/OOM strings to the Studio UI.
+            result["qualityReducedCopy"] = (
+                "Качество снижено, чтобы модель собралась."
+            )
     if status == "ready" and not result["modelUrl"]:
         result["status"] = "failed"
         result["error"] = result["error"] or "COMPLETED without model_url"

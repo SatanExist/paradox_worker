@@ -59,7 +59,7 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/postSideBackPlan.md` | **Roadmap после тупика** (P1–P4) |
 | `memory-bank/reconViaGenMvRefiner.md` | **D-track MASTER:** ReconViaGen integration + smart fusion |
 | `memory-bank/multiViewFusionResearch.md` | **Research:** multi-view series ↔ 3D fusion (T2/Meshy/papers) |
-| `memory-bank/productMultiUx.md` | **Путь A** + **§11 пакет товарищу** (ещё не слали) |
+| `memory-bank/productMultiUx.md` | **Путь A** + **§11 пакет товарищу** (промпт Cursor + R2 демо) |
 | `memory-bank/synthMultiViewProd.md` | Synth/img2mv→shape (**🔴 FROZEN 2026-08-13**) |
 | `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
 | `scripts/wonder3d_mv2_spike.md` | MV2 Wonder3D (soft-NO-GO 2026-08-07) |

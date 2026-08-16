@@ -62,7 +62,7 @@
 | **Мастер** | `memory-bank/productMultiUx.md` |
 | **Bridge** | ✅ `viewSlots` + `/api/product-copy` |
 | **Локальный lab** | ✅ `studio_lab.html` + `model_review.html` + `studio_viewer.js` (свет Studio/Gallery/Outdoor/Neon/Night) |
-| **Studio UI** | ⏳ товарищ в AI_MESH — **пакет ещё не отправляли** |
+| **Studio UI** | ⏳ товарищ в AI_MESH — пакет §11 готов, нужен `git pull` после push |
 | **Наш next по P1** | не блокер; smoke реальных фото когда будут |
 
 ---
@@ -954,7 +954,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-16 веч | Pedrokita | Memory: v17 + пакет §11 не слали; lab циклорама вместо диска | commit lab когда скажет; GPU off |
+| 2026-08-16 веч | Pedrokita | §11 Cursor-пакет + qualityReduced в bridge; Medium сундук OK | push; Low/High smoke; UI у товарища |
 | 2026-08-16 веч | Pedrokita | Realistic v17 PNG+polish OK (`13796711…e2` ~97MB); Review UI глаза «чудесно» | memory; сайт позже |
 | 2026-08-16 веч | Pedrokita | T2 New Release v17 `trellis2-sha-ffd6d36` (PNG+polish) | smoke Realistic; lab UI; продукт у товарища |
 | 2026-08-16 веч | Pedrokita | Локальный lab: generate + studio/inspect viewer | продукт UI у товарища; CI → New Release T2 |

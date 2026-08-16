@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from studio_bridge.normalize import normalize_job_payload  # noqa: E402
 from studio_bridge.product_multi_ux import (  # noqa: E402
     normalize_view_slots,
     resolve_image_sources,
@@ -21,7 +22,7 @@ from studio_bridge.tiers import (  # noqa: E402
 )
 
 
-def main() -> int:
+def main() -> None:
     assert resolve_preset_id("preview") == "low"
     assert resolve_preset_id("quality") == "medium"
     assert resolve_preset_id("ultra") == "high"
@@ -73,8 +74,6 @@ def main() -> int:
     assert "texture_size" not in clay
     assert "soft_input" not in clay
 
-
-def main() -> None:
     assert normalize_view_slots({"front": "https://a"}) == ["https://a"]
     assert normalize_view_slots(
         {"front": "https://a", "back": "https://b", "side": "https://c"}
@@ -99,6 +98,28 @@ def main() -> None:
     ids = [p["id"] for p in bundle["qualityPresets"]]
     assert ids == ["low", "medium", "high", "realistic"]
     assert bundle["qualityPresets"][3]["textureSize"] == 4096
+
+    reduced = normalize_job_payload(
+        {
+            "id": "job-1",
+            "status": "COMPLETED",
+            "output": {
+                "model_url": "https://example.com/a.glb",
+                "delivery": "r2",
+                "downgraded": True,
+                "quality_tier_requested": "ultra",
+                "quality_tier_used": "quality",
+                "model_bytes": 12,
+                "billing": {"handler_ms": {"model_load_ms": 0}},
+            },
+        },
+        tier_cold_eta_sec=600,
+        tier_warm_eta_sec=300,
+    )
+    assert reduced["qualityReduced"] is True
+    assert reduced["qualityTierUsed"] == "quality"
+    assert "OOM" not in (reduced.get("qualityReducedCopy") or "")
+    assert reduced["status"] == "ready"
 
     try:
         normalize_view_slots({"side": "https://x"})

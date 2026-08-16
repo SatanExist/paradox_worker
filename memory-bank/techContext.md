@@ -304,7 +304,11 @@ Response:
   "isWarm": false,
   "handlerMs": { "model_load_ms": 0, "inference_ms": 61972, ... },
   "delayTimeMs": 152142,
-  "executionTimeMs": 245657
+  "executionTimeMs": 245657,
+  "qualityReduced": false,
+  "qualityTierRequested": "medium",
+  "qualityTierUsed": "medium",
+  "modelBytes": 24463304
 }
 ```
 
@@ -314,14 +318,14 @@ Response:
 |----------|------------------------|
 | `queued` | «В очереди…» |
 | `running` | «Генерируем 3D…» |
-| `ready` | Открыть `modelUrl` в viewer |
+| `ready` | Открыть `modelUrl` в viewer. Если `qualityReduced` — бейдж, не CUDA-текст |
 | `failed` | Ошибка + retry |
 
 **ETA:** до первого poll показывать `etaSecondsCold`; если недавно был job на том же tier — `etaSecondsWarm`. После `ready`: `isWarm === true` → warm был фактически.
 
 **Poll interval:** 3–5 с, timeout UI ~10–15 мин (preview cold до ~6 мин).
 
-**Viewer:** GLB по `modelUrl` (Three.js / model-viewer). Не ждать base64.
+**Viewer:** GLB по `modelUrl` (Three.js). Не ждать base64. Realistic ~97 MB, Medium ~25 MB — CDN R2, не JSON. Превью-меш/Draco — позже; сейчас карточка грузит тот же файл.
 
 **Фронт не вызывает RunPod напрямую** — только эти 2 ручки (или их копия в Next.js API routes).
 

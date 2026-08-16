@@ -192,7 +192,14 @@ git push
 
 ## Промпты-копипаста
 
-**Начало сессии:**
+**Товарищ — Studio UI в AI_MESH (другой репо):**
+
+```
+git pull в paradox_worker (ветка feat/trellis2-poc).
+Открой AI_MESH в Cursor. В новый чат вставь промпт из
+memory-bank/productMultiUx.md §11 («Промпт в новый чат Cursor»).
+GPU не трогай. Демо-GLB — публичные ссылки R2 в том же §11.
+```
 
 ```
 @memory-bank/activeContext.md
