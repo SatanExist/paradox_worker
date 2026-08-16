@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-16 вечер** — T2 **v17** (`trellis2-sha-ffd6d36`) Realistic PNG+polish глазами OK. Lab: generate + Review (Studio/Gallery/Neon). Пакет товарищу **ещё не слали**.
+Последнее обновление: **2026-08-16 вечер** — глаза: **High ≈ Realistic** на рыцаре (тот же ultra, 2K vs 4K). Персонаж в UI = High. Пакет §11 на `feat/trellis2-poc`. GPU off.
 
 ---
 
@@ -18,6 +18,7 @@
 | **MV-Adapter** | только чистый проп / retexture готового меша, не спасение орнамента |
 | **Не путь** | Hunyuan Paint; img2mv; knobs ради зада; Meshy-герой с 1 фото на T2 |
 | **Сайт** | товарищ (слоты); мы — generation |
+| **DCC позже** | Blender/Unreal/Cursor MCP = клиенты **того же** `studio_api`, не сырой RunPod |
 
 Мастер: `t2InternetAudit.md`. Tex: `textureWowPlan.md` § Аудит + W3. Spike: `scripts/mvpainter_w3_spike.md`.
 
@@ -31,6 +32,19 @@
 | **Этот ПК / Pedrokita** | **Generation:** freeze native T2 PBR + W3 delight; не сайт |
 | **Контракт** | bridge `viewSlots` + `GET /api/product-copy` уже в paradox_worker |
 | **Не делать здесь** | вёрстка Studio / landing |
+| **Позже, не сейчас** | MCP / аддон Blender / плагин Unreal — те же jobs+product-copy; ключ RunPod только на бэке |
+
+---
+
+## ⏸ DCC / агенты (решение 2026-08-16)
+
+| | |
+|--|--|
+| **Ролик** | Claude Code/Cursor = дирижёр, не shape. Blender MCP ≠ img2mesh. 3D с фото = API (Fal/Meshy/**наш T2**) |
+| **Наш слой** | форма = T2 `studio_api`. Агент/Blender/Unreal = клиенты |
+| **Когда** | после Studio на сайте. Не пилить MCP в этом спринте |
+| **Как** | `generate` / `status` / `presets` над уже существующим API; GLB с R2 → Import |
+| **Не** | ключ RunPod в `.blend` / плагине Unreal; ждать что Claude вылепит рыцаря в Blender |
 
 ---
 
@@ -42,7 +56,7 @@
 | **Baseline** | native PBR PNG — 528k V / 669k F |
 | **W3a** | 🟢 PASS + **в worker** (High/Realistic `material_polish`) |
 | **W3b** | ⏸ MVPainter ≥40GB только если polish мало |
-| **Next** | пакет в AI_MESH **позже**; GPU не жечь; MVPainter не next |
+| **Next** | глаза High vs Realistic опц.; GPU off; DCC не сейчас |
 | **W2b** | закрыт как prod character path |
 
 ## ⚪ P2 Texture W2b — closed for character
@@ -62,8 +76,8 @@
 | **Мастер** | `memory-bank/productMultiUx.md` |
 | **Bridge** | ✅ `viewSlots` + `/api/product-copy` |
 | **Локальный lab** | ✅ `studio_lab.html` + `model_review.html` + `studio_viewer.js` (свет Studio/Gallery/Outdoor/Neon/Night) |
-| **Studio UI** | ⏳ товарищ в AI_MESH — пакет §11 готов, нужен `git pull` после push |
-| **Наш next по P1** | не блокер; smoke реальных фото когда будут |
+| **Studio UI** | ⏳ товарищ: `git pull` ветки `feat/trellis2-poc`, промпт §11 |
+| **Наш next по P1** | не блокер; не жечь GPU |
 
 ---
 
@@ -106,7 +120,7 @@
 | **P3** | Tier freeze в продукте (пресеты уже в `product-copy`) |
 | **P4.0** | RVG только под реальные слоты |
 | **P4.1** | Hi3DGen / TripoSG — микро-геометрия, не «золотее» |
-| **Next** | не слать пакет пока; GPU off; дожим lab viewer |
+| **Next** | UI у товарища (pull). GPU off. MCP/Blender — later, тот же API |
 
 ---
 
@@ -118,7 +132,7 @@
 | **Решение** | Default = 1 фото + честный потолок; опция Front+Side+Back+Extra (**реальные** фото) |
 | **Fusion** | naive T2 stochastic пока; RVG tier когда endpoint и реальные виды |
 | **Не продукт** | Gemini/AI sheet / synth img2mv |
-| **Next** | пакет §11 `productMultiUx.md` — **ещё не слали** |
+| **Next** | пакет §11 на `feat/trellis2-poc` — товарищ `git pull` + Cursor в AI_MESH |
 
 ---
 
@@ -224,7 +238,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | T2 v17 freeze + lab viewer; пакет AI_MESH **позже** |
+| Фокус | полка v17 смокнута; UI у товарища; DCC/MCP later |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -954,7 +968,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-16 веч | Pedrokita | §11 Cursor-пакет + qualityReduced в bridge; Medium сундук OK | push; Low/High smoke; UI у товарища |
+| 2026-08-16 веч | Pedrokita | Глаза: High ≈ Realistic на рыцаре (2K vs 4K, тот же меш) | персонаж в UI = High; Realistic не продавать как wow |
+| 2026-08-16 веч | Pedrokita | §11 Cursor-пакет + qualityReduced; push `590565b`; Medium/Low сундук, High рыцарь | UI у товарища |
 | 2026-08-16 веч | Pedrokita | Realistic v17 PNG+polish OK (`13796711…e2` ~97MB); Review UI глаза «чудесно» | memory; сайт позже |
 | 2026-08-16 веч | Pedrokita | T2 New Release v17 `trellis2-sha-ffd6d36` (PNG+polish) | smoke Realistic; lab UI; продукт у товарища |
 | 2026-08-16 веч | Pedrokita | Локальный lab: generate + studio/inspect viewer | продукт UI у товарища; CI → New Release T2 |

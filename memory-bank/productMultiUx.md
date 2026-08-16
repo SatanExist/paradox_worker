@@ -152,6 +152,7 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 
 Сделай Studio:
 1. Селектор Low / Medium / High / Realistic из qualityPresets. Default medium.
+   Персонаж: High. Realistic = 4K того же меша, на карточке как High, файл тяжелее.
 2. Слоты: Front обязателен; Side / Back / Extra опционально. Пустые не слать.
 3. Карточка модели: IBL + орбита. Идеи света из paradox_worker/scripts/studio_viewer.js
    (Studio/Gallery судить материал; Neon/Night только wow). Визуал сайта: ruby-jelly
@@ -163,10 +164,14 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
    Не ждать base64. Превью-меш/Draco — не в этой задаче.
 
 Демо без генерации:
-- Realistic рыцарь (~97 MB):
-  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb
+- Low сундук (~12 MB):
+  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/18c5eae7-656b-4ea2-afec-bf91bb2b5b40-e2.glb
 - Medium сундук (~25 MB):
   https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb
+- High рыцарь (~47 MB, 2K+polish):
+  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/315cf9fb-d9de-4349-900c-0cf2b09a6aa2-e1.glb
+- Realistic рыцарь (~97 MB):
+  https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb
 
 Честно: 1 фото = сильный перед; бок/зад = догадка. AI-sheet не режим.
 ```
@@ -188,14 +193,16 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 
 | Кнопка | Worker | Tex | Soft | Polish | ETA cold/warm (4090, честно) | Типичный GLB |
 |--------|--------|-----|------|--------|------------------------------|--------------|
-| Low | preview / 512 | 1024 | нет | нет | ~6 мин / ~45 с | маленький |
+| Low | preview / 512 | 1024 | нет | нет | ~6 мин / ~45 с | ~12 MB (сундук) |
 | Medium | quality / 1024 | 2048 | да, hole 0.1 | нет | ~8 мин / ~4 мин | ~25 MB (сундук) |
-| High | ultra / 1536 | 2048 | нет | да | ~10 мин / ~5 мин | меньше Realistic |
-| Realistic | ultra / 1536 | **4096** | нет | да | ~12 мин / ~6 мин | ~97 MB (рыцарь) |
+| High | ultra / 1536 | 2048 | нет | да | ~10 мин / ~5 мин | ~47 MB (рыцарь 2K) |
+| Realistic | ultra / 1536 | **4096** | нет | да | ~12 мин / ~6 мин | ~97 MB (рыцарь 4K) |
 
 Не писать «4–80 секунд» как у Rodin. Cold = поднятие воркера.
 
 Пресеты = **лестница детализации одного T2 PBR**, не «реализм vs стилизация». Стиль задаёт фото.
+
+**Глаза 2026-08-16 (рыцарь):** High и Realistic на карточке **одинаковы**. Одинаковый ultra-меш; разница только 2K vs 4K (~47 vs ~97 MB). Для Studio персонажа рекомендовать **High**. Realistic — если нужен 4K вблизи / экспорт в DCC.
 
 ### Тяжёлый GLB — как делают крупные (и что делаем мы)
 
@@ -209,6 +216,10 @@ Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут 
 | 4K PNG | редко в веб-карточке | Realistic = PNG 4K специально для Blender/совместимости |
 
 **Не делать в этой задаче UI:** второй worker «сжать в Draco». Карточка честно грузит R2. Если тормозит — позже Low как proxy или Draco, не сейчас.
+
+### DCC later (Blender / Unreal / Cursor)
+
+Не в этой задаче сайта. Когда дойдём: аддон/MCP бьёт в **тот же** API, что Studio. Агент не считает 3D — ждёт `modelUrl` и импортирует GLB. RunPod-ключ на сервере, не в DCC.
 
 ### Бейдж `qualityReduced` (это не стиль)
 
@@ -238,5 +249,7 @@ Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут 
 ### Живой движок (для них не трогать GPU)
 
 - Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ffd6d36`, **v17**.
-- Realistic рыцарь: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb`
-- Medium сундук: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb`
+- Low сундук ~12 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/18c5eae7-656b-4ea2-afec-bf91bb2b5b40-e2.glb`
+- Medium сундук ~25 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb`
+- High рыцарь ~47 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/315cf9fb-d9de-4349-900c-0cf2b09a6aa2-e1.glb`
+- Realistic рыцарь ~97 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/13796711-fc97-45cb-b6d3-580052cf5fb3-e2.glb`

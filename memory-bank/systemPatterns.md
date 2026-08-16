@@ -239,3 +239,9 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 - Расширение **`.js`**, не `.mjs`: `python -m http.server` на Windows отдаёт `.mjs` как `text/plain`, importmap не стартует.
 - Studio = IBL + циклорама (GroundedSkybox) + тень на полу, без серого диска. Inspect = сетка, без IBL.
 - Свет: Studio / Gallery / Outdoor / Neon / Night. Neon/Night не для приёмки материала.
+
+## DCC / MCP later (2026-08-16)
+
+Клиенты Blender, Unreal, Cursor — **тот же** `studio_api` (`/api/jobs`, `/api/product-copy`), не RunPod напрямую.  
+Claude Code не генерит меш: оркестрирует job → `modelUrl` → импорт. Blender MCP = скрипты в сцене, не TRELLIS.  
+Ключ GPU только на бэке. Не делать в текущем спринте.

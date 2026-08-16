@@ -106,7 +106,7 @@ _PRESET_SPECS: dict[CanonicalPreset, dict] = {
         "max_hole_perimeter": None,
         "material_polish": True,
         "label": "High",
-        "blurb": "Лучший фронт персонажа / сложного объекта. Дольше и дороже.",
+        "blurb": "Персонаж: тот же меш, что Realistic, текстуры 2K. На карточке обычно хватает.",
     },
     "realistic": {
         "quality_tier": "ultra",
@@ -119,7 +119,7 @@ _PRESET_SPECS: dict[CanonicalPreset, dict] = {
         "max_hole_perimeter": None,
         "material_polish": True,
         "label": "Realistic",
-        "blurb": "Максимум TRELLIS.2: нативный PBR 4K. Не Meshy-герой и не гарантия зада с 1 фото.",
+        "blurb": "Тот же меш, что High, но 4K. На орбите как High; запас для крупного плана / Blender. Файл ~вдвое тяжелее.",
     },
 }
 

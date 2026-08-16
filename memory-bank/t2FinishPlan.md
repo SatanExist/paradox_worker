@@ -37,12 +37,12 @@
 |---------------|--------|------------|
 | **low** (`preview`) | 512 textured 1K | быстрый превью |
 | **medium** (`quality`, default) | 1024 textured 2K + soft_input | предметы |
-| **high** (`ultra`) | 1536 native PBR 2K | персонаж |
-| **realistic** (`ultra` + 4K) | 1536 native PBR **4096** | максимум T2 |
+| **high** (`ultra`) | 1536 native PBR 2K + polish | персонаж на карточке |
+| **realistic** (`ultra` + 4K) | тот же меш, **4096** | глаза ≈ High; файл тяжелее |
 
 **Ultra = rt6** в коде: `quality_tier=ultra` → steps50, gi01 interval, 700k decim, remesh on.
 
-**Character path:** рекомендовать **ultra**; при OOM → auto-downgrade quality (уже в worker).
+**Character path:** рекомендовать **High** (карточка). Realistic = 4K того же меша, не «другая красота».
 
 **Props path:** **quality** + `softInput` в Studio bridge.
 
