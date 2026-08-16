@@ -99,6 +99,7 @@ COPY worker_trellis2.py /app/worker_trellis2.py
 COPY runpod_billing.py /app/runpod_billing.py
 COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
 COPY studio_bridge/soft_input.py /app/studio_bridge/soft_input.py
+COPY studio_bridge/material_polish.py /app/studio_bridge/material_polish.py
 COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
 # Community PR #104 multi-image fusion (monkeypatch; stock TRELLIS.2 main lacks it)
 COPY studio_bridge/trellis2_multi_image.py /app/trellis2_multi_image.py

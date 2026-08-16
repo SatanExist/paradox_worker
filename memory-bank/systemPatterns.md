@@ -85,6 +85,14 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026-07-31 | Качество = макро / микро-геометрия / текстура отдельно | T2 clay рыцарь: макро вау, микро месиво; tex смотреть после изоляции (E2) |
 | 2026-08-03 | Front clay recipe = **1536+remesh+700k+steps50+RGB**; не cutout; не no-remesh max-q | Матрица A–G: 1536+sampler = big+; табард каша = остаток; seeds отложены |
 | 2026-08-03 | `remesh_project` не рычаг sharpness на этом ассете | F@D' / G = same |
+| 2026-08-11 | **Тяжёлые GPU-стеки (T2/RVG/MV): сразу Dockerfile + GHCR image**, не голый pod + upstream `setup.sh` | D3 ReconViaGen: ToS/torch/sudo/hub/o-voxel hell; pod = только emergency eyes; prod = D4 image |
+| 2026-08-13 | **Класс MIT img2mv→shape FROZEN** | Нет коммерчески чистого Meshy-класса img2mv в OSS/EU. RVG = fusion реальных видов, не 1-photo. Next = P1 UX + P2 tex; 1-photo back = native 3D P4.1 |
+
+## Spike ops (обязательно)
+
+- **Pod + oneshot** — допустим только для короткого smoke, если образ уже есть или deps trivial.
+- **Новый тяжёлый стек** (conda, CUDA extensions, TRELLIS-класс) → **сначала `Dockerfile.*` в CI**, потом endpoint/pod на готовом image.
+- Upstream `setup.sh` на RunPod почти всегда ломается (`sudo`, pins, submodules) — не строить на нём прод-путь.
 
 ## Будущее (когда будет сайт)
 

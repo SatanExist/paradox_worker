@@ -35,7 +35,8 @@
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
-| `scripts/studio_api.py` | POC HTTP API: `POST/GET /api/jobs` для Studio |
+| `scripts/studio_api.py` | POC HTTP API: jobs + `GET /api/product-copy` + `viewSlots` |
+| `studio_bridge/product_multi_ux.py` | P1: slot order, Studio copy, normalize viewSlots |
 | `scripts/reconviagen_infer.py` | Headless RVG infer (pod smoke / local with GPU) |
 | `scripts/reconviagen_hf_smoke.py` | HF Space API smoke (eyes only; не prod) |
 | `docker/smoke_reconviagen_imports.py` | Build-time import/.so checks для `Dockerfile.reconviagen` |
@@ -62,7 +63,7 @@
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
   - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ad1bca9`)
-  - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (CI: `build-reconviagen.yml`)
+  - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (актуальный: `reconviagen-sha-a48c0e3`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
 - **Network volume** (mount `/runpod-volume` на Pod часто как `/workspace`):
@@ -178,11 +179,11 @@ Studio без этой переменной остаётся на v0 bake.
 5. `output.billing.handler_ms.model_load_ms === 0` → warm факт
 
 **T2 input (доп. поля):** `pipeline_type`, `texture_mode`, `decimation_target`, `preprocess_image`, `remesh`, `remesh_project`, `remesh_band`, `max_hole_perimeter` (tier `quality` default **0.1**), `remove_small_cc`, `return_base64`, `quality_max`, `quality_tier` (`preview`/`quality`/`ultra`), `allow_downgrade` (default true), `soft_input` (default false; G1d mid-prop soft-norm), `soft_input_strength` (default **0.75**), `max_num_tokens`, `sparse_structure_sampler_params`, `shape_slat_sampler_params`, `tex_slat_sampler_params`; `texture_size` только при `textured`.  
-**Multi-view:** `image_urls` (2–8 URL) и/или `image_url`; `multi_image_mode` = `multidiffusion` (default) | `stochastic`. CLI: `test_req_trellis2.py --image-urls …` / `--quality-tier ultra` / `--soft-input`.
+**Multi-view:** `image_urls` (2–8 URL) и/или `image_url`; `multi_image_mode` = `multidiffusion` (default) | `stochastic`. CLI: `test_req_trellis2.py --image-urls …`. **Prod:** только реальные согласованные фото; synth/img2mv **frozen** (`synthMultiViewProd.md` §14). Naive multi на конфликте хуже single. ReconViaGen = другой слой (fusion реальных видов). 1-photo Meshy-зад = P4.1 native 3D, не этот API.
 
 **Soft-norm (G1d):** `studio_bridge/soft_input.py` — поднимает тёмные борозды/тени на RGB до локального цвета; CLI `scripts/make_chest_soft_input.py`. Product default offline until Studio `solid` mode; worker opt-in.
 
-**MV2 (synth, 2026-08-05):** кандидат **Wonder3D** MIT — 1 RGB → 6 ortho views (color+normal, 256²). Spike: `scripts/wonder3d_mv2_spike.md`. Product path = views → T2 `image_urls` (не Wonder3D Instant-NSR mesh). Era3D = R&D only (AGPL).
+**MV2 (synth, 2026-08-05 → frozen 2026-08-13):** кандидат Wonder3D MIT прогнан (blob). Product path «views → T2» **не существует**. Era3D = AGPL. См. `synthMultiViewProd.md` §14.
 
 **Sampler params (каждый блок):** `steps` (1–100), `guidance_strength`, `guidance_rescale`, `rescale_t`, `guidance_interval` `[lo,hi]` (CFG window on t; HF default SS/shape `[0.6,1.0]`, tex `[0.6,0.9]`).
 
@@ -211,7 +212,8 @@ Studio без этой переменной остаётся на v0 bake.
 ### Studio Bridge API (POC, 2026-07-20)
 
 Локально: `python scripts/studio_api.py` → `http://127.0.0.1:8787` (Swagger `/docs`).  
-Код: `studio_bridge/`, smoke: `scripts/studio_smoke.py`.
+Код: `studio_bridge/`, smoke: `scripts/studio_smoke.py`.  
+**P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.
 
 **Base URL (dev):** `http://127.0.0.1:8787`
 
@@ -227,7 +229,7 @@ Request (single photo):
 ```json
 {
   "mode": "image",
-  "tier": "preview",
+  "tier": "medium",
   "imageUrl": "https://example.com/photo.png",
   "seed": 1
 }
@@ -252,11 +254,12 @@ Request (user multi-photo, 2–4 views → T2 `image_urls`):
 | Поле | Тип | Обязательно | Описание |
 |------|-----|-------------|----------|
 | `mode` | `"image"` \| `"text"` | нет (default `image`) | `text` — позже, нужен `OPENAI_API_KEY` на бэке |
-| `tier` | `"preview"` \| `"quality"` | нет (default `preview`) | preview=512/tex1024; quality=1024_cascade/tex2048 |
+| `tier` | `low` \| `medium` \| `high` \| `realistic` | нет (default **`medium`**) | Пресет качества. Legacy: `preview`→low, `quality`→medium, `ultra`→high. Все шлют **native PBR** (`texture_mode=textured`). |
+| `textureMode` | `"textured"` \| `"clay"` | нет | Override. Product = textured. clay только debug. |
+| `softInput` | bool \| omit | нет | omit = default пресета (medium=true, остальные false) |
 | `imageUrl` | string | да для `mode=image` (если нет `imageUrls`) | Публичный https URL одной картинки |
 | `imageUrls` | string[] | да для multi (2–4 URL) | User multi-photo → RunPod `image_urls`; `imageUrl` в ответе = первый элемент |
 | `multiImageMode` | `"stochastic"` \| `"multidiffusion"` | нет (default **`stochastic`**) | T2 fusion mode при `imageUrls` |
-| `softInput` | bool | нет (default false) | Mid-prop holes gate: soft-norm входа (strength 0.75) |
 | `prompt` | string | да для `mode=text` | Текстовый prompt |
 | `seed` | int | нет (default 1) | Seed генерации |
 
@@ -265,7 +268,7 @@ Response `200`:
 {
   "jobId": "bb74f5b8-e081-4e04-b8e4-b166a8d9fb95-e1",
   "mode": "image",
-  "tier": "preview",
+  "tier": "medium",
   "endpointId": "ynzpzjvcbfl656",
   "imageUrl": "https://...",
   "imageUrls": ["https://...", "https://..."],

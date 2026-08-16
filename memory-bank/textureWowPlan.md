@@ -55,19 +55,30 @@ Meshy на той же картинке держит орнамент в Solid.
 | Paint / W2b / serverless wow на мыльном clay | Красим мыло |
 | E2: Meshy-меш + наша краска | Unit economics / не prod |
 
-### Порядок
+### Порядок (обновлено 2026-08-13)
 
 ```
-1a. A/B нашего T2 (remesh / 1536 / denser / gi01+rt6) — ✅ DONE, recipe закрыт
-1b. Shape next (выбрать): synth MV→T2  |  Hi3DGen  |  user multi-view
-2. UV / poly (не убивая HF)
-3. Texture (MV-Adapter W2 → W2b)
-4. PBR / viewer
+1a. T2 clay recipe ultra rt6 — ✅
+1b. Synth MV→T2 — 🔴 FROZEN
+1c. Real multi / RVG — ⏸ (товарищ UI; GPU позже)
+1d. Texture MV-Adapter W2b — 🟢 PROD PATH #1 (сейчас)
+1e. PBR tier (MVPainter) — после стабильного albedo W2b
+1f. Hi3DGen shape — отдельно, если снова нужен Meshy-микро
 ```
+
+**2026-08-16:** Аудит глаз W2b 80k vs 200k → § «Аудит W2b / T2». «Плывёт» = mesh + baked light + albedo-only; не баг xatlas.
+
+**2026-08-13 веч:** Research AI-текстурирования → § «Research + prod path» ниже. Лучший prod = **отдельный texture stage** на best clay, не новый img2mv и не Hunyuan EU.
+
+**2026-08-13:** Generation focus = **W2b** (UI Studio = товарищ). Mesh: `smoke/armor_ultra_rt6_tex80k.glb`. Блокер: stale endpoint без xatlas (Open3D hang / preprocess SIGSEGV). GPU погашены.
+
+**2026-08-13:** Класс img2mv→shape **FROZEN**. См. `synthMultiViewProd.md` §14.
+
+**2026-08-10:** Unique3D full HQ = Gate A fail. Meshy docs: multi = **реальные** фото. **Hi3DGen ≠ TRELLIS.2** (отдельный normal-bridge стек). Pedrokita: сначала выжать T2, потом Hi3DGen.
 
 **2026-08-03:** Meshy UX = 1 фото → synth MV → shape/tex. У нас synth MV пока только на **texture**. T2 knobs recipe = rt6 (= tier `ultra`). **Hi3DGen отложен** до полного закрытия T2+texture.
 
-**2026-08-05:** Prod tiers live (`preview`/`quality`/`ultra` + OOM downgrade). **Не** per-asset presets — ladder + downgrade. Chest на downgrade (`quality`) = front ok, holes → **P2** в `activeContext.md`. Texture **X1–X2** после shape MV5 или параллельно W2b.
+**2026-08-05:** Prod tiers live. **Не** per-asset presets (R1: docs Microsoft/HF подтверждают — только knobs + known small holes). Chest holes = thin/open topology + quality downgrade, не «простой prop». CuMesh P2 ✅; дальше **MV2** + опц. **P2c Meshlib**. Texture **X1–X2** после clay.
 
 ### Кандидаты (сравнение «где лучше / где мы слабее»)
 
@@ -386,9 +397,9 @@ MV-Adapter = **не замена всего Meshy**. Это слой:
 |------|-----|------|--------|
 | **0** | Стоп-линия: paint frozen, T1c off, план в memory | 1 день | ✅ 2026-07-24 |
 | **1** | Cascade bake baseline; A/B vs Meshy | 3–7 дней | ✅ chest + **armor проигрыш по sharpness** |
-| **1b** | Prod tiers P1 + mesh P2 (holes на downgrade) | 2026-08 | P1 ✅; P2 🔄 |
+| **1b** | Prod tiers P1 + CuMesh P2; research R1 holes/presets | 2026-08 | P1+P2 ✅; P2c Meshlib ⏭ |
 | **2** | Synth multi-view texture POC (MV-Adapter → MVPainter) | 2–4 нед | 🔄 **W2 smoke ✅** → **W2b / X2** |
-| **2b** | Synth multi-view **shape** (Wonder3D → T2 multi) MV2–MV6 | 2–4 нед | ⏭ после P2 |
+| **2b** | Synth multi-view **shape** (Wonder3D → T2 multi) MV2–MV6 | 2–4 нед | 🔄 **MV2 spike** `scripts/wonder3d_mv2_spike.md` |
 | **3** | Production workers + Studio tier UX (P3) | 1–2 мес | ⬜ |
 | **4** | Polish: seams, upscale, viewer HDRI; multi-image UX | 2–4 нед | ⬜ |
 | **5** | Hard cases: characters, prompt retexture | ongoing | ⬜ |
@@ -553,6 +564,115 @@ python -m scripts.texture_i2tex \
 
 ---
 
+## Research AI-текстурирование + prod path (2026-08-13)
+
+> Источники: MV-Adapter README/HF demo; AnyLearn PBR lesson; Meshy Texture/8K/docs; Hunyuan Paint / MaterialMVP / RomanTex; MVPainter; Comfy paint tutorials; Tripo UV guides.
+
+### Универсальный рецепт (все туторы)
+
+```
+глина → cleanup/decimate → UV (xatlas)
+  → multi-view paint (6± видов + geometry)
+  → bake в UV + inpaint
+  → (вау) delighting + PBR maps
+  → GLB
+```
+
+Текстура = **отдельный продукт-этап**, не побочный bake формы. Meshy/Tripo/Hunyuan так и продают: можно перекрасить тот же меш.
+
+### Слои качества
+
+| Слой | Смысл | Наш статус |
+|------|-------|------------|
+| Albedo multi-view | цвет с видов → UV | W2 ✅ лучше cascade; W2b blocked infra |
+| UV/xatlas | без hang Open3D | код есть; **endpoint stale** |
+| Inpaint / view weights | щели | частично (LaMa в pipe) |
+| Delighting | убрать запечённый свет | ❌ ещё нет |
+| Full PBR (N/R/M) | металл/кожа | ❌; next = MVPainter |
+| 4K–8K atlas | резкость | Meshy 8K эталон; мы 2K |
+
+### Движки (EU self-host)
+
+| | Лицензия | Prod AI_MESH |
+|--|----------|--------------|
+| **MV-Adapter i2tex** | Apache + SDXL Community | ✅ **prod v1 texture** |
+| TRELLIS.2 cascade tex | MIT | mid only |
+| **MVPainter** | Apache-2.0 | ✅ candidate **v2 PBR** |
+| Hunyuan Paint / MaterialMVP | Community **не EU** | ❌ |
+| Meshy Texture | SaaS | эталон глаз |
+
+### Чеклист из туторов (= наш W2b)
+
+1. Repair holes → decimate (~80k для UV budget)  
+2. **xatlas** UV (не Open3D UVAtlas на serverless)  
+3. `preprocess_mesh` осторожно (HF demo default **off**; у нас SIGSEGV на stale)  
+4. uv_size 2048–4096; atlas **PNG**  
+5. Потом PBR / delighting отдельным шагом  
+
+### Официальные якоря
+
+- MV-Adapter: https://huanngzh.github.io/MV-Adapter-Page/ · https://github.com/huanngzh/MV-Adapter  
+- HF Img2Texture: https://huggingface.co/spaces/VAST-AI/MV-Adapter-Img2Texture  
+- Pipeline theory: https://anylearn.cc/lessons/ai-texturing-and-pbr  
+- Meshy PBR/8K: https://www.meshy.ai/tutorials/pbr-texturing-with-meshy · https://www.meshy.ai/blog/8k-texture  
+- MVPainter: https://github.com/amap-cvlab/MV-Painter  
+
+### Prod path одной фразой ( Pedrokita 2026-08-13 )
+
+**Лучший prod:** `1 фото → T2 ultra clay → MV-Adapter texture (xatlas) → GLB`; опция реальных ракурсов для формы; PBR (MVPainter) вторым релизом; Hunyuan/img2mv не трогать.
+
+Не лучший: новый synth→shape; красить Meshy-меш; ждать идеальный зад с 1 фото на T2.
+
+---
+
+## Аудит W2b / TRELLIS.2 (2026-08-16, Pedrokita)
+
+> Глаза: `armor_w2b_ultra_serverless.glb` (80k) vs `armor_w2b_ultra_tex200k.glb` (200k). Скрин «всё плывёт».
+
+### Что проверили (факты)
+
+| Прогон | Mesh | Exec | $ | Verts / Faces | Вердикт глаз |
+|--------|------|------|---|---------------|--------------|
+| Release 13 stale UV | tex80k | hang ~21 мин | wasted | — | CANCELLED (Open3D) |
+| Release 14 xatlas | tex80k | **219s** | **~$0.08** | 81k / 80k | издалека ок, вблизи фольга |
+| Release 14 + decimate 200k | tex200k | **823s** | **~$0.28** | 180k / 200k | ровнее 80k; **львы/меч всё ещё плывут** |
+
+Алгоритм paint после xatlas **не висел**. 200k ≈ линейно дороже, не hang.
+
+### Разбор «плывёт» по слоям
+
+| Что видно | Слой | Чинится текстурой? |
+|-----------|------|---------------------|
+| Львы/пояс каша, пальцы комком, меч волнами | **геометрия T2** (HF-шум, не скульптура) | **Нет.** Краска рисует по мятой глине |
+| Мятая фольга на 80k, чуть лучше на 200k | **quadric decimate** перед UV | Частично: 200k помогает макро; 669k full clay не красили |
+| Золото как пластик, выжженные блики | **запечённый свет с 1 фото** + один albedo | Да: delight + Metallic/Roughness (ещё нет) |
+| Шум, швы, золото течёт в чёрное | 2K atlas, мало inpaint, нет PBR | Да: 4K PNG, heal, PBR |
+| «Плывёт» при вращении | смесь: baked lighting + noisy normals глины | Viewer усиливает; корень = mesh + delight |
+
+**Уже закрыто A/B T2 (2026-08-02):** больше verts / no-remesh / 1536 **не** сделали львов читаемыми. Потолок T2 на этом character = сильный макро, слабый микро. Texture это **подтвердила**, не создала.
+
+### Честный best для T2 (не Meshy-клон) — **обновлено 2026-08-16**
+
+```
+Studio preview: T2 512 clay — силуэт
+Studio Standard/ultra: T2 native PBR (их Stage 3, без 80k cut, PNG)
+  — это «как в обзорах» на пропах; character = best-effort front
+Wow-2: delight/PBR на том же меше (W3a CPU → W3b MVPainter ≥40GB)
+MV-Adapter: чистый проп / retexture, НЕ рыцарь 80k
+Shape-upgrade: Hi3DGen / реальные слоты → RVG
+```
+
+**Не делать:** ещё paint на clay «пока не станет Meshy»; img2mv→T2; Hunyuan EU; knobs.
+
+### Next texture (W3)
+
+1. 🟢 **W3a PASS** 2026-08-16 (Pedrokita): delight+bump убедительнее; Env on/off ок  
+2. W3b MVPainter ⏸ не next (дорого, W3a хватило)  
+3. Product: `glb_delight_pbr.py` post-step на textured T2; Studio IBL; PNG export  
+4. Hi3DGen — только микро-геометрия, не параллельно
+
+---
+
 ## W2 checklist (текущий)
 
 - [x] Лицензия Apache-2.0
@@ -574,14 +694,13 @@ python -m scripts.texture_i2tex \
 
 | # | Task | Owner | Expected win |
 |---|------|-------|--------------|
-| 1 | Mesh inspect + repair (holes, non-manifold) before texture | paradox_worker | меньше **geometry** дыр |
-| 2 | `texture_i2tex --preprocess_mesh` + orientation doc | paradox_worker | меньше UV щелей |
-| 3 | PNG albedo in GLB export (patch gltflib save) | paradox_worker | меньше мыла |
-| 4 | `patch_glb_pbr.py` metallic/roughness from ref heuristics | paradox_worker | блики ближе к ref |
-| 5 | Sweep `reference_conditioning_scale`, steps 75 | pod smoke | цвет/резкость |
-| 6 | Clay A/B: щели на clay? → shape vs texture verdict | manual | decision tree |
-| 7 | Document RunPod download recipe (HTTP 8888) | spike.md | ops |
-| 8 | `--resume` in `mvadapter_create_pod.py` | paradox_worker | ops |
+| 1 | Mesh inspect + repair + **decimate ~80k** before texture | paradox_worker | ✅ mesh на R2 `tex80k` |
+| 2 | **New Release** mvadapter с xatlas path (не Open3D UVAtlas) | paradox_worker / RunPod | **блокер #1** |
+| 3 | Smoke W2b на ultra clay + глазами vs cascade | paradox_worker | после Release |
+| 4 | PNG albedo in GLB export | paradox_worker | меньше мыла |
+| 5 | `patch_glb_pbr` / later **MVPainter** | paradox_worker | PBR v2 |
+| 6 | Clay A/B: щели на clay? → shape vs texture | manual | decision tree |
+| 7 | Document download / ops; workersMin=0 | spike.md | ops |
 
 ---
 

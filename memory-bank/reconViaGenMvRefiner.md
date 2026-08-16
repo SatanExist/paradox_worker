@@ -1,17 +1,18 @@
 # D-track MASTER — ReconViaGen + умный multi fusion
 
-> **Статус:** 🟢 **HOT** — HF eyes GO-ish (Pedrokita «ОГО»); интеграция = отдельный shape engine  
-> **Обновлено:** 2026-08-11 (Pedrokita)  
+> **Статус:** 🟡 **paused GPU** — HF eyes GO-ish на **multi**; 1-photo ≠ Meshy; img2mv frozen отдельно  
+> **Обновлено:** 2026-08-13 (Pedrokita)  
 > **Мастер этой задачи:** **этот файл** (`reconViaGenMvRefiner.md`)  
-> **Связь:** `postSideBackPlan.md` P4.0, `t2FinishPlan.md` T4.1, `multiViewFusionResearch.md`, `productMultiUx.md`, `sideBackUnblock.md` (D)
+> **Связь:** `postSideBackPlan.md` P4.0, `synthMultiViewProd.md` (img2mv frozen — **не этот трек**), `productMultiUx.md`
 
 ---
 
 ## 0. Одной фразой
 
 **Naive T2 multi (average/stochastic) — закрыт.**  
-**ReconViaGen** — первый кандидат с **умным fusion** (+ VGGT); глаза на HF подтвердили.  
-**Prod:** не чинить `image_urls` в текущем worker, а **второй endpoint** (или позже patch fusion в T2 как R&D).
+**ReconViaGen** — умный **fusion** готовых видов (VGGT + adaptive weights). **Не рисует** side/back из 1 фото.  
+**Не путать с img2mv** (`synthMultiViewProd.md` frozen).  
+**Prod:** второй endpoint под **реальные** 2–4 фото; T2 ultra остаётся default 1-photo.
 
 ---
 
@@ -49,8 +50,10 @@ pred = sum(preds) / len(preds)   # multidiffusion
 
 | Идея | Вердикт |
 |------|---------|
-| Synth views (Gemini/U3D) → **наш** T2 `image_urls` | 🔴 closed |
+| Synth views (Gemini/U3D) → **наш** T2 `image_urls` | 🔴 closed; класс img2mv **FROZEN** |
+| Synth views → **ReconViaGen** | ❌ тот же мусор, умнее склеенный |
 | «ReconViaGen рисует виды → летят в наш T2» | ❌ не его API; T2 уже внутри RVG |
+| RVG как Meshy с 1 фото | ❌ 1-photo D4.2 без львов — ожидаемо |
 | Ждать PR #104 confidence fusion в stock T2 | ⏸ upstream WIP |
 | ComfyUI Nano Banana → naive Trellis tutorials | шум, не proof |
 | Wonder3D++ pod без бюджета/deps | ❌ C1 abort |
@@ -96,7 +99,9 @@ RGBA views (1–N)
 | T2 ultra single (Armor) | ✅ front baseline `t0_armor_ultra_s42.glb` |
 | T2 multi Gemini 4v | 🔴 мыло + debris |
 | T2 multi Gemini F+B pair | 🔴 мыло + **2 меча** + front smear |
-| **HF ReconViaGen** (Pedrokita eyes) | 🟢 **«ОГО»** — sharp side/back, 1 меч, PBR |
+| **HF ReconViaGen** (Pedrokita eyes) | 🟢 **«ОГО»** — sharp side/back, 1 меч, PBR — вход **несколько** видов |
+| D4.2 Gemini F+B `direct` | GLB OK, но вход Gemini (лишний меч сзади) — audit only |
+| D4.2 **1 photo** `direct` | GLB OK `r_d42_1p_armor.glb` — **нет** львов/орнамента сзади (норма 1-view) |
 
 **Артефакты:**
 
@@ -208,10 +213,10 @@ Prod idea: `1 foto → ultra` → optional refine если юзер дал Side/
 | D1 | HF eyes (Pedrokita ОГО) | ✅ |
 | D2 | GLB via HF smoke (API) | 🔴 HF queue/timeout — skip for prod |
 | D3 | Pod spike `v0.5` / oneshot F+B | 🔴 **ABORT** 2026-08-11 — deps hell (ToS/torch/sudo/hub/o-voxel/triton); pod terminated |
-| D4 | **`Dockerfile.reconviagen`** + handler + CI | 🟡 **IN PROGRESS** — scaffold готов; CI build = gate |
-| D4.1 | CI `build-reconviagen.yml` green | ⏳ **NEXT** после push |
-| D4.2 | Pod smoke на image: Armor F+B vs T2 ultra / naive multi | ⏳ после CI |
-| D4.3 | Endpoint + `RUNPOD_ENDPOINT_ID_RECONVIAGEN` + bridge tier | ⏳ после GO smoke |
+| D4 | **`Dockerfile.reconviagen`** + handler + CI | 🟢 **image live** `reconviagen-sha-a48c0e3` |
+| D4.1 | CI `build-reconviagen.yml` green | ✅ **2026-08-13** run [31637136318](https://github.com/SatanExist/paradox_worker/actions/runs/31637136318) |
+| D4.2 | Pod smoke на image | 🟢 `direct` GLB; `mesh` SIGSEGV; 1-photo ≠ Meshy |
+| D4.3 | Endpoint + bridge tier | ⏸ **pause GPU** до реальных слотов/съёмки |
 | D5 | (opt.) fusion patch в `trellis2_multi_image.py` | ⏸ после A/B |
 | D6 | (opt.) MV Refiner Comfy spike | ⏸ |
 
@@ -239,8 +244,8 @@ Prod idea: `1 foto → ultra` → optional refine если юзер дал Side/
 |-------|------|---------------|--------|
 | T2 single ultra | 1 img | single cond | ✅ prod clay |
 | T2 naive multi | N img | stoch / equal avg | 🔴 Gemini |
-| Synth → T2 | synth | naive | 🔴 |
-| **ReconViaGen v0.5** | 1–N img | VGGT + adaptive | 🟢 eyes hot |
+| Synth → T2 / img2mv | synth | — | 🔴 **FROZEN** |
+| **ReconViaGen v0.5** | real 2–N img | VGGT + adaptive | 🟡 pause GPU; 1-photo ≠ Meshy |
 | MV Refiner | mesh + N img | spatial blend | 🟡 secondary |
 | Hi3DGen / TripoSG | 1 img | other engine | ⏸ P4.1 |
 
@@ -259,12 +264,17 @@ Prod idea: `1 foto → ultra` → optional refine если юзер дал Side/
 | 2026-08-11 | **D3 ABORT:** pod terminated; Франкенштейн env (torch↔o_voxel↔flex_gemm/triton). Eyes HF всё ещё GO. |
 | 2026-08-11 | **Правило:** тяжёлые GPU-стеки — **сразу Dockerfile + image**, не голый pod + setup.sh |
 | 2026-08-12 | **D4 план:** CI build = gate; smoke на image; отдельный endpoint; P1 UX параллельно; D5 fusion patch только после A/B |
-| | **Next:** push scaffold → CI green → pod smoke F+B Armor |
+| 2026-08-13 | **D4.1 GREEN:** `ghcr.io/satanexist/paradox_worker:reconviagen-sha-a48c0e3`. Стек: torch 2.6 cu124, ATTN=sdpa, SPARSE=xformers (без flash-attn на GHA). |
+| 2026-08-13 | **D4.2 FAIL** pod `r6at1cvudzcdhm`: gated DINOv3 401. |
+| 2026-08-13 | **D4.2 FAIL** pod `saesiu52p4kkg8`: local T2/DINOv3 **OK**. Crash **не** T2 decode: после VGGT mesh sampling (2×12) VTK/PyVista `decimate` (`Loading`/`% done`), затем **SIGSEGV rc=139**. Это `ss_source=mesh` → `postprocess_mesh` (pyvista) → `_fill_holes` (nvdiffrast) / Open3D voxelize; VGGT ещё в VRAM. |
+| 2026-08-13 | **D4.2 GLB OK** pod `gmu68y4gr55gzh` 4090: `ss_source=direct`. Gemini F+B = audit. **1-photo** `r_d42_1p_armor.glb` 27.7 MB — не Meshy-зад. |
+| 2026-08-13 | img2mv класс frozen отдельно. **RVG next** = реальные Front+Side/Back, не новый synth. GPU pause пока нет слотов/съёмки. `mesh` path still SIGSEGV. |
 
 ---
 
 ## 12. Статус одной строкой
 
 ```
-D-track: D4 scaffold ready. Next = CI build → pod smoke on image → endpoint. P1 UX parallel.
+RVG: fusion engine for real 2–4 photos. Not img2mv. Not Meshy-1-photo.
+Image a48c0e3 live. Pause GPU until P1 slots or a real photoshoot.
 ```

@@ -1,8 +1,8 @@
 # Side / Back unblock — карта после тупика T2
 
-> **Статус:** 🟡 **ACTIVE** 2026-08-10 — C1 abort; B soft-NO-GO; research fusion → `multiViewFusionResearch.md`  
-> **Контекст:** 1-photo T2 front OK; Side/Back mid; MIT img2mv→T2 🔴; remesh knobs identical  
-> **Связь:** `t2FinishPlan.md`, `synthMultiViewProd.md`, `multiViewFusionResearch.md`, spikes W3D/U3D
+> **Статус:** 🔴 **img2mv search CLOSED 2026-08-13** — класс frozen; остаётся UX + tex + optional native 3D  
+> **Контекст:** 1-photo T2 front OK; Side/Back mid; MIT img2mv→T2 🔴 frozen; remesh knobs identical  
+> **Связь:** `synthMultiViewProd.md` (freeze), `postSideBackPlan.md`, `reconViaGenMvRefiner.md`
 
 ---
 
@@ -96,15 +96,15 @@ Gemini Flash дал **отличный** 2×2 sheet рыцаря (front/rear/lef
 | 2026-08-10 | **Roadmap** → `postSideBackPlan.md` (P1 UX → P2 tex → P3 freeze → P4 Hi3DGen) |
 | 2026-08-10 | **A pair smoke:** front+back → ultra stoch s42 `f63ea879-…` → `a_pair_front_back_ultra_stoch_s42.glb` (~$0.12) |
 | 2026-08-10 | **Eyes pair F+B (Pedrokita):** бок/зад пытаются; **весь меш мыло** (front smear); **2 меча** (рука+пояс) → soft-NO-GO |
-| | **Next:** P1 Studio / P2 tex; не Gemini→T2 |
+| 2026-08-13 | **Класс img2mv FROZEN** (интернет-срез). Open: P1 UX, P2 tex, P4.1 native 3D. D=RVG only for real photos. |
 
 ---
 
 ## 6. Статус одной строкой
 
 ```
-Dead: MIT img2mv→T2 + remesh + B Gemini4 + pair F+B Gemini + C1
-A:    productMultiUx.md ✅; Gemini multi soft-NO-GO (даже 2 вида)
-Plan: postSideBackPlan.md — P1 → P2 → P3 → P4
-Open: C2 Hi3DGen | F3 tex | F5 freeze
+Dead: весь класс img2mv→T2 (W3D/U3D/Gemini) + remesh + C1 AGPL
+A:    productMultiUx.md ✅
+D:    RVG = fusion real photos, not 1-photo Meshy
+Next: postSideBackPlan.md — P1 → P2 → P3; P4.1 if 1-photo back
 ```

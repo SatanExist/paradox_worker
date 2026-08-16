@@ -21,6 +21,33 @@
   <div id="bar">
     <strong>GLB preview</strong>
     <select id="file">
+      <option value="../preview_textures/armor_t2_ultra_native_pbr_delight.glb" selected>T2 ultra PBR + CPU delight/bump (W3a)</option>
+      <option value="../preview_textures/armor_t2_ultra_native_pbr_png.glb">T2 ultra native PBR (PNG atlas)</option>
+      <option value="../preview_textures/armor_t2_ultra_native_pbr.glb">T2 ultra native PBR (WebP atlas)</option>
+      <option value="../preview_textures/armor_w2b_ultra_tex200k.glb">W2b — ultra clay 200k faces (decimate A/B)</option>
+      <option value="../preview_textures/armor_w2b_ultra_serverless.glb">W2b — ultra clay MV-Adapter serverless 80k (Release 14)</option>
+      <option value="../preview_textures/reconviagen/r_d42_1p_armor.glb">D4.2 — RVG 1photo ref_gold_armor</option>
+      <option value="../preview_textures/reconviagen/r_d42_armor_fb.glb">D4.2 — ReconViaGen Gemini F+B (wrong input, audit)</option>
+      <option value="../preview_textures/mv4b_armor_single_q.glb">MV4b — single ref_gold_armor quality s42</option>
+      <option value="../preview_textures/mv4b_armor_u3d_stoch.glb">MV4b — U3D HQ → T2 stochastic</option>
+      <option value="../preview_textures/mv4b_armor_u3d_multid.glb">MV4b — U3D HQ → T2 multidiffusion</option>
+      <option value="../model-chest-soft-worker-v16.glb">G2 deploy — chest soft_input worker v16</option>
+      <option value="../model-chest-soft-worker.glb">G2 deploy — chest soft (stale worker 1st try)</option>
+      <option value="../model-lattice-soft75-quality.glb">G1e — lattice soft75 quality</option>
+      <option value="../model-lattice-raw-quality.glb">G1e — lattice raw quality (intentional mesh)</option>
+      <option value="../model-chest-soft75-quality.glb">G1d — chest soft75 input quality</option>
+      <option value="../preview_textures/model-chest-p2b-voxel384.glb">G1b — chest voxel384 (REJECTED aesthetic)</option>
+      <option value="../preview_textures/model-chest-p2b-voxel256.glb">G1b — chest voxel256 (REJECTED aesthetic)</option>
+      <option value="../preview_textures/model-chest-p2b-voxel128.glb">G1b — chest voxel128 (REJECTED aesthetic)</option>
+      <option value="../preview_textures/model-chest-p2b-pymeshlab-pod.glb">G1c — chest pymeshlab (pod)</option>
+      <option value="../model-chest-p2b-pymeshlab.glb">G1 — chest pymeshlab close holes</option>
+      <option value="../model-chest-p2b-repaired.glb">G1 — chest trimesh repair (weak)</option>
+      <option value="../model-chest-p2b-ultra.glb">P2b — chest ultra→quality + hole0.1 + post-remesh</option>
+      <option value="../model-chest-quality-hole01.glb">P2 — chest quality hole perimeter 0.1</option>
+      <option value="../model-chest-quality-baseline.glb">P2 — chest quality baseline (hole 0.03)</option>
+      <option value="../model-chest-ultra-downgrade2.glb">P1 — chest ultra→quality (before P2b)</option>
+      <option value="../model-chest-ultra-downgrade.glb">P1 — chest ultra→quality (1st smoke)</option>
+      <option value="../model-chest.glb">legacy — chest clay</option>
       <option value="../model-armor-clay-sampler50-pro-gi01-rt6-e800.glb">rt6+e800 — denser 800k</option>
       <option value="../model-armor-clay-sampler50-pro-gi01-rt6.glb">rt6 — gi01 + rescale_t 6/6 (BEST)</option>
       <option value="../model-armor-clay-sampler50-pro-gi01-hole01.glb">шаг5 — gi01 + hole perimeter 0.1</option>
@@ -61,7 +88,7 @@
     <button type="button" id="viewSide" title="Right side">Side</button>
     <button type="button" id="viewBack" title="Back">Back</button>
     <label><input type="checkbox" id="wireframe" /> Wireframe</label>
-    <label><input type="checkbox" id="fixMat" checked /> Fix metallic (Blender-like)</label>
+    <label title="Was ON by default and destroyed T2 metal maps; toggling could not restore them. Leave OFF for gold/PBR."><input type="checkbox" id="fixMat" /> Force matte (kill metal)</label>
     <label>Key <input type="range" id="keyLight" min="0" max="40" value="18" style="width:90px;vertical-align:middle" /></label>
     <label><input type="checkbox" id="envLight" checked /> Env light</label>
     <span id="status">Loading…</span>
@@ -135,7 +162,7 @@
       fill.intensity = Math.max(0.15, k * 0.35);
       rim.intensity = Math.max(0.2, k * 0.45);
       hemi.intensity = 0.35 + k * 0.12;
-      scene.environmentIntensity = envLightEl.checked ? 0.85 : 0.0;
+      scene.environmentIntensity = envLightEl.checked ? 1.15 : 0.0;
       // three r152+ uses environmentIntensity; older falls back via env map null
       if (!('environmentIntensity' in scene)) {
         scene.environment = envLightEl.checked ? envRT.texture : null;
@@ -149,6 +176,11 @@
     scene.add(grid);
 
     let root = null;
+    let lastFile = '';
+    let lastMeshNote = '';
+    // Original PBR factors per mesh (captured once). applyFixes used to
+    // clone-after-mutate, so unchecking Fix metallic could not restore gold.
+    const origPbr = new WeakMap();
 
     function resize() {
       const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -159,16 +191,36 @@
     window.addEventListener('resize', resize);
     resize();
 
+    function capturePbr(obj) {
+      obj.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        if (Array.isArray(child.material)) return;
+        if (!origPbr.has(child)) {
+          child.material = child.material.clone();
+          origPbr.set(child, {
+            metalness: child.material.metalness,
+            roughness: child.material.roughness,
+          });
+        }
+      });
+    }
+
     function applyFixes(obj) {
       obj.traverse((child) => {
-        if (!child.isMesh) return;
+        if (!child.isMesh || !child.material) return;
+        if (Array.isArray(child.material)) return;
         child.castShadow = true;
         child.receiveShadow = true;
-        child.material = child.material.clone();
         child.material.wireframe = wireframe.checked;
-        if (fixMat.checked && child.material.metalness !== undefined) {
-          child.material.metalness = 0.0;
-          child.material.roughness = 0.85;
+        const orig = origPbr.get(child);
+        if (orig && child.material.metalness !== undefined) {
+          if (fixMat.checked) {
+            child.material.metalness = 0.0;
+            child.material.roughness = 0.85;
+          } else {
+            child.material.metalness = orig.metalness;
+            child.material.roughness = orig.roughness;
+          }
         }
         child.material.needsUpdate = true;
       });
@@ -224,6 +276,7 @@
       try {
         const gltf = await loader.loadAsync(name);
         root = gltf.scene;
+        capturePbr(root);
         applyFixes(root);
         scene.add(root);
         frameObject(root);
@@ -235,7 +288,10 @@
             tris += g.index ? g.index.count / 3 : verts / 3;
           }
         });
-        status.textContent = `${name} OK — ~${Math.round(verts).toLocaleString()} verts, ~${Math.round(tris).toLocaleString()} tris`;
+        const matNote = fixMat.checked ? 'forced matte' : 'native PBR';
+        lastFile = name;
+        lastMeshNote = `~${Math.round(verts).toLocaleString()} verts, ~${Math.round(tris).toLocaleString()} tris`;
+        status.textContent = `${name} OK — ${lastMeshNote} — ${matNote}`;
       } catch (e) {
         status.textContent = `Error: ${e.message}. Run: python -m http.server 8765 from repo root.`;
         console.error(e);
@@ -248,7 +304,13 @@
     document.getElementById('viewBack').onclick = () => setOrbitView('back');
     fileSel.onchange = () => load(fileSel.value);
     wireframe.onchange = () => { if (root) applyFixes(root); };
-    fixMat.onchange = () => { if (root) applyFixes(root); };
+    fixMat.onchange = () => {
+      if (root) applyFixes(root);
+      if (lastMeshNote) {
+        const matNote = fixMat.checked ? 'forced matte' : 'native PBR';
+        status.textContent = `${lastFile} OK — ${lastMeshNote} — ${matNote}`;
+      }
+    };
 
     const params = new URLSearchParams(location.search);
     const q = params.get('file');

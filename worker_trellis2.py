@@ -387,6 +387,14 @@ def _generation_params(job_input: dict) -> dict:
 
     allow_downgrade = bool(job_input.get("allow_downgrade", True))
 
+    if "material_polish" in job_input:
+        material_polish = bool(job_input.get("material_polish"))
+    else:
+        # Eyes-pass on gold knight: polish on ultra textured. Opt out via false.
+        material_polish = texture_mode == "textured" and (
+            quality_tier == "ultra" or pipeline_type == "1536_cascade"
+        )
+
     # Infer effective tier label for response when only raw knobs were sent.
     if quality_tier is None:
         if (
@@ -427,6 +435,7 @@ def _generation_params(job_input: dict) -> dict:
         "quality_max": quality_max,
         "quality_tier": quality_tier_label,
         "allow_downgrade": allow_downgrade,
+        "material_polish": material_polish,
         "max_num_tokens": max_num_tokens,
         "multi_image_mode": multi_image_mode,
         "sparse_structure_sampler_params": _sampler_params_from_input(
@@ -1123,7 +1132,34 @@ def handler(job):
         if used_params["texture_mode"] == "clay":
             glb.export(glb_path)
         else:
-            glb.export(glb_path, extension_webp=True)
+            # PNG by default: Studio / three.js / Blender without EXT_texture_webp.
+            # WebP is smaller but many viewers miss metal/rough maps. Opt in via env.
+            use_webp = os.environ.get("TRELLIS2_GLB_WEBP", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            glb.export(glb_path, extension_webp=use_webp)
+
+        if (
+            used_params["texture_mode"] == "textured"
+            and used_params.get("material_polish")
+        ):
+            t_pol = time.perf_counter()
+            try:
+                try:
+                    from studio_bridge.material_polish import polish_glb_file
+                except ImportError:
+                    from material_polish import polish_glb_file  # type: ignore
+
+                polish_glb_file(Path(glb_path), Path(glb_path), bump=True)
+                print("material_polish=on (delight+bump)")
+            except Exception as exc:
+                print(f"WARN: material_polish failed ({exc}); delivering unpolished GLB")
+            handler_ms["material_polish_ms"] = int(
+                (time.perf_counter() - t_pol) * 1000
+            )
 
         t_deliver = time.perf_counter()
         delivery = _deliver_glb(glb_path, job_id, return_base64=return_base64)

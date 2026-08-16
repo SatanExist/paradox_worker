@@ -1,9 +1,9 @@
 # TRELLIS.2 finish — prod master
 
-> **Статус:** 🟡 **ACTIVE** — shape front/props ✅; side/back mid accepted; дальше P1 UX + P2 tex (`postSideBackPlan.md`); Hi3DGen = P4  
+> **Статус:** 🟡 **ACTIVE** — shape front/props ✅; side/back mid accepted; **img2mv frozen**; дальше P1 UX + P2 tex  
 > **Создан:** 2026-08-10 (Pedrokita)  
-> **Решение:** synth MV→T2 🔴 NO-GO; **не** бросаем T2 — freeze prod + tex + optional multi UX; Meshy-back с 1 фото ≠ T2 knobs  
-> **Связь:** `postSideBackPlan.md`, `textureWowPlan.md`, `midPropHolesGate.md`, `synthMultiViewProd.md`, `productMultiUx.md`
+> **Решение:** класс synth/img2mv 🔴 FROZEN; **не** бросаем T2 — freeze prod + tex + optional real multi UX; Meshy-back с 1 фото ≠ T2 knobs  
+> **Связь:** `t2InternetAudit.md` (как пользоваться T2), `postSideBackPlan.md`, `synthMultiViewProd.md` (§14 freeze)
 
 ---
 
@@ -25,18 +25,20 @@
 | no-remesh max-q | ✅ | дыры — не recipe |
 | cutout no-preprocess | ✅ | сплющило |
 | Mid-prop holes | ✅ | `soft_input` v16, chest GO |
-| Synth U3D/W3D → T2 | 🔴 NO-GO | `synthMultiViewProd.md` Gate E |
-| MV4b multi | 🔴 | хуже single (quality baseline) |
+| Synth U3D/W3D → T2 | 🔴 FROZEN класс | `synthMultiViewProd.md` §14 |
+| MV4b multi | 🔴 | хуже single |
+| Gemini sheet → T2 | 🔴 | smear + dual sword |
 
 ---
 
 ## 3. Prod recipe (freeze)
 
-| Tier | Когда | Shape | Input |
-|------|-------|-------|-------|
-| **preview** | demo / ETA | 512 clay | 1 photo |
-| **quality** | default props | 1024 clay + hole0.1 | 1 photo ± **soft_input** |
-| **ultra** | character / best-effort | **1536** rt6 recipe | 1 photo RGB + preprocess |
+| Studio preset | Worker | Что крутим |
+|---------------|--------|------------|
+| **low** (`preview`) | 512 textured 1K | быстрый превью |
+| **medium** (`quality`, default) | 1024 textured 2K + soft_input | предметы |
+| **high** (`ultra`) | 1536 native PBR 2K | персонаж |
+| **realistic** (`ultra` + 4K) | 1536 native PBR **4096** | максимум T2 |
 
 **Ultra = rt6** в коде: `quality_tier=ultra` → steps50, gi01 interval, 700k decim, remesh on.
 
@@ -92,8 +94,8 @@
 
 | # | Задача | Зачем |
 |---|--------|-------|
-| T4.1 | **ReconViaGen** integration | MASTER `reconViaGenMvRefiner.md`; D2 smoke → D4 worker |
-| T4.2 | User multi 2–4 фото → T2 naive | bridge ✅; prod only **real** photos; RVG tier separate |
+| T4.1 | **ReconViaGen** | fusion **реальных** фото; GPU pause до слотов; не 1-photo Meshy |
+| T4.2 | User multi 2–4 фото | bridge ✅; prod only **real**; RVG tier later |
 | T4.3 | (opt.) adaptive fusion patch in `trellis2_multi_image.py` | после pod A/B |
 | T4.3 | P2c Meshlib hole fill | если props/regression после T1 |
 
@@ -111,9 +113,9 @@
 
 | | |
 |--|--|
-| Hi3DGen / TripoSG | после **T0–T1 + T5** closed |
-| Synth MV worker wrap | 🔴 cancelled |
-| Hunyuan / Era3D prod | ❌ |
+| Hi3DGen / TripoSG / Direct3D-S2 | P4.1 — единственный bet на 1-photo back |
+| Synth / img2mv worker wrap | 🔴 frozen |
+| Hunyuan / Era3D / Zero123++ prod | ❌ |
 | Per-asset SKU presets | ❌ |
 
 ---
@@ -174,14 +176,13 @@ python test_req_trellis2.py --quality-tier ultra --texture-mode clay --seed 42 `
 | | **Вывод:** remesh/decim knobs **не** чинят бок/зад; shape ceiling = ultra rt6 front |
 | 2026-08-10 | **Unblock matrix** → `sideBackUnblock.md`; B soft-NO-GO; C1 abort |
 | 2026-08-10 | Side/Back с 1 фото на T2 = потолок; roadmap → `postSideBackPlan.md` |
-| | **Next:** P1 UX / P2 tex / P3 freeze; P4 Hi3DGen later |
+| 2026-08-13 | **img2mv класс FROZEN.** T2 finish = P1 UX + P2 tex + P3 freeze. P4.1 native 3D если снова зад с 1 фото. |
 
 ---
 
 ## 9. Статус одной строкой
 
 ```
-Synth MV→T2:  🔴 closed
-Side/Back 1p: mid accepted (not Meshy)
-T2 finish:    P1 UX → P2 tex → P3 freeze → P4 Hi3DGen (postSideBackPlan.md)
+img2mv: FROZEN. Side/Back 1p: mid accepted.
+T2 finish: P1 UX → P2 tex → P3 freeze. Native 3D = P4.1 later.
 ```

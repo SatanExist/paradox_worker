@@ -105,6 +105,8 @@ def build_input(args: argparse.Namespace) -> dict:
         job_input["multi_image_mode"] = args.multi_image_mode
     if args.texture_mode == "textured":
         job_input["texture_size"] = args.texture_size
+    if args.material_polish is not None:
+        job_input["material_polish"] = bool(args.material_polish)
     if args.no_preprocess:
         job_input["preprocess_image"] = False
     if args.no_remesh:
@@ -322,7 +324,14 @@ def main() -> int:
         "--texture-mode",
         default="clay",
         choices=["clay", "textured"],
-        help="clay = gray mesh without bake (default); textured = legacy UV bake",
+        help="clay = gray mesh; textured = official T2 native PBR",
+    )
+    parser.add_argument(
+        "--material-polish",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="CPU delight+bump after bake (default: on for ultra textured). "
+        "--no-material-polish to skip.",
     )
     parser.add_argument("--decimation-target", type=int, default=500_000)
     parser.add_argument("--seed", type=int, default=1)

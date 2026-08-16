@@ -4,37 +4,108 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-12** — D4 scaffold готов; next = commit + CI build
+Последнее обновление: **2026-08-16 вечер** — Studio пресеты **low/medium/high/realistic** (native PBR). High/Realistic = `material_polish` (W3a). Review UI: `scripts/model_review.html`.
 
 ---
 
-## 🟡 D-track MASTER — ReconViaGen (2026-08-12)
+## 🎯 Prod path (2026-08-16)
+
+| | |
+|--|--|
+| **Лучший 1-фото путь** | T2 native PBR по пресету Studio. Не clay, не MV-Adapter 80k. W3a polish — High/Realistic |
+| **Почему** | Официальный T2; глаза: львы/шлем читаются; W2b 80k/200k = фольга |
+| **Вау-2** | High/Realistic: native PBR + CPU polish (глаза лучше). Не MV-Adapter 80k |
+| **MV-Adapter** | только чистый проп / retexture готового меша, не спасение орнамента |
+| **Не путь** | Hunyuan Paint; img2mv; knobs ради зада; Meshy-герой с 1 фото на T2 |
+| **Сайт** | товарищ (слоты); мы — generation |
+
+Мастер: `t2InternetAudit.md`. Tex: `textureWowPlan.md` § Аудит + W3. Spike: `scripts/mvpainter_w3_spike.md`.
+
+---
+
+## 🤝 Split ролей (2026-08-13)
+
+| Кто | Что |
+|-----|-----|
+| **Товарищ** | AI_MESH Studio визуал: слоты Front/Side/Back, copy из `/api/product-copy` |
+| **Этот ПК / Pedrokita** | **Generation:** freeze native T2 PBR + W3 delight; не сайт |
+| **Контракт** | bridge `viewSlots` + `GET /api/product-copy` уже в paradox_worker |
+| **Не делать здесь** | вёрстка Studio / landing |
+
+---
+
+## 🟢 W3 Texture — W3a PASS
+
+| | |
+|--|--|
+| **Мастер** | `scripts/mvpainter_w3_spike.md` + `textureWowPlan.md` § Аудит |
+| **Baseline** | native PBR PNG — 528k V / 669k F |
+| **W3a** | 🟢 PASS + **в worker** (High/Realistic `material_polish`) |
+| **W3b** | ⏸ MVPainter ≥40GB только если polish мало |
+| **Next** | commit/push T2 image (PNG + polish) → New Release; Studio пресеты |
+| **W2b** | закрыт как prod character path |
+
+## ⚪ P2 Texture W2b — closed for character
+
+| | |
+|--|--|
+| **Мастер** | `memory-bank/textureWowPlan.md` § W2b + § Аудит |
+| **Статус** | xatlas ✅; 80k/200k глаза: макро ок, орнамент плывёт |
+| **Роль** | retexture чистых пропов; не рыцарь |
+
+---
+
+## 🟢 P1 Product multi UX — bridge done / UI у товарища
+
+| | |
+|--|--|
+| **Мастер** | `memory-bank/productMultiUx.md` |
+| **Bridge** | ✅ `viewSlots` + `/api/product-copy` |
+| **Studio UI** | ⏳ товарищ в AI_MESH |
+| **Наш next по P1** | не блокер; smoke реальных фото когда будут |
+
+---
+
+## 🔴 img2mv / synth MV — FROZEN (2026-08-13)
+
+| | |
+|--|--|
+| **Мастер** | `memory-bank/synthMultiViewProd.md` (§14 интернет-срез) |
+| **Вердикт** | Класс MIT img2mv→T2 **исчерпан**. Не недоделанный spike. |
+| **Данные** | W3D blob; U3D Gate A + MV4b хуже single; Gemini 2D ок / 3D smear+2 меча |
+| **Сеть** | Лучшие виды = NC / AGPL / EU-ban Hunyuan / Stability $1M. Рынок ушёл в native 3D. |
+| **RVG** | Это **fusion**, не img2mv. 1-photo львов не даёт. |
+| **Не делать** | новый img2mv sidecar, Unique3D/W3D→T2, Gemini sheet, Era3D prod |
+| **Опц.** | 30с глаз HF MV-Adapter i2mv — ритуал, не трек |
+
+---
+
+## 🟢 D-track — ReconViaGen (fusion для реальных фото)
 
 | | |
 |--|--|
 | **Мастер задачи** | `memory-bank/reconViaGenMvRefiner.md` |
-| **Статус** | HF eyes 🟢 GO-ish; D3 pod 🔴 ABORT; **D4 scaffold** 🟡 IN PROGRESS |
-| **Правило ops** | Тяжёлые стеки → **Dockerfile + CI**, не голый pod+setup.sh |
-| **Архитектура prod** | **Отдельный endpoint** `worker_reconviagen`; T2 ultra = default 1-photo |
-| **D4 фазы** | scaffold → **CI build** → pod smoke F+B → endpoint + bridge tier |
-| **Параллельно** | P1 Studio UX (слоты, честный copy) — без GPU, не блокирует D4 |
-| **Не делать** | monolith в `Dockerfile.trellis2`; HF API prod; второй голый pod |
-| **Next** | push → `build-reconviagen.yml` green → smoke Armor F+B на image |
+| **Статус** | HF eyes 🟢 на **multi**; D3 ABORT; D4.1 CI 🟢 `a48c0e3`; D4.2 `direct` GLB OK; `mesh` SIGSEGV |
+| **Image** | `ghcr.io/satanexist/paradox_worker:reconviagen-sha-a48c0e3` |
+| **1-photo** | `r_d42_1p_armor.glb` собрался — **не** Meshy-зад (ожидаемо) |
+| **Prod роль** | отдельный endpoint **если** юзер дал реальные 2–4 фото; не default 1-photo |
+| **Правило ops** | Dockerfile + CI, не голый pod+setup.sh |
+| **Next** | не жечь GPU «на всякий случай». Endpoint после P1 слотов / реальной съёмки |
 
 ---
 
-## 📋 Roadmap после Side/Back (2026-08-10)
+## 📋 Roadmap после Side/Back + разгрома img2mv
 
 | | |
 |--|--|
 | **Мастер** | `memory-bank/postSideBackPlan.md` |
-| **Честно** | Meshy-зад с 1 фото на T2 = **не цель**; индустрия тоже обходит (multi / другой движок) |
-| **P1** | Studio UX honesty (`productMultiUx.md`) |
-| **P2** | Texture W2b на best clay |
+| **Честно** | Meshy-зад с 1 фото на T2/RVG = **не цель** |
+| **P1** | Studio UX honesty (`productMultiUx.md`) — **без GPU, первый** |
+| **P2** | Texture W2b на best clay — вау с 1 фото |
 | **P3** | Tier freeze T2 shape |
-| **P4** | Hi3DGen later if must |
-| **D** | ReconViaGen — **MASTER** `reconViaGenMvRefiner.md` |
-| **Next** | D2 GLB smoke + pod; P1 UX / P2 tex parallel |
+| **P4.0** | RVG только под реальные слоты |
+| **P4.1** | Hi3DGen / TripoSG — если снова 1-photo back |
+| **Next** | **P2 W2b generation** (UI Studio = товарищ) |
 
 ---
 
@@ -43,10 +114,10 @@
 | | |
 |--|--|
 | **Мастер** | `memory-bank/productMultiUx.md` |
-| **Решение** | Default = 1 фото + честный потолок; опция Front+Side+Back+Extra (**реальные** фото) → stochastic multi |
-| **UI** | AI_MESH Studio (слоты); bridge API уже готов |
-| **Не продукт** | Gemini/AI sheet → multi |
-| **Next** | Слоты+copy в AI_MESH; smoke на реальной съёмке когда будет |
+| **Решение** | Default = 1 фото + честный потолок; опция Front+Side+Back+Extra (**реальные** фото) |
+| **Fusion** | naive T2 stochastic пока; RVG tier когда endpoint и реальные виды |
+| **Не продукт** | Gemini/AI sheet / synth img2mv |
+| **Next** | Слоты+copy в AI_MESH |
 
 ---
 
@@ -55,28 +126,27 @@
 | | |
 |--|--|
 | **Мастер** | `memory-bank/multiViewFusionResearch.md` |
-| **Тезис** | T2 **не** различает Gemini/фото/synth — важны **согласованность серии** + **fusion** |
-| **Наш fusion** | naive stochastic / equal multidiffusion → при конфликте multi **хуже** single (как PR#104 / #103 / MV-SAM3D) |
-| **Prod multi** | только реальные согласованные 2–4 фото — см. `productMultiUx.md` |
-| **Не обещать** | Gemini sheet → T2 multi |
+| **Тезис** | T2 provenance-blind; важны согласованность серии + fusion |
+| **Prod multi** | только реальные согласованные 2–4 фото |
+| **Не обещать** | Gemini/synth → T2 или RVG |
 
 См. также `sideBackUnblock.md` (матрица A–D).
 
 ---
 
-## 🟡 Side / Back unblock (2026-08-10)
+## 🟡 Side / Back unblock (закрыт как img2mv-поиск)
 
 | | |
 |--|--|
-| **Тупик** | MIT img2mv→T2 🔴; T1 remesh **identical**; зад не knobs |
+| **Тупик** | MIT img2mv→T2 🔴 **класс frozen**; T1 remesh identical; зад не knobs |
 | **Мастер** | `memory-bank/sideBackUnblock.md` |
-| **A** | Product honesty — **spec ✅** `productMultiUx.md` |
-| **B** | Gemini→T2 — 🔴 soft-NO-GO |
-| **C1** | Wonder3D++ — ❌ ABORT |
-| **C2** | Hi3DGen / TripoSG — ⏸ budget |
-| **Доказательство 2D** | Gemini Flash turnaround рыцаря — виды ок; меч front≠side риск для fusion |
+| **A** | Product honesty — spec ✅ |
+| **B** | Gemini→T2 — 🔴 |
+| **C1** | Wonder3D++ — ❌ AGPL/deps |
+| **C2** | Hi3DGen / TripoSG — ⏸ P4.1 |
+| **D** | RVG — fusion для real multi, не 1-photo Meshy |
 
-T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** (`postSideBackPlan.md`) + C2 later + F5 freeze.
+T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** + F5 freeze.
 
 ---
 
@@ -93,39 +163,41 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** (`postSideBackPlan
 
 Мастер: `memory-bank/midPropHolesGate.md` (исторический канон; статус 🟢).
 
-### Политика моделей ( Pedrokita 2026-08-10 )
+### Политика моделей (Pedrokita 2026-08-13)
 
 | | |
 |--|--|
-| **Сейчас** | T2 shape ceiling = ultra rt6; **Side/Back unblock** = методы B→C (`sideBackUnblock.md`) |
-| **Hi3DGen** | Путь **C2** — отдельный shape spike (можно после/рядом с B). Не «флаг T2» |
-| **Не путать** | Gemini/Flux sheet = **2D** multi; W3D++ end-to-end ≠ кормить views в T2 |
+| **Сейчас** | T2 shape ceiling = ultra rt6; 1-photo back = mid accepted |
+| **img2mv** | 🔴 FROZEN — `synthMultiViewProd.md` |
+| **RVG** | fusion для **реальных** слотов, не default |
+| **Hi3DGen / TripoSG** | P4.1 — единственный bet на 1-photo back |
+| **Не путать** | Gemini sheet = 2D; RVG ≠ img2mv; Meshy ≠ наш T2+sidecar |
 
-### План дальше (competitive)
+### План дальше
 
 ```
-✅ soft / T0 ultra / T1 remesh identical / synth U3D→T2 NO-GO
-→ B  Gemini (strong 2D) → T2 multi A/B
-→ C1 W3D++ end-to-end GLB (license check)
-→ C2 Hi3DGen knight vs ultra
-→ A  honesty UX + T5 freeze
-→ F3 tex W2b parallel
+✅ T2 ultra + soft + T1 remesh identical
+✅ img2mv класс frozen (W3D/U3D/Gemini/лицензии)
+→ P1  Studio слоты + честный copy
+→ P2  MV-Adapter W2b на ultra clay
+→ P3  tier freeze
+→ D   RVG endpoint если есть реальные фото
+→ P4.1 Hi3DGen/TripoSG только если снова 1-photo back
 ```
 
 | # | Шаг | Статус |
 |---|-----|--------|
-| ✅ | Soft + T0 ultra + T1 Gate closed | done |
-| ✅ | Synth MIT→T2 (W3D/U3D/MV4b) | 🔴 NO-GO |
-| 🔄 | **B** Gemini sheet → T2 | `sideBackUnblock.md` |
-| ⏸ | **C1** Wonder3D++ E2E | spike; license before prod |
-| ⏸ | **C2** Hi3DGen | next-tier shape |
-| ⏸ | **A** Product honesty / T5 | doc+UX |
-| ⏸ | **F3** MV-Adapter W2b | parallel |
-| ❌ | Повтор Unique3D/W3Dv1→T2 / remesh knobs | closed |
-| ❌ | Era3D / Hunyuan / PartPacker EU prod | AGPL / NC (уточнять) |
-| ❌ | voxel prod, per-SKU presets | — |
-
-**Research note (2026-08-10):** Meshy — зад чинят **реальными** multi. Сильный **2D** turnaround (Gemini) ≠ MIT img2mv; naive T2 fusion + плохие views = known fail (community).
+| ✅ | Soft + T0 ultra + T1 Gate | done |
+| ✅ | Synth / img2mv класс | 🔴 FROZEN 2026-08-13 |
+| ✅ | B Gemini → T2 | 🔴 |
+| ✅ | C1 Wonder3D++ | ❌ AGPL/deps |
+| ⏸ | **P1** Product honesty / слоты Studio | bridge ✅; **UI в AI_MESH** ⏳ |
+| 🔄 | **P2 / F3** MV-Adapter W2b | **HOT** — generation focus |
+| ⏸ | **P3 / F5** Tier freeze copy | |
+| ⏸ | **D** RVG endpoint | image live; ждать реальные виды |
+| ⏸ | **P4.1 / C2** Hi3DGen / TripoSG | later |
+| ❌ | Повтор Unique3D/W3D/Gemini→T2 / remesh knobs / новый img2mv | closed |
+| ❌ | Era3D / Hunyuan / Zero123++ / SPAR3D core | AGPL / EU-ban / NC / $1M |
 
 ## ⚠ INCIDENT 2026-08-06 — забытый pod
 
@@ -147,7 +219,7 @@ T2 finish shape: F1✅ F2✅; дальше **P1 UX / P2 tex** (`postSideBackPlan
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | **D4** `Dockerfile.reconviagen` + worker + CI; перспективный план в memory |
+| Фокус | **P2 W2b** texture на ultra clay; UI Studio = товарищ |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -377,6 +449,7 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-08-13 | **D4.1 CI GREEN** `a48c0e3` → `ghcr.io/...:reconviagen-sha-a48c0e3`. Next = pod smoke F+B на image. |
 | 2026-08-12 | **D4 план в memory:** отдельный endpoint; CI gate → smoke A/B → tier; P1 UX параллельно; scaffold Dockerfile+worker+CI |
 | 2026-08-11 | **D3 ABORT** pod terminate; правило Dockerfile; next D4 image. HF eyes всё ещё GO. |
 | 2026-08-11 | **D3 pod hell** → правило: тяжёлые стеки **только через Dockerfile**, не голый pod+setup.sh. Дожимаем текущий pod для GLB; prod = D4 image. |
@@ -876,6 +949,14 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-16 веч | Pedrokita | Пресеты low/medium/high/realistic; PNG GLB; polish в worker; `model_review.html` | push → CI trellis2 → New Release; Studio selector у товарища |
+| 2026-08-16 | Pedrokita | Интернет-аудит T2 → `t2InternetAudit.md`; стоп кругам | нативный T2 PBR vs clay vs MV на рыцаре |
+| 2026-08-16 | Pedrokita | W2b 80k+200k COMPLETED; аудит «плывёт»=T2 mesh+baked light | вердикт 200k / PBR later / не img2mv |
+| 2026-08-13 веч | Pedrokita | Research AI-tex → memory; prod = clay→MV-Adapter→PBR later; GPU off | New Release xatlas + W2b smoke |
+| 2026-08-13 веч | Pedrokita | P1 bridge: product_multi_ux + viewSlots API + check script; AI_MESH отсутствует на ПК | UI у товарища |
+| 2026-08-13 веч | Pedrokita | img2mv интернет-срез + freeze в memory; Meshy = скрытый synth/native, не T2; RVG ≠ img2mv | P1 Studio слоты **или** P2 W2b; не новый img2mv |
+| 2026-08-13 | Pedrokita | D4.2: 1-photo RVG GLB OK; Gemini F+B audit; `mesh` SIGSEGV | не жечь GPU без реальных фото |
+| 2026-08-13 | Pedrokita | D4.1 CI green: `reconviagen-sha-a48c0e3` (torch 2.6, sdpa+xformers, no flash-attn compile) | D4.2 pod smoke Armor F+B на image |
 | 2026-08-12 | Pedrokita | D4 scaffold: `Dockerfile.reconviagen`, worker, smoke, CI workflow; перспективный план в memory | push → CI green → pod smoke F+B |
 | 2026-08-11 | Pedrokita | D-track MASTER `reconViaGenMvRefiner.md`; HF eyes ОГО; naive multi closed; prod=RVG endpoint; smoke script | D2 GLB + A/B; D3 pod |
 | 2026-08-03 | Pedrokita | Front best+метрики; knobs code; чеклист шагов 0–5; tokens=same | Шаг 0 commit/push/release |
@@ -916,6 +997,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Что | Заметки |
 |------|-----|---------|
+| 2026-08-13 | **img2mv класс FROZEN** | OSS MIT исчерпан; Meshy-1-фото = их стек. Next P1/P2. 1-photo back = P4.1 native |
+| 2026-08-13 | **RVG ≠ Meshy с 1 фото** | fusion реальных видов; 1-photo GLB без львов — норма |
 | 2026-08-02 | **T2 A/B FAIL на HF** | no-remesh/1536 denser ≈ Meshy polycount; орнамент всё ещё каша → потолок T2 micro, не только export |
 | 2026-08-01 | **Сначала чинили T2 export** | Проверили; не хватило |
 | 2026-07-31 | **Мыльный меш → не красить; E2 нет** | Unit economics |

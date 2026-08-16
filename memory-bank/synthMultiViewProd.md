@@ -1,17 +1,19 @@
 # Synth Multi-View → Shape — prod master
 
-> **Статус:** 🔴 **NO-GO prod** (Gate E глаза 2026-08-10) — synth U3D→T2; Plan B Hi3DGen  
+> **Статус:** 🔴 **FROZEN 2026-08-13** — класс MIT img2mv→T2 **исчерпан** (данные + интернет-срез). Не «недоделанный spike».  
 > **Создан:** 2026-08-10 (Pedrokita + Cursor)  
-> **Проблема:** 1 фото → слабые **бок/зад** vs Meshy на том же рыцаре; UX = **одна** картинка, не 6 ракурсов от юзера  
-> **Связь:** `textureWowPlan.md` (tex), `midPropHolesGate.md` (props ✅), spikes `scripts/wonder3d_mv2_spike.md`, `scripts/unique3d_mv2b_spike.md`
+> **Проблема:** 1 фото → слабые **бок/зад** vs Meshy; UX = **одна** картинка  
+> **Связь:** `postSideBackPlan.md` (куда дальше), `textureWowPlan.md`, `reconViaGenMvRefiner.md` (fusion ≠ img2mv), spikes W3D/U3D
 
 ---
 
 ## 1. Проблема одной фразой
 
 **Пользователь грузит 1 фото.** Meshy/Rodin на `ref_gold_armor` дают читаемый **зад и бок** с орнаментом.  
-**T2 single** — сильный **перед**, бок/зад «плывут».  
-Prod-ответ = **внутренний** synth multi-view (как Meshy), **не** просьба снять 6 ракурсов.
+**T2 single** — сильный **перед**, бок/зад «плывут».
+
+**Гипотеза 2026-08-10 (закрыта):** prod-ответ = внутренний synth multi-view (как Meshy), не просьба снять 6 ракурсов.  
+**Факт 2026-08-13:** в OSS под EU self-host **нет** Meshy-класса img2mv. Meshy прячет свой согласованный synth/native 3D. Наш MIT путь этот слой не клонирует. Честный 1-фото потолок = T2 ultra; лучший зад = **реальные** фото или **другой native shape** (P4.1).
 
 ---
 
@@ -19,10 +21,10 @@ Prod-ответ = **внутренний** synth multi-view (как Meshy), **н
 
 | | |
 |--|--|
-| **Default** | 1 upload → 3D (clay или textured) |
-| **Optional** | 2–4 **реальных** фото → `imageUrls[]` (power user; не core) |
-| **Скрыто от юзера** | synth 4–6 views → fusion → shape |
-| **Не prod** | «Загрузите side/back для качества» как обязательный шаг |
+| **Default** | 1 upload → T2 (clay или textured) |
+| **Optional** | 2–4 **реальных** фото → слоты Studio (`productMultiUx.md`) |
+| **Не делаем** | скрытый synth 4–6 views → T2 (класс frozen) |
+| **Не prod** | обязательный «снимите side/back»; AI-sheet как вход |
 
 ---
 
@@ -35,8 +37,7 @@ Prod-ответ = **внутренний** synth multi-view (как Meshy), **н
 | **Rodin / Hyper3D** | 1 фото | **Native 3D diffusion** (tri-plane), не «6 JPEG → reconstruct» |
 | **InstantMesh (OSS)** | 1 фото | Zero123++ views → reconstruct (веса MV часто NC) |
 
-**Вывод:** рынок продаёт **1 фото**. Внутри — либо **native 3D** (Rodin), либо **synth views → shape** (InstantMesh-паттерн), либо гибрид.  
-**Наш self-host EU** = MIT/Apache path; закрытые веса не core.
+**Вывод 2026-08-13:** рынок продаёт 1 фото. Внутри у лидеров — закрытый synth **или** native 3D. Наш self-host EU **не** клонирует этот слой MIT img2mv. InstantMesh-паттерн отравлен NC-весами.
 
 ---
 
@@ -91,22 +92,20 @@ Prod-ответ = **внутренний** synth multi-view (как Meshy), **н
 | P0 | Bridge `imageUrls` | studio smoke | API OK | ⚠️ 2 разных объекта |
 | G2 | soft_input holes | chest v16 | ✅ props | — |
 
-### 5.2 Не сделано (дыра в логике NO-GO)
+### 5.2 Остаток трека — **отменён** (2026-08-13)
 
-| ID | Что | Зачем |
-|----|-----|-------|
-| **MV4** | Лучшие имеющиеся views → T2 multi → GLB | **Единственный честный gate** «лучше single зад?» |
-| MV4b | A/B: single rt6 vs multi (stochastic **и** multidiffusion) | fusion mode |
-| MV4c | N views: 4 vs 6 | cost/quality |
-| MV5 | Wonder3D views → T2 (формально) | закрыть W3D даже при плохих views |
-| MV6 | MV-Adapter `ig2mv` views (mesh hint) → T2 | views с геометрией |
-| — | Wonder3D++ | апгрейд W3D |
-| — | Era3D | offline R&D (AGPL) |
-| — | ReconViaGen × T2 | fusion v0.5 |
-| MV7 | Worker wrap: 1 photo in → synth → T2 hidden | prod UX |
-| MV8 | Studio tier `multi_synth` + ETA + fallback single | product |
+MV4b уже дал Gate E на GLB (U3D→T2 хуже single). Повтор W3D-blob→T2 / MV7 wrap / MV8 tier **не открывать**.
 
-**Критично:** verdict «synth → T2 NO-GO» (2026-08-10) основан на **grids views**, не на **GLB back/side A/B**. Это **преждевременно** до MV4.
+| ID | Вердикт |
+|----|---------|
+| MV4 / MV4b | ✅ сделано; 🔴 NO-GO |
+| MV4c / MV5 | ❌ skip — views слабее U3D, fusion тот же |
+| MV6 ig2mv→T2 | ❌ skip — `ig2mv` нужен **готовый меш** (это texture, не shape). `i2mv` без меша = тот же класс Unique3D; опц. 30с глаз на HF, не GPU-трек |
+| W3D++ / Era3D | ❌ AGPL, не prod |
+| ReconViaGen × T2 | ❌ не img2mv; см. `reconViaGenMvRefiner.md` |
+| MV7 / MV8 | ❌ cancelled — нечего оборачивать в worker |
+
+Опциональный ритуал (не план): HF Space [MV-Adapter I2MV SDXL](https://huggingface.co/spaces/VAST-AI/MV-Adapter-I2MV-SDXL) на `ref_gold_armor`. Если бок/лев каша — дыру «свой адаптер не пробовали» закрыть без pod. Если вдруг 3D-consistent — тогда RVG, не naive T2. **Не ждать этого, чтобы двигаться.**
 
 ---
 
@@ -114,15 +113,20 @@ Prod-ответ = **внутренний** synth multi-view (как Meshy), **н
 
 | Кандидат | Лицензия | Prod AI_MESH |
 |----------|----------|--------------|
-| Wonder3D v1 | MIT | ✅ spike |
-| Wonder3D++ | проверить branch | 🟡 |
-| Unique3D | MIT | ✅ spike |
-| MV-Adapter | Apache-2.0 | ✅ tex; shape spike |
+| Wonder3D v1 | MIT | spike done; 🔴 views |
+| Wonder3D++ | **AGPL** (HF) | ❌ |
+| Unique3D | MIT | spike done; 🔴 Gate E |
+| MV-Adapter | Apache-2.0 | ✅ **texture** (`ig2mv`/`i2tex`); не shape |
 | TRELLIS.2 | MIT | ✅ |
 | Era3D | AGPL | ❌ prod; offline eyes only |
 | Zero123++ weights | NC | ❌ |
-| Hunyuan3D | EU ban | ❌ |
-| Hi3DGen / TripoSG | MIT | **Plan B** native 3D (отдельный master позже) |
+| Hunyuan3D 2.1 / 2mv | Community License **не EU/UK/KR** | ❌ |
+| Hunyuan 2.5 / 3.x | hosted, весов нет | ❌ |
+| Zero123++ / InstantMesh MV | веса **CC-BY-NC** | ❌ |
+| SV3D / SPAR3D | Stability Community **$1M cap** | ⚠ не core |
+| Hi3DGen / TripoSG / Direct3D-S2 | MIT | **P4.1** native 3D (не img2mv) |
+| Step1X-3D | Apache-2.0 | P4.1 candidate |
+| MV-Adapter **i2mv** | Apache + SDXL Community | не spike shape; см. §5.2 ритуал |
 
 ---
 
@@ -173,7 +177,7 @@ Baseline: `model-armor-clay-sampler50-pro-gi01-rt6.glb` (single T2).
 
 ## 8. План реализации (релевантный порядок)
 
-### Фаза 0 — закрыть дыру (1–2 pod-сессии, ~$3–6) 🔴 **СЕЙЧАС**
+### Фаза 0 — закрыть дыру ✅ **DONE** (MV4b 2026-08-10)
 
 | Step | Действие | Выход |
 |------|----------|-------|
@@ -223,7 +227,11 @@ python test_req_trellis2.py --quality-tier quality --texture-mode clay `
 python test_req_trellis2.py ... --multi-image-mode multidiffusion --save model-armor-u3d-multi-multid.glb
 ```
 
-### Фаза 1 — выбор synth engine (если E ≠ NO-GO)
+### Фазы 1–3 (MV7 wrap / product tier) — ❌ **cancelled 2026-08-13**
+
+Gate E = NO-GO. Не выбирать synth engine, не делать worker wrap, не делать Studio `multi_synth`.
+
+### Фаза 1 — выбор synth engine (если E ≠ NO-GO) — архив
 
 | Step | Действие |
 |------|----------|
@@ -252,9 +260,9 @@ python test_req_trellis2.py ... --multi-image-mode multidiffusion --save model-a
 | 3.3 | Badge/downgrade если synth fail → single |
 | 3.4 | Character vs prop routing (опц.): props → single fast |
 
-### Фаза 4 — parallel Plan B (не замена synth, страховка)
+### Фаза 4 — Plan B native 3D (живёт в P4.1, не в этом файле)
 
-Если Gate E = NO-GO на всех MIT synth→T2:
+Gate E = NO-GO на MIT synth→T2. Это **не** img2mv:
 
 | Step | Действие |
 |------|----------|
@@ -314,15 +322,43 @@ python test_req_trellis2.py ... --multi-image-mode multidiffusion --save model-a
 | 2026-08-10 | **Gate E глаза:** multi = «ужасающее мыло»; single quality ≠ best (мыльные детали) |
 | 2026-08-10 | **Verdict:** synth U3D→T2 **NO-GO** prod; baseline MV4b = quality (не ultra gi01-rt6) |
 | 2026-08-10 | Gemini→T2 soft-NO-GO; C1 W3D++ abort; research → `multiViewFusionResearch.md` |
-| | **Next:** real-photo multi UX; Hi3DGen; не weak synth→T2 |
+| 2026-08-13 | **Класс img2mv FROZEN.** Интернет-срез: коммерчески чистого Meshy-класса img2mv в OSS нет. MIT (W3D/U3D) прогнан. Лучшие виды = NC/AGPL/EU-ban/Stability cap. RVG ≠ img2mv. Единственная дыра `i2mv` = ритуал HF, не GPU-трек. **Next:** P1 UX + P2 tex; 1-photo back = P4.1 native 3D; RVG только на реальные фото. |
 
 ---
 
 ## 13. Краткий статус для activeContext
 
 ```
-Synth MV shape: 🔴 NO-GO (Gate E eyes 2026-08-10; U3D→T2)
-Default UX:     1 photo → T2 single/ultra (best we have)
-Plan B:         Hi3DGen / TripoSG native 3D — NEXT for back/side
-Not fair A/B:   MV4b used quality tier; best armor = gi01-rt6 ultra
+Synth / img2mv: 🔴 FROZEN 2026-08-13 (класс исчерпан, не «ещё spike»)
+Default UX:     1 photo → T2 ultra; copy честный
+Real multi:     слоты Studio → RVG (fusion), не synth
+1-photo Meshy:  не этот стек; P4.1 Hi3DGen/TripoSG если снова лезть в shape
 ```
+
+---
+
+## 14. Freeze 2026-08-13 — интернет-срез img2mv
+
+**Meshy не строит зад из одного вида.** UX = 1 фото; внутри — Generate Multi-view (дорисовка side/back) **или** нативный 3D-prior. Это другой слой, чем T2 knobs и чем ReconViaGen.
+
+Два слоя нельзя склеивать:
+
+| Слой | Что делает | Meshy | Мы |
+|------|------------|-------|-----|
+| **img2mv** | Из 1 фото **дорисовать** side/back | Свой согласованный генератор | W3D/U3D/Gemini — слабо или конфликт |
+| **fusion** | Склеить уже готовые виды | Свой reconstructor | Naive T2 smear; RVG = умный fusion |
+| **native 3D** | Сразу объём, без JPEG-ракурсов | Возможно часть стека | T2 ultra; P4.1 Hi3DGen/TripoSG |
+
+HF «ОГО» на ReconViaGen было на **нескольких** картинках. 1-photo RVG (`r_d42_1p_armor.glb`) львов на спине не дал — так и должно быть.
+
+### Что в сети (2026)
+
+**Прогнанное MIT (данные наши):** Wonder3D v1 blob; Unique3D Gate A + MV4b хуже single; Gemini 2D ок / 3D конфликт (2 меча).
+
+**Лицензионная стена:** Zero123++ NC; InstantMesh через NC; Era3D AGPL; Wonder3D++ AGPL на HF; Hunyuan Community **не EU**; SPAR3D/SV3D Stability $1M; Hunyuan 3.x без весов.
+
+**Рынок ушёл в native 3D** (Hunyuan-DiT, TripoSG, Direct3D-S2, Hi3DGen, TRELLIS) — img2mv это паттерн 2023–24.
+
+**Единственная коммерчески чистая дыра:** MV-Adapter `i2mv` (без меша). Ожидание = Unique3D-класс. Не открывать GPU-трек.
+
+**Вывод одной фразой:** подвешенность была ложной. Класс закрыт. Вау с 1 фото дальше искать в **текстуре (P2)** и **другом shape engine (P4.1)**, не в новом img2mv.

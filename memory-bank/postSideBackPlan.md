@@ -1,8 +1,8 @@
 # План после Side/Back тупика (честный roadmap)
 
-> **Дата:** 2026-08-10 (Pedrokita)  
+> **Дата:** 2026-08-10 (Pedrokita); **обновлено 2026-08-13** — img2mv класс FROZEN  
 > **Настроение:** жаль, что «кнопки идеального зада с 1 фото» нет — это не провал работы, а **потолок стека**  
-> **Связь:** `t2FinishPlan.md`, `productMultiUx.md`, `sideBackUnblock.md`, `textureWowPlan.md`
+> **Связь:** `t2FinishPlan.md`, `productMultiUx.md`, `sideBackUnblock.md`, `textureWowPlan.md`, `synthMultiViewProd.md` (frozen), `reconViaGenMvRefiner.md`
 
 ---
 
@@ -17,6 +17,7 @@
 | Front ultra (rt6) + soft_input props | Prod recipe есть |
 | Remesh/denser не чинят зад | Не жечь GPU зря |
 | Synth / Gemini → T2 | Не продукт |
+| **Класс img2mv OSS (2026-08-13)** | MIT прогнан; лучшие виды закрыты лицензией; рынок ушёл в native 3D |
 | W3D++ abort | Не AGPL-deps hell в prod |
 | Research + UX spec A | Знаем *как* говорить юзеру и когда multi помогает |
 
@@ -52,7 +53,8 @@
 
 | # | Задача | Где | Примечание |
 |---|--------|-----|------------|
-| P1.1 | Слоты Front / Side / Back / Extra + copy | **AI_MESH Studio** | по `productMultiUx.md` |
+| P1.1 | Слоты Front / Side / Back / Extra + copy | **AI_MESH Studio** | спека+bridge ✅; UI ⏳ |
+| P1.1b | Bridge `viewSlots` + `/api/product-copy` | paradox_worker | ✅ 2026-08-13 |
 | P1.2 | Default = 1 фото; multi только если есть доп. слоты | Studio → bridge | API уже есть |
 | P1.3 | Help: чеклист «не нужна студия, нужна одна поза» | сайт / Studio | успокоить про «неидеальные» фото |
 | P1.4 | (опц.) Smoke 3–4 **реальных** фото vs single | paradox worker | proof пути A глазами |
@@ -83,10 +85,10 @@
 
 | # | Задача | Когда |
 |---|--------|-------|
-| P4.0 | **ReconViaGen** — MASTER `reconViaGenMvRefiner.md` | 🟢 HOT eyes; D2 GLB → D3 pod → D4 worker |
-| P4.1 | Hi3DGen / TripoSG spike (C2) | ⏸ если RVG fail |
-| P4.2 | Не кормить weak synth в naive T2 | locked |
-| P4.3 | Лицензии / EU prod | до любого prod merge |
+| P4.0 | **ReconViaGen** — MASTER `reconViaGenMvRefiner.md` | fusion для **реальных** 2–4 фото; **не** Meshy с 1 кадра. Image `a48c0e3` live; `mesh` SIGSEGV; 1-photo GLB ≠ ultra |
+| P4.1 | Hi3DGen / TripoSG / Direct3D-S2 (C2) | **единственный оставшийся bet** на 1-photo back; не img2mv |
+| P4.2 | Не кормить weak synth в naive T2 / RVG | locked; класс frozen |
+| P4.3 | Лицензии / EU prod | Hunyuan/Era3D/Zero123++ — нет |
 
 **Критерий P4.0:** Side/Back или front-integrity **better** vs Armor ultra / pair soap — иначе soft-NO-GO.  
 **Критерий P4.1:** Side/Back **better** vs `t0_armor_ultra_s42` глазами — иначе закрыть метод.
@@ -94,26 +96,30 @@
 ### Явно не в плане
 
 - Ещё Unique3D / Wonder3D v1 → T2  
-- Gemini sheet как prod multi  
-- Wonder3D++ без чистого venv/бюджета  
-- Confidence fusion без нормальных real views  
+- Gemini / любой AI-sheet как prod multi  
+- Wonder3D++ / Era3D в prod (AGPL)  
+- Новый img2mv sidecar (класс frozen)  
+- RVG как замена Meshy на 1 фото  
+- Confidence fusion без нормальных **реальных** views  
 - «Ещё denser / soft на рыцаре ради зада»
 
 ---
 
-## 3. Порядок «что делать завтра»
+## 3. Порядок «что делать дальше» (после разгрома img2mv)
+
+Разгром = **не** «продукт мёртв». Мёртв только слой «нарисовать бока и скормить T2».
 
 Рекомендуемый порядок (один трек за раз):
 
 ```
-1) D2  ReconViaGen GLB smoke + A/B     ← D-track MASTER
-2) P1  Studio UX
-3) P2  Texture W2b
-4) D3  ReconViaGen pod (если D2 better)
-5) P3  Tier freeze
+1) P3  Freeze T2: native PBR + PNG + polish на High/Realistic
+2) P1 UI Studio пресеты low/medium/high/realistic     ← товарищ
+3) W3b MVPainter 48GB — только если polish мало
+4) D   RVG если слоты реальные
+5) P4.1 Hi3DGen — микро-геометрия, не «ещё золотее»
 ```
 
-Если Studio далеко — можно начать с **P2**, спека P1 уже в памяти.
+**Split 2026-08-13:** визуал Studio = товарищ; generation = paradox_worker (P2). P1 bridge (`viewSlots`) уже готов к подключению.
 
 ---
 
@@ -139,12 +145,13 @@
 | 2026-08-10 | ComfyUI multiview SEO = noise; **ReconViaGen + MV Refiner** spike → `reconViaGenMvRefiner.md` |
 | 2026-08-11 | **Eyes HF ReconViaGen (Pedrokita): ОГО** — sharp side/back, 1 меч; screens in reconviagen/ |
 | 2026-08-11 | D-track **MASTER** expanded: prod=separate endpoint; naive multi closed; fusion patch=optional |
+| 2026-08-13 | **img2mv класс FROZEN** (`synthMultiViewProd.md` §14). Next = P1 UX → P2 tex → P3 freeze. RVG = real photos. 1-photo Meshy = P4.1 native 3D. |
 
 ---
 
 ## 6. Статус одной строкой
 
 ```
-Shape T2: front done, back mid accepted.
-Next: P1 Studio honesty UX → P2 MV-Adapter on best clay → P3 freeze → P4 Hi3DGen if needed.
+img2mv: FROZEN. Generation focus: P2 W2b. Studio UI = teammate.
+Next: W2b on ultra clay → P3 freeze. RVG later for real slots.
 ```
