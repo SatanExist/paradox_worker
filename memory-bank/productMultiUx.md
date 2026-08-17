@@ -248,7 +248,7 @@ Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут 
 
 ### Живой движок (для них не трогать GPU)
 
-- Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ffd6d36`, **v17**.
+- Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ea4ea58`, **v18** (`posterUrl` JPEG).
 - Low сундук ~12 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/18c5eae7-656b-4ea2-afec-bf91bb2b5b40-e2.glb`
 - Medium сундук ~25 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb`
 - High рыцарь ~47 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/315cf9fb-d9de-4349-900c-0cf2b09a6aa2-e1.glb`

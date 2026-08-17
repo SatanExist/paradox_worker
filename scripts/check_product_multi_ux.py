@@ -136,6 +136,28 @@ def main() -> None:
         tier_warm_eta_sec=1,
     )
     assert with_poster["posterUrl"] == "https://example.com/a.jpg"
+    assert with_poster["posterUrls"] is None
+
+    with_envs = normalize_job_payload(
+        {
+            "id": "job-3",
+            "status": "COMPLETED",
+            "output": {
+                "model_url": "https://example.com/a.glb",
+                "poster_url": "https://example.com/a.jpg",
+                "poster_urls": {
+                    "studio": "https://example.com/a.jpg",
+                    "neon": "https://example.com/a_neon.jpg",
+                    "outdoor": "https://example.com/a_outdoor.jpg",
+                },
+                "delivery": "r2",
+            },
+        },
+        tier_cold_eta_sec=1,
+        tier_warm_eta_sec=1,
+    )
+    assert with_envs["posterUrls"]["neon"].endswith("_neon.jpg")
+    assert with_envs["posterUrls"]["studio"] == with_envs["posterUrl"]
 
     try:
         normalize_view_slots({"side": "https://x"})

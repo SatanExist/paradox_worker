@@ -274,6 +274,9 @@ def save_output(final: dict, save_path: Path) -> None:
         poster = output.get("poster_url")
         if isinstance(poster, str) and poster.startswith("http"):
             print(f"poster_url={poster}")
+        extras = output.get("poster_urls")
+        if isinstance(extras, dict) and extras:
+            print("poster_urls=", ",".join(sorted(extras)))
         return
 
     b64 = output.get("model_base64")

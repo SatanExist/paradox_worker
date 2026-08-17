@@ -16,7 +16,7 @@ EID = os.environ.get("RUNPOD_ENDPOINT_ID_TRELLIS2", "ynzpzjvcbfl656")
 TID = os.environ.get("RUNPOD_T2_TEMPLATE_ID", "fclhts02av")
 IMAGE = os.environ.get(
     "T2_IMAGE",
-    "ghcr.io/satanexist/paradox_worker:trellis2-sha-42d302c",
+    "ghcr.io/satanexist/paradox_worker:trellis2-sha-ea4ea58",
 )
 
 

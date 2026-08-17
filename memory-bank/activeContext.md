@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-17 утро** — план+код `posterUrl` (JPEG в сетке). Live на сайте после CI T2.
+Последнее обновление: **2026-08-17** — постеры Rodin-style: GPU still полного меша + `posterUrls` (hover studio/outdoor/neon…). Live после CI T2.
 
 ---
 
@@ -190,7 +190,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 |--|--|
 | **Win** | `soft_input` на T2 (strength 0.75) — chest без сквозных дыр, clay smooth |
 | **Live (holes-gate)** | закрыто на `trellis2-sha-91f8441` / v16 |
-| **Live T2 сейчас** | `trellis2-sha-ffd6d36`, endpoint **v17** (PNG + polish) |
+| **Live T2 сейчас** | `trellis2-sha-ea4ea58`, endpoint **v18** (PNG + polish + `poster_url` JPEG) |
 | **Артефакт глаз** | `model-chest-soft-worker-v16.glb` — Pedrokita: **замечательно** |
 | **Не путь** | voxel (Minecraft), CuMesh knobs alone, trimesh fill |
 | **Lattice/open** | industry limit (Meshy тоже плёнки) — best-effort, не блокер |
@@ -987,7 +987,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-17 утро | Pedrokita | План `posterCards.md` + worker `poster_url` JPEG | CI T2 → New Release → smoke jpg |
+| 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | push → CI T2 → New Release; лента у товарища |
 | 2026-08-16 веч | Pedrokita | lab API: `.venv-studio` 3.14.6 + `studio_lab.ps1`; `/health` ok | Generate в лабе; GPU только по кнопке |
 | 2026-08-16 веч | Pedrokita | Глаза: High ≈ Realistic на рыцаре (2K vs 4K, тот же меш) | персонаж в UI = High; Realistic не продавать как wow |
 | 2026-08-16 веч | Pedrokita | §11 Cursor-пакет + qualityReduced; push `590565b`; Medium/Low сундук, High рыцарь | UI у товарища |

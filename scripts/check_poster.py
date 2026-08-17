@@ -26,6 +26,8 @@ def main() -> None:
     assert img.size == (64, 64)
     arr = np.asarray(img)
     assert arr.mean() > 8
+    # Not a flat background plate.
+    assert arr.std() > 4
     print("poster checks: OK (icosphere 64px)")
 
 

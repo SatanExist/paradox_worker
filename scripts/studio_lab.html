@@ -205,7 +205,9 @@
     }
     .card:hover, .card.on { border-color: var(--accent-2); transform: translateY(-2px); }
     .card .ph {
-      height: 88px; background: #2a2a30 center/cover no-repeat;
+      aspect-ratio: 1;
+      min-height: 120px;
+      background: #121214 center/cover no-repeat;
       display: grid; place-items: center; color: #8d8d96; font-size: 10px;
     }
     .card .ph.pending { background: linear-gradient(180deg, #323238, #242428); }
@@ -502,7 +504,34 @@
         label: `${tier} · ${(data.jobId || "").slice(0, 8)}`,
         url: data.modelUrl,
         thumb: data.posterUrl,
+        thumbs: data.posterUrls || null,
         bytes: data.modelBytes,
+      });
+    }
+
+    function bindPosterHover(card, urls) {
+      const order = ["studio", "outdoor", "gallery", "neon", "night"];
+      const list = order.map((k) => urls && urls[k]).filter(Boolean);
+      if (list.length < 2) return;
+      const ph = card.querySelector(".ph");
+      if (!ph) return;
+      list.forEach((src) => { const im = new Image(); im.src = src; });
+      let i = 0;
+      let timer = null;
+      const show = (idx) => { ph.style.backgroundImage = `url("${list[idx]}")`; };
+      card.addEventListener("mouseenter", () => {
+        i = 1 % list.length;
+        show(i);
+        if (timer) clearInterval(timer);
+        timer = setInterval(() => {
+          i = (i + 1) % list.length;
+          show(i);
+        }, 700);
+      });
+      card.addEventListener("mouseleave", () => {
+        if (timer) clearInterval(timer);
+        timer = null;
+        show(0);
       });
     }
 
@@ -536,6 +565,7 @@
           openModel(m.url, m.label);
         };
         box.appendChild(card);
+        bindPosterHover(card, m.thumbs);
         if (!ready) thumbIO.observe(card);
       }
     }

@@ -48,6 +48,7 @@ def normalize_job_payload(
         "qualityTierUsed": None,
         "modelBytes": None,
         "posterUrl": None,
+        "posterUrls": None,
     }
     if isinstance(output, dict):
         reduced = bool(output.get("downgraded"))
@@ -58,6 +59,17 @@ def normalize_job_payload(
         poster = output.get("poster_url")
         if isinstance(poster, str) and poster.startswith("https://"):
             result["posterUrl"] = poster
+        raw_urls = output.get("poster_urls")
+        if isinstance(raw_urls, dict):
+            cleaned = {
+                str(name): url
+                for name, url in raw_urls.items()
+                if isinstance(url, str) and url.startswith("https://")
+            }
+            if cleaned:
+                result["posterUrls"] = cleaned
+                if not result["posterUrl"]:
+                    result["posterUrl"] = cleaned.get("studio") or next(iter(cleaned.values()))
         if reduced:
             # Never forward CUDA/OOM strings to the Studio UI.
             result["qualityReducedCopy"] = (

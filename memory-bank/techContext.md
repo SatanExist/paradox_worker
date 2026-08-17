@@ -62,7 +62,7 @@
 
 - **Docker images** (GHCR): `ghcr.io/satanexist/paradox_worker`
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
-  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ffd6d36`, endpoint v17)
+  - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ea4ea58`, endpoint v18)
   - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (актуальный: `reconviagen-sha-a48c0e3`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
@@ -215,7 +215,7 @@ Studio без этой переменной остаётся на v0 bake.
 Интерпретатор: `.venv-studio` на **Python 3.14.6**. Не `.venv` (это 3.14.0: после апгрейда системы `ctypes` ломает click/uvicorn). Python 3.11 на этом ПК зарегистрирован, но `python.exe` отсутствует.  
 Код: `studio_bridge/`, lab UI: `scripts/studio_lab.html` + `scripts/model_review.html` + `scripts/studio_viewer.js` (не `.mjs`: Windows `http.server` отдаёт `.mjs` как `text/plain`). Smoke: `scripts/studio_smoke.py`.  
 **Пресеты:** `low` / `medium` / `high` / `realistic` в `GET /api/product-copy` (`qualityPresets`). Default **medium**. Clay только при `textureMode: "clay"`.  
-**Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-ffd6d36` endpoint **v17**. Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish).  
+**Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-ea4ea58` endpoint **v18** (`poster_url` JPEG). Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish). Poster smoke 2026-08-17: job `6e61d60c-d936-4726-acfd-87dd7d557d38-e2`.  
 **P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.  
 **Lab workspace (2026-08-17, не контракт сайта):** `GET /api/lab/workspace` — полка локальных GLB + рефы рыцарь/сундук; `POST /api/lab/upload-image` — файл → R2 public URL. UI: `studio_lab.html`.
 
@@ -300,6 +300,11 @@ Response:
   "runpodStatus": "IN_QUEUE | IN_PROGRESS | COMPLETED | ...",
   "modelUrl": "https://pub-....r2.dev/trellis2/{jobId}.glb",
   "posterUrl": "https://pub-....r2.dev/trellis2/{jobId}.jpg",
+  "posterUrls": {
+    "studio": "https://pub-....r2.dev/trellis2/{jobId}.jpg",
+    "outdoor": "https://pub-....r2.dev/trellis2/{jobId}_outdoor.jpg",
+    "neon": "https://pub-....r2.dev/trellis2/{jobId}_neon.jpg"
+  },
   "delivery": "r2",
   "error": null,
   "etaSecondsCold": 360,
@@ -321,14 +326,14 @@ Response:
 |----------|------------------------|
 | `queued` | «В очереди…» |
 | `running` | «Генерируем 3D…» |
-| `ready` | Лента: `posterUrl` (JPEG). Вьюер: `modelUrl`. Если `qualityReduced` — бейдж, не CUDA |
+| `ready` | Лента: `posterUrl` JPEG; hover крутит `posterUrls`. Вьюер: `modelUrl`. Если `qualityReduced` — бейдж, не CUDA |
 | `failed` | Ошибка + retry |
 
 **ETA:** до первого poll показывать `etaSecondsCold`; если недавно был job на том же tier — `etaSecondsWarm`. После `ready`: `isWarm === true` → warm был фактически.
 
 **Poll interval:** 3–5 с, timeout UI ~10–15 мин (preview cold до ~6 мин).
 
-**Viewer:** GLB по `modelUrl` (Three.js) **по клику**. Сетка истории — `posterUrl` JPEG, не 31 GLB. Draco — позже если High ~47 MB тормозит вьюер.
+**Viewer:** GLB по `modelUrl` (Three.js) **по клику**. Сетка истории — `posterUrl` JPEG, hover = смена `posterUrls` (не 31 GLB). Draco — позже если High ~47 MB тормозит вьюер.
 
 **Фронт не вызывает RunPod напрямую** — только эти 2 ручки (или их копия в Next.js API routes).
 

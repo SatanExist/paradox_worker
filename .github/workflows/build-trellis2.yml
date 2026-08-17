@@ -11,6 +11,7 @@ on:
       - "studio_bridge/mesh_repair.py"
       - "studio_bridge/material_polish.py"
       - "studio_bridge/poster.py"
+      - "studio_bridge/poster_gpu.py"
       - "studio_bridge/__init__.py"
       - "docker/smoke_trellis2_imports.py"
       - ".github/workflows/build-trellis2.yml"

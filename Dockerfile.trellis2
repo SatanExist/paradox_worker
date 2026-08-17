@@ -55,7 +55,7 @@ RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/
       /app/TRELLIS.2/o-voxel/third_party/eigen
 
 RUN pip install --no-cache-dir \
-    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh scipy scikit-image \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless ninja trimesh fast_simplification scipy scikit-image \
     "transformers>=4.45,<5" gradio==6.0.1 tensorboard pandas lpips zstandard \
     kornia timm plyfile filelock safetensors einops "triton>=3.2.0" && \
     pip install --no-cache-dir \
@@ -101,6 +101,7 @@ COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
 COPY studio_bridge/soft_input.py /app/studio_bridge/soft_input.py
 COPY studio_bridge/material_polish.py /app/studio_bridge/material_polish.py
 COPY studio_bridge/poster.py /app/studio_bridge/poster.py
+COPY studio_bridge/poster_gpu.py /app/studio_bridge/poster_gpu.py
 COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
 # Community PR #104 multi-image fusion (monkeypatch; stock TRELLIS.2 main lacks it)
 COPY studio_bridge/trellis2_multi_image.py /app/trellis2_multi_image.py

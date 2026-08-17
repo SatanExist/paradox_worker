@@ -815,23 +815,27 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
     model_url = _upload_r2(str(dest), object_key, content_type="model/gltf-binary")
 
     poster_url = None
+    poster_urls: dict[str, str] = {}
     try:
         try:
-            from studio_bridge.poster import render_glb_poster
+            from studio_bridge.poster import render_glb_poster_set
         except ImportError:
-            from poster import render_glb_poster  # type: ignore
+            from poster import render_glb_poster_set  # type: ignore
 
-        poster_path = dest.with_suffix(".jpg")
-        render_glb_poster(temp_glb_path, size=512).save(
-            poster_path, format="JPEG", quality=85, optimize=True
-        )
-        poster_url = _upload_r2(
-            str(poster_path),
-            f"trellis2/{safe_id}.jpg",
-            content_type="image/jpeg",
-        )
-        if poster_url:
-            print(f"Poster bytes={poster_path.stat().st_size}")
+        frames = render_glb_poster_set(temp_glb_path, size=768)
+        for env, image in frames.items():
+            suffix = ".jpg" if env == "studio" else f"_{env}.jpg"
+            poster_path = dest.with_name(f"{safe_id}{suffix}")
+            image.save(poster_path, format="JPEG", quality=90, optimize=True)
+            url = _upload_r2(
+                str(poster_path),
+                f"trellis2/{safe_id}{suffix}",
+                content_type="image/jpeg",
+            )
+            if url:
+                poster_urls[env] = url
+                print(f"Poster {env} bytes={poster_path.stat().st_size}")
+        poster_url = poster_urls.get("studio") or next(iter(poster_urls.values()), None)
     except Exception as exc:
         print(f"WARN: poster render failed ({exc}); delivering GLB without poster_url")
 
@@ -841,6 +845,7 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
         "model_sha256": sha,
         "model_url": model_url,
         "poster_url": poster_url,
+        "poster_urls": poster_urls or None,
         "delivery": "r2" if model_url else "volume",
     }
 
