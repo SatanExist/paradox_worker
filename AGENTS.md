@@ -21,7 +21,7 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 11. `@memory-bank/teamWorkflow.md` — синхронизация двух разработчиков через git
 12. `@memory-bank/techContext.md` — API, RunPod, карта файлов
 13. `@memory-bank/systemPatterns.md` — архитектура и решения
-14. **`@scripts/unique3d_mv2b_spike.md`** — MV2b Unique3D (архив); класс frozen → `synthMultiViewProd.md`
+15. **`@memory-bank/posterCards.md`** — сетка = JPEG `posterUrl`; GLB только во вьюере
 
 ## Команды
 
@@ -34,12 +34,13 @@ python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 
 python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v2 MV-Adapter (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier medium --dry-run
-# Local Studio lab (generate + review): py -3 scripts/studio_api.py
+# Local Studio lab (generate + review): .\scripts\studio_lab.ps1
 #   http://127.0.0.1:8787/  →  /scripts/studio_lab.html
+#   полка GLB, файл→R2, рефы рыцарь/сундук; Generate = живой GPU
+#   (uses .venv-studio; do not use the stale 3.14.0 .venv — ctypes/uvicorn)
 # Card-only review: http://127.0.0.1:8765/scripts/model_review.html?file=preview_textures/armor_t2_v17_realistic.png.glb
 #   (http.server: .js MIME ok; .mjs is text/plain on Windows)
 python scripts/reconviagen_hf_smoke.py --image path1.png --image path2.png --save out.glb
-python scripts/studio_api.py   # http://127.0.0.1:8787/docs
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
@@ -59,7 +60,7 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/postSideBackPlan.md` | **Roadmap после тупика** (P1–P4) |
 | `memory-bank/reconViaGenMvRefiner.md` | **D-track MASTER:** ReconViaGen integration + smart fusion |
 | `memory-bank/multiViewFusionResearch.md` | **Research:** multi-view series ↔ 3D fusion (T2/Meshy/papers) |
-| `memory-bank/productMultiUx.md` | **Путь A** + **§11 пакет товарищу** (промпт Cursor + R2 демо) |
+| `memory-bank/posterCards.md` | **Сетка = JPEG `posterUrl`**, GLB только во вьюере |
 | `memory-bank/synthMultiViewProd.md` | Synth/img2mv→shape (**🔴 FROZEN 2026-08-13**) |
 | `memory-bank/textureWowPlan.md` | **План вау-текстур** (фазы, T2 vs MV-Adapter, W2) |
 | `scripts/wonder3d_mv2_spike.md` | MV2 Wonder3D (soft-NO-GO 2026-08-07) |

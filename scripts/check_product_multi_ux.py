@@ -120,6 +120,22 @@ def main() -> None:
     assert reduced["qualityTierUsed"] == "quality"
     assert "OOM" not in (reduced.get("qualityReducedCopy") or "")
     assert reduced["status"] == "ready"
+    assert reduced["posterUrl"] is None
+
+    with_poster = normalize_job_payload(
+        {
+            "id": "job-2",
+            "status": "COMPLETED",
+            "output": {
+                "model_url": "https://example.com/a.glb",
+                "poster_url": "https://example.com/a.jpg",
+                "delivery": "r2",
+            },
+        },
+        tier_cold_eta_sec=1,
+        tier_warm_eta_sec=1,
+    )
+    assert with_poster["posterUrl"] == "https://example.com/a.jpg"
 
     try:
         normalize_view_slots({"side": "https://x"})

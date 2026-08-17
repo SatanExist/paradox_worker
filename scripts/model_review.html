@@ -128,7 +128,32 @@
     const initial = q
       ? (q.startsWith("../") || q.startsWith("http") ? q : `../${q.replace(/^\/+/, "")}`)
       : preset.value;
-    viewer.loadFromUrl(initial, q || preset.selectedOptions[0].text);
+
+    async function loadShelf() {
+      try {
+        const res = await fetch("http://127.0.0.1:8787/api/lab/workspace");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.models || !data.models.length) return;
+        const current = preset.value;
+        preset.innerHTML = "";
+        for (const m of data.models) {
+          const opt = document.createElement("option");
+          opt.value = m.url.startsWith("/") ? `..${m.url}` : m.url;
+          const mb = m.bytes ? ` (~${(m.bytes / (1024 * 1024)).toFixed(0)} MB)` : "";
+          opt.textContent = `${m.label}${mb}`;
+          preset.appendChild(opt);
+        }
+        const match = [...preset.options].find((o) => o.value === current || o.value.endsWith(current.replace("../", "/")));
+        if (match) preset.value = match.value;
+      } catch {
+        /* keep hardcoded options when lab API is down */
+      }
+    }
+
+    loadShelf().then(() => {
+      viewer.loadFromUrl(initial, q || preset.selectedOptions[0].text);
+    });
   </script>
 </body>
 </html>

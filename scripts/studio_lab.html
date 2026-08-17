@@ -2,133 +2,342 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>Studio lab — generate + review</title>
+  <title>Workspace — Image to 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
+    :root {
+      --bg: #0e0e10;
+      --panel: #141416;
+      --elev: #1b1b1f;
+      --line: #2c2c32;
+      --text: #f3f3f5;
+      --muted: #8d8d96;
+      --accent: #c6f04d;
+      --accent-2: #9cc62a;
+      --gen: linear-gradient(90deg, #ff7aa8 0%, #ffc86b 100%);
+      --danger: #ff6b8a;
+      --radius: 10px;
+      --font: Inter, "Segoe UI", system-ui, sans-serif;
+    }
     * { box-sizing: border-box; margin: 0; }
     html, body { height: 100%; }
     body {
-      font-family: "Segoe UI", system-ui, sans-serif;
-      background: #140c10;
-      color: #f3e8ea;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
       display: grid;
-      grid-template-columns: minmax(280px, 360px) 1fr;
-      min-height: 100%;
+      grid-template-rows: 48px 1fr;
+      overflow: hidden;
     }
-    aside {
-      border-right: 1px solid #3a2430;
-      background: #1a1014;
-      padding: 16px;
-      overflow: auto;
+    a { color: var(--accent); text-decoration: none; }
+    button { font-family: inherit; }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; border-bottom: 1px solid var(--line); background: #101012;
     }
-    h1 { font-size: 16px; font-weight: 650; margin-bottom: 4px; }
-    .muted { color: #b79aa3; font-size: 12px; line-height: 1.45; }
-    .block { margin-top: 16px; }
-    label.slot, .preset {
-      display: block; margin: 8px 0; font-size: 13px;
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .02em; }
+    .brand b { color: var(--accent); font-size: 15px; }
+    .brand span { color: var(--muted); font-weight: 500; font-size: 13px; }
+    .top-links { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted); }
+    .top-links a { color: var(--muted); }
+    .top-links a:hover { color: var(--text); }
+    .pill {
+      border: 1px solid var(--line); background: #1a2610; color: var(--accent);
+      border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 600;
     }
-    input[type="url"], input[type="text"] {
-      width: 100%; margin-top: 4px; padding: 8px 10px;
-      border-radius: 10px; border: 1px solid #4a3038;
-      background: #24141a; color: #f3e8ea;
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; display: inline-block; }
+    .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent-2); }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 56px 320px minmax(0, 1fr) 300px;
+      min-height: 0;
     }
-    .presets { display: grid; gap: 6px; }
+    .rail {
+      border-right: 1px solid var(--line); background: #101012;
+      display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 6px;
+    }
+    .rail a, .rail button {
+      width: 40px; height: 40px; border: 0; border-radius: 10px;
+      background: transparent; color: var(--muted); cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .rail .on { background: #1f2a10; color: var(--accent); }
+    .rail button:disabled { opacity: .28; cursor: not-allowed; }
+
+    .panel {
+      background: var(--panel); border-right: 1px solid var(--line);
+      display: grid; grid-template-rows: auto 1fr auto; min-height: 0;
+    }
+    .panel-scroll { overflow: auto; padding: 14px 14px 8px; }
+    .panel-foot {
+      padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #121214;
+    }
+    .modes { display: flex; gap: 6px; margin-bottom: 12px; }
+    .modes button {
+      flex: 1; height: 36px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--elev); color: var(--muted); cursor: pointer;
+    }
+    .modes button.on { border-color: var(--accent-2); color: var(--accent); background: #1a2610; }
+    .modes button:disabled { opacity: .35; cursor: not-allowed; }
+    .label { font-size: 11px; color: var(--muted); margin: 12px 0 6px; letter-spacing: .04em; text-transform: uppercase; }
+    .select, input[type="url"], input[type="number"], input[type="search"] {
+      width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--elev); color: var(--text); font-size: 13px;
+    }
+    .model-line { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .dropzone {
+      margin-top: 10px; border: 1px dashed #3a3a42; border-radius: 12px;
+      min-height: 168px; display: grid; place-items: center; text-align: center;
+      cursor: pointer; background: #121214; position: relative; overflow: hidden;
+    }
+    .dropzone:hover, .dropzone.hot { border-color: var(--accent); background: #161a10; }
+    .dropzone p { color: var(--muted); font-size: 12px; line-height: 1.45; padding: 12px; }
+    .dropzone strong { color: var(--text); font-size: 13px; display: block; margin-bottom: 4px; }
+    #thumb {
+      display: none; width: 100%; height: 168px; object-fit: contain; background: #0a0a0c;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip {
+      border: 1px solid var(--line); background: var(--elev); color: var(--text);
+      border-radius: 999px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+    }
+    .chip:hover { border-color: var(--accent-2); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+    .switch { position: relative; width: 38px; height: 22px; flex: 0 0 auto; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; background: #2a2a30; border-radius: 999px; cursor: pointer;
+    }
+    .slider:before {
+      content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+      background: #ddd; border-radius: 50%; transition: .15s;
+    }
+    .switch input:checked + .slider { background: var(--accent-2); }
+    .switch input:checked + .slider:before { transform: translateX(16px); background: #111; }
+    .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .preset {
-      border: 1px solid #4a3038; border-radius: 12px; padding: 8px 10px;
-      cursor: pointer; background: #221218;
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+      cursor: pointer; background: var(--elev); font-size: 12px;
     }
-    .preset:has(input:checked) { border-color: #e06; background: #2c151c; }
-    .preset small { display: block; color: #b79aa3; font-size: 11px; margin-top: 2px; }
-    button {
-      border: 0; border-radius: 999px; padding: 9px 14px; cursor: pointer;
-      font-size: 13px; background: #e06; color: #fff;
+    .preset:has(input:checked) { border-color: var(--accent-2); background: #1a2610; }
+    .preset b { display: block; }
+    .preset small { color: var(--muted); font-size: 10px; }
+    .preset input { display: none; }
+    .extra { margin-top: 8px; }
+    .slot { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .slot input { margin-top: 4px; }
+    .file-btn {
+      float: right; border: 0; background: transparent; color: var(--accent);
+      cursor: pointer; font-size: 11px;
     }
-    button.ghost {
-      background: transparent; color: #f3e8ea; border: 1px solid #4a3038;
+    .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .eta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    #generate {
+      width: 100%; border: 0; border-radius: 10px; padding: 12px 14px; cursor: pointer;
+      font-size: 15px; font-weight: 700; color: #1a1020; background: var(--gen);
     }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    main { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; }
+    #generate:disabled { opacity: .45; cursor: not-allowed; }
+    #jobLine { margin-top: 8px; font-size: 12px; color: var(--muted); min-height: 16px; }
+
+    .viewport {
+      min-width: 0; display: grid; grid-template-rows: 44px 1fr 28px; background: #111113;
+    }
     #toolbar {
       display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-      padding: 10px 12px; border-bottom: 1px solid #3a2430;
+      padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px;
     }
     #toolbar button, #toolbar label, #toolbar select {
-      background: #24141a; color: #f3e8ea; border: 1px solid #4a3038;
-      border-radius: 999px; padding: 6px 11px; font-size: 12px;
+      background: var(--elev); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 5px 9px; font-size: 12px; cursor: pointer;
     }
     #stageWrap { min-height: 0; position: relative; }
     #stage { position: absolute; inset: 0; }
-    #status {
-      padding: 8px 12px; font-size: 12px; color: #b79aa3;
-      border-top: 1px solid #3a2430;
+    #empty {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      z-index: 3; background: radial-gradient(ellipse at center, #1a1a20 0%, #0e0e10 70%);
+      text-align: center; padding: 24px;
     }
+    #empty.hide { display: none; }
+    .geom {
+      width: 72px; height: 72px; margin: 0 auto 16px; opacity: .85;
+      background:
+        linear-gradient(var(--accent), var(--accent)) center/18px 18px no-repeat,
+        conic-gradient(from 210deg, #7ad 0 120deg, #c6f04d 0 240deg, #ff8 0);
+      clip-path: polygon(50% 4%, 96% 78%, 4% 78%);
+      border-radius: 8px;
+    }
+    #empty h2 { font-size: 22px; font-weight: 650; margin-bottom: 8px; }
+    #empty p { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+    #emptyCta {
+      border: 0; border-radius: 10px; padding: 11px 18px; cursor: pointer;
+      background: var(--accent); color: #111; font-weight: 700; font-size: 14px;
+    }
+    #status { padding: 4px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
     #drop {
       position: absolute; inset: 0; display: none; place-items: center;
-      background: rgba(20, 8, 12, .55); z-index: 4; font-size: 18px;
+      background: rgba(8, 8, 10, .62); z-index: 4; font-size: 18px;
     }
     #drop.on { display: grid; }
-    a { color: #ff8aa8; }
+
+    .library {
+      border-left: 1px solid var(--line); background: var(--panel);
+      display: grid; grid-template-rows: auto auto 1fr; min-height: 0;
+    }
+    .lib-head { padding: 12px 12px 8px; }
+    .lib-head h3 { font-size: 13px; font-weight: 650; margin-bottom: 8px; }
+    .lib-tools { display: flex; gap: 6px; }
+    .lib-tools input { flex: 1; }
+    .lib-tools button {
+      border: 0; border-radius: 8px; padding: 0 10px; background: var(--accent);
+      color: #111; font-weight: 700; cursor: pointer; font-size: 12px;
+    }
+    #gallery {
+      overflow: auto; padding: 8px 12px 16px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start;
+    }
+    .card {
+      border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+      background: var(--elev); cursor: pointer; min-height: 118px;
+      transition: transform .16s ease, border-color .16s ease;
+    }
+    .card:hover, .card.on { border-color: var(--accent-2); transform: translateY(-2px); }
+    .card .ph {
+      height: 88px; background: #2a2a30 center/cover no-repeat;
+      display: grid; place-items: center; color: #8d8d96; font-size: 10px;
+    }
+    .card .ph.pending { background: linear-gradient(180deg, #323238, #242428); }
+    .card .meta { padding: 6px 8px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card .meta b { color: var(--text); font-weight: 600; }
+
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 56px 280px minmax(0, 1fr); }
+      .library { display: none; }
+    }
   </style>
 </head>
 <body>
-  <aside>
-    <h1>Generate</h1>
-    <p class="muted" id="underFront">3D с одной картинки. Перед ближе к фото; бок и зад модель достраивает сама.</p>
-
-    <div class="block">
-      <div class="muted">Качество</div>
-      <div class="presets" id="presets"></div>
+  <header class="topbar">
+    <div class="brand"><b>Lab</b><span>Workspace · Image to 3D</span></div>
+    <div class="top-links">
+      <a href="/docs">API</a>
+      <a href="./model_review.html">Review</a>
+      <span class="pill">Workspace</span>
+      <span><i class="dot" id="apiDot"></i> <span id="apiHint">bridge…</span></span>
     </div>
+  </header>
 
-    <div class="block">
-      <label class="slot">Front *
-        <input id="front" type="url" placeholder="https://… публичный URL картинки" />
-      </label>
-      <button type="button" class="ghost" id="toggleExtra">+ Добавить ракурсы</button>
-      <div id="extra" hidden>
-        <p class="muted" id="underExtra" style="margin: 8px 0;">Реальные фото того же предмета.</p>
-        <label class="slot">Side <input id="side" type="url" /></label>
-        <label class="slot">Back <input id="back" type="url" /></label>
-        <label class="slot">Extra <input id="extraUrl" type="url" /></label>
+  <div class="shell">
+    <nav class="rail" title="Image to 3D">
+      <button class="on" type="button" title="Image to 3D">▣</button>
+      <button type="button" disabled title="Text to 3D — позже">T</button>
+      <button type="button" disabled title="Texture — позже">🖌</button>
+      <a href="./model_review.html" title="Review">👁</a>
+    </nav>
+
+    <aside class="panel">
+      <div class="panel-scroll">
+        <div class="modes">
+          <button type="button" class="on" title="Image to 3D">🖼</button>
+          <button type="button" disabled title="Text to 3D — не в этом спринте">T</button>
+        </div>
+        <div class="label">Модель</div>
+        <select class="select" id="engine" disabled>
+          <option>TRELLIS.2 — native PBR</option>
+        </select>
+        <p class="model-line" id="underFront">3D с одной картинки. Перед ближе к фото; бок и зад модель достраивает сама.</p>
+
+        <div class="dropzone" id="dropzone">
+          <img id="thumb" alt="" />
+          <p id="dropHint">
+            <strong>Click / Drag & Drop</strong>
+            PNG, JPG, WEBP · до 20 MB<br />или вставьте публичный URL ниже
+          </p>
+        </div>
+        <div class="chips" id="refs"></div>
+        <label class="slot">Front URL
+          <input id="front" type="url" placeholder="https://…" />
+        </label>
+
+        <div class="row">
+          <span>Multi-view</span>
+          <label class="switch"><input type="checkbox" id="toggleExtra" /><span class="slider"></span></label>
+        </div>
+        <div class="extra" id="extra" hidden>
+          <p class="muted" id="underExtra">Реальные фото того же предмета. AI-sheet не режим.</p>
+          <label class="slot">Side <button type="button" class="file-btn" data-upload="side">Файл…</button>
+            <input id="side" type="url" />
+          </label>
+          <label class="slot">Back <button type="button" class="file-btn" data-upload="back">Файл…</button>
+            <input id="back" type="url" />
+          </label>
+          <label class="slot">Extra <button type="button" class="file-btn" data-upload="extraUrl">Файл…</button>
+            <input id="extraUrl" type="url" />
+          </label>
+        </div>
+
+        <div class="label">Качество</div>
+        <div class="presets" id="presets"></div>
+        <label class="slot">Seed <input id="seed" type="number" min="0" value="1" /></label>
       </div>
-    </div>
+      <div class="panel-foot">
+        <div class="eta"><span id="genEta">warm ~4 мин</span><span>живой GPU</span></div>
+        <button type="button" id="generate">Generate</button>
+        <p id="jobLine"></p>
+      </div>
+    </aside>
 
-    <div class="block row">
-      <button type="button" id="generate">Сгенерировать</button>
-      <button type="button" class="ghost" id="demo">Демо: рыцарь</button>
-    </div>
-    <p class="muted" id="apiHint">Живая генерация жжёт GPU. Демо грузит локальный GLB без RunPod.</p>
-    <p class="muted" id="jobLine"></p>
-  </aside>
+    <main class="viewport">
+      <div id="toolbar">
+        <button type="button" id="modeStudio">Карточка</button>
+        <button type="button" id="modeInspect">Стандарт</button>
+        <button type="button" data-view="front">Front</button>
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="back">Back</button>
+        <label><input type="checkbox" id="spin" checked /> Орбита</label>
+        <select id="light" title="Освещение">
+          <option value="studio">Studio</option>
+          <option value="gallery">Gallery</option>
+          <option value="outdoor">Outdoor</option>
+          <option value="neon">Neon</option>
+          <option value="night">Night</option>
+        </select>
+        <label><input type="checkbox" id="env" checked /> IBL</label>
+        <label><input type="checkbox" id="wire" /> Каркас</label>
+        <label><input type="checkbox" id="albedo" /> Albedo</label>
+        <input id="pick" type="file" accept=".glb,.gltf" hidden />
+        <input id="pickImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+        <button type="button" id="openGlb">Open GLB</button>
+        <button type="button" id="demo">Демо: рыцарь</button>
+      </div>
+      <div id="stageWrap">
+        <div id="stage"></div>
+        <div id="empty">
+          <div>
+            <div class="geom"></div>
+            <h2>What will you create today?</h2>
+            <p>Загрузите фото слева или откройте модель из полки справа.</p>
+            <button type="button" id="emptyCta">+ Generate Model</button>
+          </div>
+        </div>
+        <div id="drop">Отпустите картинку или GLB</div>
+      </div>
+      <div id="status">…</div>
+    </main>
 
-  <main>
-    <div id="toolbar">
-      <strong>Осмотр</strong>
-      <button type="button" id="modeStudio">Карточка</button>
-      <button type="button" id="modeInspect">Стандарт</button>
-      <button type="button" data-view="front">Front</button>
-      <button type="button" data-view="side">Side</button>
-      <button type="button" data-view="back">Back</button>
-      <label><input type="checkbox" id="spin" checked /> Орбита</label>
-      <select id="light" title="Освещение">
-        <option value="studio">Studio</option>
-        <option value="gallery">Gallery</option>
-        <option value="outdoor">Outdoor</option>
-        <option value="neon">Neon</option>
-        <option value="night">Night</option>
-      </select>
-      <label><input type="checkbox" id="env" checked /> IBL</label>
-      <label><input type="checkbox" id="wire" /> Каркас</label>
-      <label><input type="checkbox" id="albedo" /> Только albedo</label>
-      <input id="pick" type="file" accept=".glb,.gltf" hidden />
-      <button type="button" id="openGlb">Открыть GLB</button>
-    </div>
-    <div id="stageWrap">
-      <div id="stage"></div>
-      <div id="drop">Отпустите GLB</div>
-    </div>
-    <div id="status">…</div>
-  </main>
+    <aside class="library">
+      <div class="lib-head">
+        <h3>My generations</h3>
+        <div class="lib-tools">
+          <input id="gallerySearch" type="search" placeholder="Search my generations" />
+          <button type="button" id="libUpload">Upload</button>
+        </div>
+      </div>
+      <div id="gallery"></div>
+    </aside>
+  </div>
 
   <script type="importmap">
   {
@@ -140,6 +349,7 @@
   </script>
   <script type="module">
     import { createStudioViewer } from "./studio_viewer.js";
+    import { captureGlbThumb } from "./studio_thumb.js";
 
     const FALLBACK_PRESETS = [
       { id: "low", label: "Low", blurb: "Превью силуэта", default: false, etaSecondsWarm: 45 },
@@ -156,18 +366,43 @@
     const jobLine = document.getElementById("jobLine");
     const apiHint = document.getElementById("apiHint");
     const drop = document.getElementById("drop");
+    const empty = document.getElementById("empty");
+    let shelfModels = [];
+    let sessionCards = [];
+    let copy = null;
+    let pollTimer = null;
+    let uploadTarget = "front";
+    const thumbCache = new Map();
+    const thumbQueued = new Set();
+    let thumbQueue = [];
+    let thumbBusy = false;
+    let thumbIO = null;
 
     const viewer = createStudioViewer(document.getElementById("stage"), {
       initialMode: "studio",
       onStatus: (msg) => { statusEl.textContent = msg; },
     });
 
-    let copy = null;
-    let pollTimer = null;
+    function showEmpty(on) {
+      empty.classList.toggle("hide", !on);
+    }
 
     function selectedTier() {
       const el = presetsEl.querySelector("input[name=tier]:checked");
       return el ? el.value : "medium";
+    }
+
+    function fmtBytes(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v) || v <= 0) return "";
+      if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
+      return `${(v / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function updateEta() {
+      const el = presetsEl.querySelector("input[name=tier]:checked");
+      const warm = Number(el && el.dataset.warm) || 240;
+      document.getElementById("genEta").textContent = `warm ~${Math.max(1, Math.round(warm / 60))} мин`;
     }
 
     function renderPresets(list) {
@@ -175,11 +410,139 @@
       for (const p of list) {
         const wrap = document.createElement("label");
         wrap.className = "preset";
-        wrap.innerHTML = `<input type="radio" name="tier" value="${p.id}" ${p.default ? "checked" : ""} />
-          <b>${p.label}</b>
-          <small>${p.blurb || ""} · warm ~${Math.round((p.etaSecondsWarm || 0) / 60)} мин</small>`;
+        wrap.innerHTML = `<input type="radio" name="tier" value="${p.id}" data-warm="${p.etaSecondsWarm || 0}" ${p.default ? "checked" : ""} />
+          <b>${p.label}</b><small>${p.blurb || ""}</small>`;
         presetsEl.appendChild(wrap);
       }
+      presetsEl.onchange = updateEta;
+      updateEta();
+    }
+
+    function renderRefs(refs) {
+      const box = document.getElementById("refs");
+      box.innerHTML = "";
+      for (const ref of refs || []) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "chip";
+        btn.textContent = ref.label;
+        btn.onclick = () => setFront(ref.url, ref.url);
+        box.appendChild(btn);
+      }
+    }
+
+    function setFront(url, preview) {
+      document.getElementById("front").value = url;
+      const thumb = document.getElementById("thumb");
+      thumb.src = preview || url;
+      thumb.style.display = "block";
+      document.getElementById("dropHint").style.display = "none";
+    }
+
+    function applyThumb(ph, url) {
+      if (!ph) return;
+      ph.classList.remove("pending");
+      ph.textContent = "";
+      ph.style.backgroundImage = `url("${url}")`;
+    }
+
+    async function pumpThumbs() {
+      if (thumbBusy) return;
+      thumbBusy = true;
+      while (thumbQueue.length) {
+        const { model, ph } = thumbQueue.shift();
+        try {
+          const dataUrl = await captureGlbThumb(model.url);
+          thumbCache.set(model.id, dataUrl);
+          if (ph.isConnected) applyThumb(ph, dataUrl);
+          fetch(`${apiBase}/api/lab/thumbnail`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: model.id, image: dataUrl }),
+          }).catch(() => {});
+        } catch {
+          if (ph.isConnected) {
+            ph.classList.remove("pending");
+            ph.textContent = "3D";
+          }
+        }
+      }
+      thumbBusy = false;
+    }
+
+    function enqueueThumb(model, ph) {
+      const cached = model.thumb || thumbCache.get(model.id);
+      if (cached) {
+        applyThumb(ph, cached);
+        return;
+      }
+      if (String(model.url || "").startsWith("https://")) {
+        if (ph) {
+          ph.classList.remove("pending");
+          ph.textContent = "3D";
+        }
+        return;
+      }
+      if (thumbQueued.has(model.id)) return;
+      thumbQueued.add(model.id);
+      thumbQueue.push({ model, ph });
+      thumbQueue.sort((a, b) => (a.model.bytes || 0) - (b.model.bytes || 0));
+      pumpThumbs();
+    }
+
+    function allGalleryModels() {
+      return sessionCards.concat(shelfModels);
+    }
+
+    function rememberJobCard(data, tier) {
+      if (!data.posterUrl || !data.modelUrl) return;
+      sessionCards = sessionCards.filter((m) => m.id !== data.jobId);
+      sessionCards.unshift({
+        id: data.jobId,
+        label: `${tier} · ${(data.jobId || "").slice(0, 8)}`,
+        url: data.modelUrl,
+        thumb: data.posterUrl,
+        bytes: data.modelBytes,
+      });
+    }
+
+    function renderGallery(models) {
+      const q = (document.getElementById("gallerySearch").value || "").toLowerCase();
+      const box = document.getElementById("gallery");
+      box.innerHTML = "";
+      if (thumbIO) thumbIO.disconnect();
+      thumbIO = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          enqueueThumb(entry.target._model, entry.target.querySelector(".ph"));
+          thumbIO.unobserve(entry.target);
+        }
+      }, { root: box, rootMargin: "800px" });
+
+      const list = (models || []).filter((m) => !q || (m.label + m.id).toLowerCase().includes(q));
+      for (const m of list) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "card";
+        card._model = m;
+        const ready = m.thumb || thumbCache.get(m.id);
+        const phClass = ready ? "ph" : "ph pending";
+        const phText = ready ? "" : "…";
+        const phStyle = ready ? ` style="background-image:url('${ready}')"` : "";
+        card.innerHTML = `<div class="${phClass}"${phStyle}>${phText}</div><div class="meta"><b>${m.label}</b> ${fmtBytes(m.bytes)}</div>`;
+        card.onclick = () => {
+          box.querySelectorAll(".card").forEach((c) => c.classList.remove("on"));
+          card.classList.add("on");
+          openModel(m.url, m.label);
+        };
+        box.appendChild(card);
+        if (!ready) thumbIO.observe(card);
+      }
+    }
+
+    async function openModel(url, label) {
+      showEmpty(false);
+      await viewer.loadFromUrl(glbUrl(url), label);
     }
 
     async function loadCopy() {
@@ -190,16 +553,50 @@
         document.getElementById("underFront").textContent = copy.underFront;
         document.getElementById("underExtra").textContent = copy.underExtraViews;
         renderPresets(copy.qualityPresets);
-        apiHint.textContent = "Bridge на :8787. Generate = живой RunPod. IBL обязателен для металла.";
+        document.getElementById("apiDot").classList.add("on");
+        apiHint.textContent = "bridge ok";
       } catch {
         renderPresets(FALLBACK_PRESETS);
-        apiHint.textContent = "Bridge не отвечает. Демо и осмотр GLB работают; Generate нужен py -3 scripts/studio_api.py";
+        apiHint.textContent = "bridge down · studio_lab.ps1";
       }
+    }
+
+    async function loadWorkspace() {
+      try {
+        const res = await fetch(`${apiBase}/api/lab/workspace`);
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        renderRefs(data.refs);
+        shelfModels = data.models || [];
+        renderGallery(allGalleryModels());
+      } catch {
+        renderRefs([
+          { id: "armor", label: "Рыцарь", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png" },
+          { id: "chest", label: "Сундук", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_chest.png" },
+        ]);
+        renderGallery([]);
+      }
+    }
+
+    async function uploadImageFile(file, targetId) {
+      jobLine.textContent = `Загрузка ${file.name} на R2…`;
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch(`${apiBase}/api/lab/upload-image`, { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data.detail;
+        throw new Error(typeof detail === "string" ? detail : (res.statusText || "upload failed"));
+      }
+      document.getElementById(targetId).value = data.url;
+      if (targetId === "front") setFront(data.url, data.localPath || data.url);
+      jobLine.textContent = `URL готов · ${fmtBytes(data.bytes)}`;
+      return data.url;
     }
 
     function slotPayload() {
       const front = document.getElementById("front").value.trim();
-      if (!front) throw new Error("Нужен публичный https URL в Front");
+      if (!front) throw new Error("Нужен https URL или файл в Front");
       const slots = { front };
       const side = document.getElementById("side").value.trim();
       const back = document.getElementById("back").value.trim();
@@ -219,14 +616,24 @@
       return url;
     }
 
+    function jobMeta(data) {
+      const bits = [data.status || "?", data.statusLine || data.jobId];
+      if (data.modelBytes) bits.push(fmtBytes(data.modelBytes));
+      if (data.qualityReduced) bits.push(data.qualityReducedCopy || "качество снижено");
+      return bits.filter(Boolean).join(" · ");
+    }
+
     async function pollJob(jobId, tier) {
       jobLine.textContent = `Job ${jobId}…`;
       const tick = async () => {
         const res = await fetch(`${apiBase}/api/jobs/${encodeURIComponent(jobId)}?tier=${encodeURIComponent(tier)}`);
         const data = await res.json();
-        jobLine.textContent = `${data.status || "?"} · ${data.statusLine || jobId}`;
+        jobLine.textContent = jobMeta(data);
         if (data.status === "ready" && data.modelUrl) {
+          showEmpty(false);
           await viewer.loadFromUrl(glbUrl(data.modelUrl), data.modelUrl);
+          rememberJobCard(data, tier);
+          loadWorkspace();
           return;
         }
         if (data.status === "failed") {
@@ -238,8 +645,58 @@
       tick();
     }
 
-    document.getElementById("toggleExtra").onclick = () => {
-      extraBox.hidden = !extraBox.hidden;
+    async function runGenerate() {
+      let slots;
+      try { slots = slotPayload(); }
+      catch (err) { jobLine.textContent = err.message; return; }
+      const tier = selectedTier();
+      if (!confirm(`Отправить ${tier} job на GPU? Это минуты и деньги.`)) return;
+      document.getElementById("generate").disabled = true;
+      try {
+        const seed = Number(document.getElementById("seed").value) || 1;
+        const res = await fetch(`${apiBase}/api/jobs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "image", tier, viewSlots: slots, seed }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : res.statusText);
+        jobLine.textContent = `${data.statusLine || ""} · ETA warm ~${data.etaSecondsWarm}s`;
+        if (pollTimer) clearTimeout(pollTimer);
+        pollJob(data.jobId, data.tier || tier);
+      } catch (err) {
+        jobLine.textContent = err.message;
+      } finally {
+        document.getElementById("generate").disabled = false;
+      }
+    }
+
+    document.getElementById("toggleExtra").onchange = (e) => {
+      extraBox.hidden = !e.target.checked;
+    };
+    document.getElementById("dropzone").onclick = () => {
+      uploadTarget = "front";
+      document.getElementById("pickImage").click();
+    };
+    document.querySelectorAll("[data-upload]").forEach((btn) => {
+      btn.onclick = (ev) => {
+        ev.preventDefault();
+        uploadTarget = btn.dataset.upload;
+        document.getElementById("pickImage").click();
+      };
+    });
+    document.getElementById("pickImage").onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      try { await uploadImageFile(f, uploadTarget); }
+      catch (err) { jobLine.textContent = err.message; }
+    };
+    document.getElementById("gallerySearch").oninput = () => renderGallery(allGalleryModels());
+    document.getElementById("libUpload").onclick = () => document.getElementById("pick").click();
+    document.getElementById("emptyCta").onclick = () => {
+      if (document.getElementById("front").value.trim()) runGenerate();
+      else document.getElementById("dropzone").click();
     };
     document.getElementById("modeStudio").onclick = () => {
       viewer.setMode("studio");
@@ -262,37 +719,14 @@
     document.getElementById("openGlb").onclick = () => document.getElementById("pick").click();
     document.getElementById("pick").onchange = (e) => {
       const f = e.target.files && e.target.files[0];
-      if (f) viewer.loadFile(f);
+      if (f) { showEmpty(false); viewer.loadFile(f); }
     };
     document.getElementById("demo").onclick = () => {
-      viewer.loadFromUrl(DEMO_GLB, "Knight polish").catch(() => {
-        viewer.loadFromUrl("../preview_textures/armor_t2_ultra_native_pbr_delight.glb", "Knight polish");
+      openModel(DEMO_GLB, "Knight polish").catch(() => {
+        openModel("../preview_textures/armor_t2_ultra_native_pbr_delight.glb", "Knight polish");
       });
     };
-    document.getElementById("generate").onclick = async () => {
-      let slots;
-      try { slots = slotPayload(); }
-      catch (err) { jobLine.textContent = err.message; return; }
-      const tier = selectedTier();
-      if (!confirm(`Отправить ${tier} job на GPU? Это минуты и деньги.`)) return;
-      document.getElementById("generate").disabled = true;
-      try {
-        const res = await fetch(`${apiBase}/api/jobs`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "image", tier, viewSlots: slots }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || res.statusText);
-        jobLine.textContent = `${data.statusLine || ""} · ETA warm ~${data.etaSecondsWarm}s`;
-        if (pollTimer) clearTimeout(pollTimer);
-        pollJob(data.jobId, data.tier || tier);
-      } catch (err) {
-        jobLine.textContent = err.message;
-      } finally {
-        document.getElementById("generate").disabled = false;
-      }
-    };
+    document.getElementById("generate").onclick = runGenerate;
 
     window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
     window.addEventListener("dragleave", () => drop.classList.remove("on"));
@@ -300,13 +734,19 @@
       e.preventDefault();
       drop.classList.remove("on");
       const f = e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f && /\.glb|\.gltf/i.test(f.name)) viewer.loadFile(f);
+      if (!f) return;
+      if (/\.glb|\.gltf/i.test(f.name)) {
+        showEmpty(false);
+        viewer.loadFile(f);
+        return;
+      }
+      if (/^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name)) {
+        uploadImageFile(f, "front").catch((err) => { jobLine.textContent = err.message; });
+      }
     });
 
     loadCopy();
-    viewer.loadFromUrl(DEMO_GLB, "Knight polish").catch(() => {
-      statusEl.textContent = "Нет демо-GLB. Откройте файл или запустите studio_api.py из корня репо.";
-    });
+    loadWorkspace();
   </script>
 </body>
 </html>

@@ -1,5 +1,9 @@
 ﻿.venv/
+.venv314/
+.venv-studio/
 .env
+preview_textures/lab_uploads/
+preview_textures/thumbs/
 .env.*
 weights/
 *.pth

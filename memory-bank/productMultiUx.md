@@ -160,7 +160,7 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 4. ETA в минутах из etaSecondsCold/Warm. Не писать «4–80 секунд» как у Rodin.
 5. Если job.qualityReduced === true — бейдж текстом qualityReducedCopy
    («Качество снижено, чтобы модель собралась»). Не показывать CUDA/OOM.
-6. GLB приходит modelUrl с R2 (25–100 MB). Карточка грузит этот URL.
+6. GLB приходит `modelUrl` с R2 (12–100 MB). **Лента / история — `posterUrl` (JPEG), не GLB.** Большой вьюер грузит `modelUrl` по клику.
    Не ждать base64. Превью-меш/Draco — не в этой задаче.
 
 Демо без генерации:
@@ -184,7 +184,7 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 | Слоты | Front обязателен; Side/Back/Extra опционально; пустые не слать |
 | Пресеты | **low / medium / high / realistic**, default **medium**. Legacy: preview→low, quality→medium, ultra→high |
 | Clay | только если явно `textureMode: "clay"` — не default |
-| Job status | `modelUrl`, `qualityReduced`, `qualityReducedCopy`, `modelBytes`, ETA |
+| Job status | `modelUrl`, **`posterUrl` (JPEG превью)**, `qualityReduced`, `qualityReducedCopy`, `modelBytes`, ETA |
 | Прототип экрана | `scripts/studio_lab.html` |
 | Прототип карточки | `scripts/model_review.html` + `scripts/studio_viewer.js` |
 | Контракт | `studio_bridge/product_multi_ux.py`, `studio_bridge/tiers.py`, `studio_bridge/normalize.py` |
@@ -210,7 +210,7 @@ Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут 
 
 | Слой | У них | У нас сейчас |
 |------|--------|----------------|
-| Превью в ленте | рендер / короткий ролик / маленький proxy | можно постер с фото входа; live GLB на карточке |
+| Превью в ленте | рендер / короткий ролик / маленький proxy | **нужен `posterUrl` с worker** (не фото входа, не GLB в сетке) |
 | Вьюер | Draco / meshopt + сжатые текстуры (KTX2/WebP), CDN | Three.js грузит `modelUrl` с R2 как есть |
 | Скачать | тот же или «оригинал» | тот же `modelUrl` |
 | 4K PNG | редко в веб-карточке | Realistic = PNG 4K специально для Blender/совместимости |

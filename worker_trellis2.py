@@ -759,7 +759,12 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _upload_r2(local_path: str, object_key: str) -> str | None:
+def _upload_r2(
+    local_path: str,
+    object_key: str,
+    *,
+    content_type: str = "model/gltf-binary",
+) -> str | None:
     """Upload to Cloudflare R2 (S3 API). Returns public URL or None if not configured."""
     endpoint = os.environ.get("R2_ENDPOINT_URL", "").strip()
     bucket = os.environ.get("R2_BUCKET", "").strip()
@@ -784,10 +789,10 @@ def _upload_r2(local_path: str, object_key: str) -> str | None:
         region_name=os.environ.get("R2_REGION", "auto"),
         config=Config(signature_version="s3v4"),
     )
-    extra = {"ContentType": "model/gltf-binary"}
+    extra = {"ContentType": content_type}
     client.upload_file(local_path, bucket, object_key, ExtraArgs=extra)
     url = f"{public_base}/{object_key}"
-    print(f"Uploaded GLB to R2: {url}")
+    print(f"Uploaded to R2 ({content_type}): {url}")
     return url
 
 
@@ -807,13 +812,35 @@ def _deliver_glb(temp_glb_path: str, job_id: str, *, return_base64: bool) -> dic
     size = dest.stat().st_size
     sha = _sha256_file(str(dest))
     object_key = f"trellis2/{safe_id}.glb"
-    model_url = _upload_r2(str(dest), object_key)
+    model_url = _upload_r2(str(dest), object_key, content_type="model/gltf-binary")
+
+    poster_url = None
+    try:
+        try:
+            from studio_bridge.poster import render_glb_poster
+        except ImportError:
+            from poster import render_glb_poster  # type: ignore
+
+        poster_path = dest.with_suffix(".jpg")
+        render_glb_poster(temp_glb_path, size=512).save(
+            poster_path, format="JPEG", quality=85, optimize=True
+        )
+        poster_url = _upload_r2(
+            str(poster_path),
+            f"trellis2/{safe_id}.jpg",
+            content_type="image/jpeg",
+        )
+        if poster_url:
+            print(f"Poster bytes={poster_path.stat().st_size}")
+    except Exception as exc:
+        print(f"WARN: poster render failed ({exc}); delivering GLB without poster_url")
 
     delivery = {
         "model_path": str(dest),
         "model_bytes": size,
         "model_sha256": sha,
         "model_url": model_url,
+        "poster_url": poster_url,
         "delivery": "r2" if model_url else "volume",
     }
 

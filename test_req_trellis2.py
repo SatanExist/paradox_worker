@@ -271,6 +271,9 @@ def save_output(final: dict, save_path: Path) -> None:
         response.raise_for_status()
         save_path.write_bytes(response.content)
         print(f"Saved from model_url -> {save_path.resolve()} bytes={save_path.stat().st_size}")
+        poster = output.get("poster_url")
+        if isinstance(poster, str) and poster.startswith("http"):
+            print(f"poster_url={poster}")
         return
 
     b64 = output.get("model_base64")

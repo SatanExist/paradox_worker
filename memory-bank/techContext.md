@@ -211,11 +211,13 @@ Studio без этой переменной остаётся на v0 bake.
 
 ### Studio Bridge API (POC, 2026-07-20)
 
-Локально: `python scripts/studio_api.py` → `http://127.0.0.1:8787` (lab `/`, Swagger `/docs`).  
+Локально: `.\scripts\studio_lab.ps1` → `http://127.0.0.1:8787` (lab `/`, Swagger `/docs`).  
+Интерпретатор: `.venv-studio` на **Python 3.14.6**. Не `.venv` (это 3.14.0: после апгрейда системы `ctypes` ломает click/uvicorn). Python 3.11 на этом ПК зарегистрирован, но `python.exe` отсутствует.  
 Код: `studio_bridge/`, lab UI: `scripts/studio_lab.html` + `scripts/model_review.html` + `scripts/studio_viewer.js` (не `.mjs`: Windows `http.server` отдаёт `.mjs` как `text/plain`). Smoke: `scripts/studio_smoke.py`.  
 **Пресеты:** `low` / `medium` / `high` / `realistic` в `GET /api/product-copy` (`qualityPresets`). Default **medium**. Clay только при `textureMode: "clay"`.  
 **Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-ffd6d36` endpoint **v17**. Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish).  
-**P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.
+**P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.  
+**Lab workspace (2026-08-17, не контракт сайта):** `GET /api/lab/workspace` — полка локальных GLB + рефы рыцарь/сундук; `POST /api/lab/upload-image` — файл → R2 public URL. UI: `studio_lab.html`.
 
 **Base URL (dev):** `http://127.0.0.1:8787`
 
@@ -297,6 +299,7 @@ Response:
   "status": "queued | running | ready | failed",
   "runpodStatus": "IN_QUEUE | IN_PROGRESS | COMPLETED | ...",
   "modelUrl": "https://pub-....r2.dev/trellis2/{jobId}.glb",
+  "posterUrl": "https://pub-....r2.dev/trellis2/{jobId}.jpg",
   "delivery": "r2",
   "error": null,
   "etaSecondsCold": 360,
@@ -318,14 +321,14 @@ Response:
 |----------|------------------------|
 | `queued` | «В очереди…» |
 | `running` | «Генерируем 3D…» |
-| `ready` | Открыть `modelUrl` в viewer. Если `qualityReduced` — бейдж, не CUDA-текст |
+| `ready` | Лента: `posterUrl` (JPEG). Вьюер: `modelUrl`. Если `qualityReduced` — бейдж, не CUDA |
 | `failed` | Ошибка + retry |
 
 **ETA:** до первого poll показывать `etaSecondsCold`; если недавно был job на том же tier — `etaSecondsWarm`. После `ready`: `isWarm === true` → warm был фактически.
 
 **Poll interval:** 3–5 с, timeout UI ~10–15 мин (preview cold до ~6 мин).
 
-**Viewer:** GLB по `modelUrl` (Three.js). Не ждать base64. Realistic ~97 MB, Medium ~25 MB — CDN R2, не JSON. Превью-меш/Draco — позже; сейчас карточка грузит тот же файл.
+**Viewer:** GLB по `modelUrl` (Three.js) **по клику**. Сетка истории — `posterUrl` JPEG, не 31 GLB. Draco — позже если High ~47 MB тормозит вьюер.
 
 **Фронт не вызывает RunPod напрямую** — только эти 2 ручки (или их копия в Next.js API routes).
 

@@ -113,11 +113,15 @@
 Рекомендуемый порядок (один трек за раз):
 
 ```
-1) P3  Freeze T2: native PBR + PNG + polish на High/Realistic
-2) P1 UI Studio пресеты low/medium/high/realistic     ← товарищ
-3) W3b MVPainter 48GB — только если polish мало
-4) D   RVG если слоты реальные
+✅ P3  Freeze T2 v17 (native PBR + PNG + polish)
+🔄 P1  Studio UI                          ← товарищ сейчас
+1) lab API   ✅ `.venv-studio` + `.\scripts\studio_lab.ps1`
+2) Draco     только если карточка тормозит (после сайта)
+3) MCP       Blender/Unreal = тот же studio_api
+4) W3b MVPainter 48GB — только если polish мало
+*) D   RVG если слоты реальные
 5) P4.1 Hi3DGen — микро-геометрия, не «ещё золотее»
+❌ img2mv — не этап
 ```
 
 **Split 2026-08-13:** визуал Studio = товарищ; generation = paradox_worker (P2). P1 bridge (`viewSlots`) уже готов к подключению.
@@ -153,6 +157,6 @@
 ## 6. Статус одной строкой
 
 ```
-img2mv: FROZEN. T2 v17 PNG+polish live. Character tex = native PBR, не W2b.
-Next: пакет UI товарищу позже (`productMultiUx.md` §11). RVG только на реальные фото.
+img2mv: FROZEN (не в очереди). T2 v17 live. Next us: lab API. Next him: Studio.
+Then Draco-if-slow → MCP → MVPainter-if-needed → RVG-if-real → Hi3D last.
 ```

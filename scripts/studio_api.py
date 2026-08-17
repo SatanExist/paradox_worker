@@ -5,6 +5,8 @@ from __future__ import annotations
 import mimetypes
 import os
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -12,7 +14,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +25,15 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 mimetypes.add_type("text/javascript", ".mjs")
 
+from studio_bridge.lab_workspace import (  # noqa: E402
+    ALLOWED_IMAGE_SUFFIXES,
+    MAX_UPLOAD_BYTES,
+    safe_upload_name,
+    save_lab_thumbnail,
+    workspace_payload,
+)
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
+from studio_bridge.r2_public import R2NotConfiguredError, upload_public_file  # noqa: E402
 from studio_bridge.service import create_job, get_job  # noqa: E402
 from studio_bridge.text2image import Text2ImageNotConfiguredError  # noqa: E402
 from studio_bridge.tiers import (  # noqa: E402
@@ -36,7 +46,7 @@ from studio_bridge.tiers import (  # noqa: E402
     TierName,
 )
 
-app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.5.0")
+app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +68,11 @@ class ViewSlots(BaseModel):
     side: str | None = None
     back: str | None = None
     extra: str | None = None
+
+
+class ThumbBody(BaseModel):
+    id: str
+    image: str
 
 
 class CreateJobRequest(BaseModel):
@@ -133,6 +148,67 @@ def product_copy() -> dict:
     return studio_copy_bundle()
 
 
+@app.get("/api/lab/workspace")
+def lab_workspace() -> dict:
+    """Local generation shelf + smoke refs. Not the public site contract."""
+    return workspace_payload()
+
+
+@app.post("/api/lab/upload-image")
+def lab_upload_image(file: UploadFile = File(...)) -> dict:
+    """Upload a local image to R2 so RunPod can fetch it. Lab-only."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_IMAGE_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"image type must be one of {sorted(ALLOWED_IMAGE_SUFFIXES)}",
+        )
+
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="image larger than 20 MB")
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    name = safe_upload_name(file.filename or "image.png")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    object_key = f"lab/{stamp}_{name}"
+
+    uploads = ROOT / "preview_textures" / "lab_uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    local_copy = uploads / f"{stamp}_{name}"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(name).suffix) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        local_copy.write_bytes(data)
+        url = upload_public_file(tmp_path, object_key)
+    except R2NotConfiguredError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return {
+        "url": url,
+        "key": object_key,
+        "localPath": f"/preview_textures/lab_uploads/{local_copy.name}",
+        "bytes": len(data),
+    }
+
+
+@app.post("/api/lab/thumbnail")
+def lab_save_thumbnail(body: ThumbBody) -> dict:
+    """Save a client-rendered GLB snapshot for the gallery. Lab-only."""
+    try:
+        url = save_lab_thumbnail(body.id, body.image)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"thumb": url}
+
+
 @app.post("/api/jobs")
 def post_job(body: CreateJobRequest) -> dict:
     slots = body.viewSlots.model_dump() if body.viewSlots else None
@@ -176,7 +252,21 @@ if _preview_dir.is_dir():
 app.mount("/scripts", StaticFiles(directory=ROOT / "scripts"), name="scripts")
 
 
+def _assert_ctypes() -> None:
+    """Fail fast on the broken 3.14.0 venv (ctypes DLL mismatch after 3.14.6)."""
+    try:
+        import ctypes  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "This interpreter cannot import ctypes (typical when .venv was "
+            "created with Python 3.14.0 and the install was upgraded to 3.14.6).\n"
+            "Start the lab with:  .\\scripts\\studio_lab.ps1\n"
+            "or:  .\\.venv-studio\\Scripts\\python.exe scripts\\studio_api.py"
+        ) from exc
+
+
 def main() -> None:
+    _assert_ctypes()
     import uvicorn
 
     host = os.getenv("STUDIO_API_HOST", "127.0.0.1")
