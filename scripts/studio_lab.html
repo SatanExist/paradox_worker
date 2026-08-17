@@ -52,7 +52,7 @@
 
     .shell {
       display: grid;
-      grid-template-columns: 56px 320px minmax(0, 1fr) 300px;
+      grid-template-columns: 56px 300px minmax(0, 1fr) 360px;
       min-height: 0;
     }
     .rail {
@@ -183,7 +183,7 @@
     #drop.on { display: grid; }
 
     .library {
-      border-left: 1px solid var(--line); background: var(--panel);
+      border-left: 1px solid var(--line); background: #0c0c0e;
       display: grid; grid-template-rows: auto auto 1fr; min-height: 0;
     }
     .lib-head { padding: 12px 12px 8px; }
@@ -191,32 +191,88 @@
     .lib-tools { display: flex; gap: 6px; }
     .lib-tools input { flex: 1; }
     .lib-tools button {
-      border: 0; border-radius: 8px; padding: 0 10px; background: var(--accent);
+      border: 0; border-radius: 8px; padding: 0 12px; background: var(--accent);
       color: #111; font-weight: 700; cursor: pointer; font-size: 12px;
     }
     #gallery {
-      overflow: auto; padding: 8px 12px 16px;
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start;
+      overflow: auto;
+      padding: 8px 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-content: flex-start;
+      align-items: flex-start;
+      scrollbar-width: thin;
+      scrollbar-color: #2c2c32 transparent;
     }
+    #gallery::-webkit-scrollbar { width: 8px; }
+    #gallery::-webkit-scrollbar-thumb { background: #2c2c32; border-radius: 99px; }
     .card {
-      border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
-      background: var(--elev); cursor: pointer; min-height: 118px;
-      transition: transform .16s ease, border-color .16s ease;
+      box-sizing: border-box;
+      flex: 0 0 calc(50% - 5px);
+      width: calc(50% - 5px);
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      color: inherit;
+      font: inherit;
+      text-align: left;
     }
-    .card:hover, .card.on { border-color: var(--accent-2); transform: translateY(-2px); }
+    .card:hover .ph, .card.on .ph {
+      box-shadow: 0 0 0 1px var(--accent);
+    }
     .card .ph {
-      aspect-ratio: 1;
-      min-height: 120px;
-      background: #121214 center/cover no-repeat;
-      display: grid; place-items: center; color: #8d8d96; font-size: 10px;
+      aspect-ratio: 1 / 1;
+      width: 100%;
+      position: relative;
+      overflow: hidden;
+      border-radius: 10px;
+      background: #1a1a1e;
+      color: #8d8d96;
+      font-size: 10px;
     }
-    .card .ph.pending { background: linear-gradient(180deg, #323238, #242428); }
-    .card .meta { padding: 6px 8px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .card .meta b { color: var(--text); font-weight: 600; }
+    .card .ph img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      border: 0;
+    }
+    /* v20 GPU stills are Y-flipped + have a raster edge bar. Drop after v21. */
+    .card.is-gpu-poster .ph img { transform: scaleY(-1) scale(1.08); }
+    .card .ph.pending::after {
+      content: "…";
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    .card .meta {
+      display: none;
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      padding: 16px 8px 7px;
+      background: linear-gradient(transparent, rgba(0, 0, 0, .82));
+      font-size: 10px;
+      color: #c8c8ce;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 1;
+    }
+    .card:hover .meta, .card.on .meta { display: block; }
+    .card .meta b { color: #fff; font-weight: 650; }
 
-    @media (max-width: 1100px) {
-      .shell { grid-template-columns: 56px 280px minmax(0, 1fr); }
-      .library { display: none; }
+    @media (max-width: 1280px) {
+      .shell { grid-template-columns: 56px 260px minmax(0, 1fr) 320px; }
+    }
+    @media (max-width: 900px) {
+      .panel { display: none; }
+      .shell { grid-template-columns: 56px minmax(0, 1fr) 280px; }
     }
   </style>
 </head>
@@ -442,10 +498,16 @@
     }
 
     function applyThumb(ph, url) {
-      if (!ph) return;
+      if (!ph || !url) return;
       ph.classList.remove("pending");
-      ph.textContent = "";
-      ph.style.backgroundImage = `url("${url}")`;
+      [...ph.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).forEach((n) => n.remove());
+      let img = ph.querySelector("img");
+      if (!img) {
+        img = document.createElement("img");
+        img.alt = "";
+        ph.insertBefore(img, ph.firstChild);
+      }
+      img.src = url;
     }
 
     async function pumpThumbs() {
@@ -496,6 +558,24 @@
       return sessionCards.concat(shelfModels);
     }
 
+    function seedPosterHoverDemo() {
+      const id = "7251fa75-4744-44c9-9c9f-ffcb08757489-e2";
+      const base = `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/${id}`;
+      rememberJobCard({
+        jobId: id,
+        modelUrl: `${base}.glb`,
+        posterUrl: `${base}.jpg`,
+        posterUrls: {
+          studio: `${base}.jpg`,
+          outdoor: `${base}_outdoor.jpg`,
+          gallery: `${base}_gallery.jpg`,
+          neon: `${base}_neon.jpg`,
+          night: `${base}_night.jpg`,
+        },
+        modelBytes: 5059656,
+      }, "Low");
+    }
+
     function rememberJobCard(data, tier) {
       if (!data.posterUrl || !data.modelUrl) return;
       sessionCards = sessionCards.filter((m) => m.id !== data.jobId);
@@ -513,12 +593,12 @@
       const order = ["studio", "outdoor", "gallery", "neon", "night"];
       const list = order.map((k) => urls && urls[k]).filter(Boolean);
       if (list.length < 2) return;
-      const ph = card.querySelector(".ph");
-      if (!ph) return;
+      const img = card.querySelector(".ph img");
+      if (!img) return;
       list.forEach((src) => { const im = new Image(); im.src = src; });
       let i = 0;
       let timer = null;
-      const show = (idx) => { ph.style.backgroundImage = `url("${list[idx]}")`; };
+      const show = (idx) => { img.src = list[idx]; };
       card.addEventListener("mouseenter", () => {
         i = 1 % list.length;
         show(i);
@@ -550,19 +630,27 @@
 
       const list = (models || []).filter((m) => !q || (m.label + m.id).toLowerCase().includes(q));
       for (const m of list) {
-        const card = document.createElement("button");
-        card.type = "button";
+        const card = document.createElement("div");
+        card.setAttribute("role", "button");
+        card.tabIndex = 0;
         card.className = "card";
         card._model = m;
         const ready = m.thumb || thumbCache.get(m.id);
         const phClass = ready ? "ph" : "ph pending";
         const phText = ready ? "" : "…";
-        const phStyle = ready ? ` style="background-image:url('${ready}')"` : "";
-        card.innerHTML = `<div class="${phClass}"${phStyle}>${phText}</div><div class="meta"><b>${m.label}</b> ${fmtBytes(m.bytes)}</div>`;
+        const src = ready ? ` src="${ready}"` : "";
+        if (m.thumbs) card.classList.add("is-gpu-poster");
+        card.innerHTML = `<div class="${phClass}"><img alt=""${src} />${phText}<div class="meta"><b>${m.label}</b> ${fmtBytes(m.bytes)}</div></div>`;
         card.onclick = () => {
           box.querySelectorAll(".card").forEach((c) => c.classList.remove("on"));
           card.classList.add("on");
           openModel(m.url, m.label);
+        };
+        card.onkeydown = (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            card.click();
+          }
         };
         box.appendChild(card);
         bindPosterHover(card, m.thumbs);
@@ -598,13 +686,15 @@
         const data = await res.json();
         renderRefs(data.refs);
         shelfModels = data.models || [];
+        seedPosterHoverDemo();
         renderGallery(allGalleryModels());
       } catch {
         renderRefs([
           { id: "armor", label: "Рыцарь", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png" },
           { id: "chest", label: "Сундук", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_chest.png" },
         ]);
-        renderGallery([]);
+        seedPosterHoverDemo();
+        renderGallery(allGalleryModels());
       }
     }
 

@@ -1,7 +1,7 @@
 # Превью карточек: `posterUrl` (JPEG) vs `modelUrl` (GLB)
 
 > **Зачем:** сетка истории должна быть лёгкой и «как у сильных». GLB 12–97 MB в каждой плитке — нельзя ни в lab, ни на сайте.  
-> **Статус:** 🟢 live T2 **v18** `trellis2-sha-ea4ea58` — worker отдаёт `poster_url`. Сайт/лента у товарища.  
+> **Статус:** 🟡 T2 **v20** `31a1bc4` live (кадр ок, JPEG **Y-flip** + полоска). **v21** — nvdiffrast `clip Y *= -1` + crop края. Lab: CSS flip до v21, потом снять.  
 > **Не путать с Draco** — Draco потом для большого вьюера, не для сетки.
 
 ---
@@ -46,7 +46,7 @@ Studio / lab: `posterUrl` + `posterUrls` (camelCase в `normalize_job_payload`).
 После polish/export GLB, **до** ответа джоба:
 
 1. CPU рендер `studio_bridge/poster.py` — fallback. Prod: `poster_gpu.py` (nvdiffrast, полный меш, 768², MSAA×2).
-2. Один raster, пять студий как в lab viewer: studio / outdoor / gallery / neon / night. Сердечко/ник — не в JPEG.
+2. Один raster, пять студий: studio / outdoor / gallery / neon / night. Камера 3/4 + NDC-fit (~68% кадра, поля). Сердечко/ник — не в JPEG.
 3. Upload R2 `trellis2/{jobId}.jpg` + `_{env}.jpg`.
 4. Если рендер упал — джоб **всё равно success**, `poster_url=null` (WARN в логе).
 

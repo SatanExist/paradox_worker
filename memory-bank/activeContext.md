@@ -4,7 +4,7 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-17** — постеры Rodin-style: GPU still полного меша + `posterUrls` (hover studio/outdoor/neon…). Live после CI T2.
+Последнее обновление: **2026-08-17** — лаб-полка Meshy-сетка; GPU-постеры v20 вверх ногами → **v21** (Y-flip nvdiffrast + crop полоски).
 
 ---
 
@@ -987,7 +987,9 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | push → CI T2 → New Release; лента у товарища |
+| 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | T2 **v19** `7b11b25`; кадр слишком близко |
+| 2026-08-17 | Pedrokita | poster camera NDC-fit + мягче свет | T2 **v20** `31a1bc4`; JPEG вверх ногами |
+| 2026-08-17 | Pedrokita | lab полка = 2 квадрата; poster Y-flip+crop | CI → T2 **v21** Low-smoke сундук |
 | 2026-08-16 веч | Pedrokita | lab API: `.venv-studio` 3.14.6 + `studio_lab.ps1`; `/health` ok | Generate в лабе; GPU только по кнопке |
 | 2026-08-16 веч | Pedrokita | Глаза: High ≈ Realistic на рыцаре (2K vs 4K, тот же меш) | персонаж в UI = High; Realistic не продавать как wow |
 | 2026-08-16 веч | Pedrokita | §11 Cursor-пакет + qualityReduced; push `590565b`; Medium/Low сундук, High рыцарь | UI у товарища |

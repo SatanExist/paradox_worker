@@ -304,6 +304,17 @@ def _decimate_arrays(verts, faces, nrm, vcol, uvs, tex):
     return verts, faces, nrm, cols
 
 
+def _finish_still(img: Image.Image, size: int) -> Image.Image:
+    """Drop raster edge bars, keep a square card."""
+    w, h = img.size
+    mx = max(2, int(w * 0.03))
+    my = max(2, int(h * 0.01))
+    img = img.crop((mx, my, w - mx, h - my))
+    if img.size != (size, size):
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
+    return img
+
+
 def _compose_frames(albedo, nrm_img, mask, work: int, size: int) -> dict[str, Image.Image]:
     shadow = _contact_shadow(mask)
     m = mask[..., None]
@@ -316,10 +327,7 @@ def _compose_frames(albedo, nrm_img, mask, work: int, size: int) -> dict[str, Im
         rgb = bg * (1.0 - sh * 0.55) * (1.0 - m) + lit * m
         rgb = np.clip(rgb, 0.0, 1.0)
         hi = (rgb * 255.0).astype(np.uint8)
-        img = Image.fromarray(hi, "RGB")
-        if img.size != (size, size):
-            img = img.resize((size, size), Image.Resampling.LANCZOS)
-        frames[name] = img
+        frames[name] = _finish_still(Image.fromarray(hi, "RGB"), size)
     return frames
 
 
@@ -350,7 +358,10 @@ def _render_gpu(verts, faces, nrm, vcol, uvs, tex, size: int):
 
     device = torch.device("cuda")
     work = int(size * 2)
-    clip_np = _clip_verts(verts)
+    clip_np = _clip_verts(verts).copy()
+    # nvdiffrast image row 0 is top; OpenGL NDC +Y is up — flip or the card is upside-down.
+    clip_np[:, 1] *= -1.0
+    clip_np = _fit_clip(clip_np)
     pos = torch.from_numpy(clip_np).to(device)[None]
     tri = torch.from_numpy(faces).to(device)
     nrm_t = torch.from_numpy(nrm).to(device)[None]
@@ -386,7 +397,7 @@ def _render_gpu(verts, faces, nrm, vcol, uvs, tex, size: int):
         rgb = bg * (1.0 - sh * 0.55) * (1.0 - m) + lit * m
         rgb = rgb.clamp(0.0, 1.0)
         hi = (rgb.detach().cpu().numpy() * 255.0).astype(np.uint8)
-        img = Image.fromarray(hi, "RGB").resize((size, size), Image.Resampling.LANCZOS)
+        img = _finish_still(Image.fromarray(hi, "RGB"), size)
         frames[name] = img
 
     del rast, pos, glctx
