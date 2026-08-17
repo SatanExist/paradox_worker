@@ -2,6 +2,7 @@
 
 > **Зачем:** сетка истории должна быть лёгкой и «как у сильных». GLB 12–97 MB в каждой плитке — нельзя ни в lab, ни на сайте.  
 > **Статус:** 🟢 live T2 **v21** `trellis2-sha-2beac61` — GPU still полного меша, кадр fit-to-frame, **Y upright**, crop края. Hover `posterUrls`.  
+> **Lab viewer:** 🟢 2026-08-17 — большое окно = карточка «Загрузка модели», не JPEG на весь кадр. Сайт копирует контракт, не CSS lab.  
 > **Не путать с Draco** — Draco потом для большого вьюера, не для сетки.
 
 ---
@@ -61,6 +62,16 @@ Studio / lab: `posterUrl` + `posterUrls` (camelCase в `normalize_job_payload`).
 | Пока image без poster.py | thumbs как сейчас | fallback на входное фото |
 
 Сайт **не копирует** lab-трюк «скачай 97 MB ради плитки».
+
+### Большое окно (прод / lab)
+
+Сетка по-прежнему JPEG. В большом окне **не** растягивать постер на весь кадр.
+
+Клик → затемнение вьюера + компактное окно «Загрузка модели» (прогресс/статус внутри). GLB готов → окно закрывается, орбита. Ошибка → текст в том же окне, не пустой Three.js. Нет `posterUrl` на это не влияет: лоадер один и тот же.
+
+Референс: `scripts/studio_lab.html` (`#stageLoad`) + `scripts/studio_viewer.js` (`loadSeq`, `fetch`+`parse`). HTTPS GLB через `/api/proxy-glb` (буфер + `Content-Length` — иначе Three.js FileLoader зависает на chunked R2).
+
+**Не:** CSS `scaleY(-1)` на JPEG v21 (они уже upright). Старые v20 JPEG на R2 могут быть вверх ногами — для них fallback входное фото, не flip всего сайта.
 
 ## 5. Порядок работ
 

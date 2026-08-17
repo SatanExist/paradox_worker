@@ -4,7 +4,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-17** — T2 **v21** `trellis2-sha-2beac61`: постеры upright + crop полоски; lab полка = 2 квадрата.
+Последнее обновление: **2026-08-17 веч** — lab viewer lock: карточка «Загрузка модели», proxy GLB, без гонки кликов. **Сайт = товарищ. Мы = generation.** GPU off.
+
+### Сейчас (split)
+
+| | |
+|--|--|
+| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md`. Референс lab: `scripts/studio_lab.html` |
+| **Мы / paradox_worker** | Generation. T2 **v21** live. Lab с нашей стороны закрыт. Не верстать сайт |
+| **Не трогать** | img2mv (FROZEN); Generate «на всякий случай»; CSS `scaleY(-1)` на постерах v21 |
+| **Наш next** | очередь: Draco *если* High ~47 MB тормозит сайт → MCP later → RVG при реальных слотах → Hi3DGen last |
 
 ---
 
@@ -29,8 +38,8 @@
 | # | Что | Когда | Условие |
 |---|-----|-------|---------|
 | ❌ | **img2mv** | никогда в этой очереди | класс FROZEN 2026-08-13 |
-| 1 | **lab API** | **сделано** | `.venv-studio` 3.14.6 + `.\scripts\studio_lab.ps1`; сайт не трогаем |
-| — | Studio UI | параллельно | товарищ |
+| 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
+| — | Studio UI | **сейчас у товарища** | `git pull` `feat/trellis2-poc`; пакет `productMultiUx.md` §11 + `posterCards.md` |
 | 2 | **Draco** / Low-proxy | после живой карточки | **если** High ~47 MB тормозит; иначе skip |
 | 3 | **MCP** / Blender / Unreal | после стабильного сайта | тот же `studio_api`; ключ не в DCC |
 | 4 | **MVPainter** | после новых ассетов с полки | **если** W3a polish мало; сейчас High≈Realistic → не next |
@@ -47,10 +56,10 @@
 
 | Кто | Что |
 |-----|-----|
-| **Товарищ** | AI_MESH Studio визуал: слоты Front/Side/Back, copy из `/api/product-copy` |
-| **Этот ПК / Pedrokita** | **Generation:** freeze native T2 PBR + W3 delight; не сайт |
-| **Контракт** | bridge `viewSlots` + `GET /api/product-copy` уже в paradox_worker |
-| **Не делать здесь** | вёрстка Studio / landing |
+| **Товарищ** | AI_MESH Studio UI: слоты, селектор пресетов, сетка `posterUrl`, большое окно = 1 GLB + карточка загрузки. Не GPU. |
+| **Этот ПК / Pedrokita** | **Generation:** T2 v21 live; не сайт. Очередь: Draco-если-тормозит → MCP later → RVG-если-реальные слоты → Hi3DGen last |
+| **Контракт** | `productMultiUx.md` §11 + `posterCards.md`. Lab = референс (`studio_lab.html`), не копировать ruby-jelly на сайт |
+| **Не делать здесь** | вёрстка Studio / landing / рестайл публичного сайта |
 | **Позже, не сейчас** | MCP / аддон Blender / плагин Unreal — те же jobs+product-copy; ключ RunPod только на бэке |
 
 ---
@@ -94,9 +103,9 @@
 |--|--|
 | **Мастер** | `memory-bank/productMultiUx.md` |
 | **Bridge** | ✅ `viewSlots` + `/api/product-copy` |
-| **Локальный lab** | ✅ Meshy-like workspace (`studio_lab.html`): рельс + панель + вьюпорт + полка. Не сайт. |
-| **Studio UI** | ⏳ товарищ: `git pull` ветки `feat/trellis2-poc`, промпт §11 |
-| **Наш next по P1** | не блокер; не жечь GPU |
+| **Локальный lab** | ✅ полка 2 квадрата JPEG; клик → карточка «Загрузка модели» (не постер на весь кадр); proxy GLB с `Content-Length` |
+| **Studio UI** | ⏳ товарищ: `git pull` `feat/trellis2-poc`, промпт §11. Копировать контракт, не CSS lab |
+| **Наш next по P1** | закрыт с нашей стороны. GPU off |
 
 ---
 
@@ -134,12 +143,13 @@
 |--|--|
 | **Мастер** | `memory-bank/postSideBackPlan.md` |
 | **Честно** | Meshy-зад с 1 фото на T2/RVG = **не цель** |
-| **P1** | Studio UX honesty — bridge ✅; lab ✅; **сайт у товарища позже** (`productMultiUx.md` §11) |
+| **P1** | Studio UX honesty — bridge ✅; lab viewer ✅; **сайт у товарища сейчас** (`productMultiUx.md` §11) |
 | **P2 character** | ❌ W2b 80k закрыт; вау = native PBR + W3a polish |
 | **P3** | Tier freeze в продукте (пресеты уже в `product-copy`) |
 | **P4.0** | RVG только под реальные слоты |
 | **P4.1** | Hi3DGen / TripoSG — микро-геометрия, не «золотее» |
-| **Next** | UI у товарища (pull). GPU off. MCP/Blender — later, тот же API |
+| **Next мы** | generation-очередь, не UI. GPU off. Не img2mv |
+| **Next он** | Studio на сайте по §11 + `posterCards.md` |
 
 ---
 
@@ -257,7 +267,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | полка v17 смокнута; UI у товарища; DCC/MCP later |
+| Фокус | lab viewer lock (v21 + лоадер); UI у товарища; generation-очередь без GPU |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -987,6 +997,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation, GPU off |
 | 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | T2 **v19** `7b11b25`; кадр слишком близко |
 | 2026-08-17 | Pedrokita | poster camera NDC-fit + мягче свет | T2 **v20** `31a1bc4`; JPEG вверх ногами |
 | 2026-08-17 | Pedrokita | lab полка = 2 квадрата; poster Y-flip+crop | T2 **v21** `2beac61`; Low smoke `b7c6924b` upright |

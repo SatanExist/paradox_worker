@@ -160,7 +160,10 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 4. ETA в минутах из etaSecondsCold/Warm. Не писать «4–80 секунд» как у Rodin.
 5. Если job.qualityReduced === true — бейдж текстом qualityReducedCopy
    («Качество снижено, чтобы модель собралась»). Не показывать CUDA/OOM.
-6. GLB приходит `modelUrl` с R2 (12–100 MB). **Лента / история — `posterUrl` (JPEG), не GLB.** Большой вьюер грузит `modelUrl` по клику.
+6. GLB приходит `modelUrl` с R2 (12–100 MB). **Лента / история — `posterUrl` (JPEG), не GLB.** Hover = `posterUrls` (готовые JPEG, не 31 Three.js).
+   Большой вьюер: **один** GLB по клику + компактная карточка «Загрузка модели» (затемнение + статус). **Не** растягивать JPEG на весь кадр.
+   Референс: paradox_worker/scripts/studio_lab.html + posterCards.md § большое окно.
+   Постеры T2 v21 upright — не CSS scaleY(-1). Старые v20 JPEG на R2 могут быть вверх ногами → fallback входное фото.
    Не ждать base64. Превью-меш/Draco — не в этой задаче.
 
 Демо без генерации:
@@ -185,8 +188,9 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 | Пресеты | **low / medium / high / realistic**, default **medium**. Legacy: preview→low, quality→medium, ultra→high |
 | Clay | только если явно `textureMode: "clay"` — не default |
 | Job status | `modelUrl`, **`posterUrl` (JPEG превью)**, `qualityReduced`, `qualityReducedCopy`, `modelBytes`, ETA |
-| Прототип экрана | `scripts/studio_lab.html` |
+| Прототип экрана | `scripts/studio_lab.html` (полка JPEG + лоадер в большом окне) |
 | Прототип карточки | `scripts/model_review.html` + `scripts/studio_viewer.js` |
+| Контракт сетки | `memory-bank/posterCards.md` |
 | Контракт | `studio_bridge/product_multi_ux.py`, `studio_bridge/tiers.py`, `studio_bridge/normalize.py` |
 
 ### Пресеты (для селектора, как Rodin-полка — не их ETA)
@@ -248,7 +252,8 @@ Meshy / Rodin / Sketchfab **не** пихают 100 MB в JSON и не ждут 
 
 ### Живой движок (для них не трогать GPU)
 
-- Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-ea4ea58`, **v18** (`posterUrl` JPEG).
+- Endpoint T2 `ynzpzjvcbfl656`, image `trellis2-sha-2beac61`, **v21** (`posterUrl` + `posterUrls`, upright + crop).
+- Пример JPEG v21 (Low сундук): `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/b7c6924b-5f34-4aef-8475-697fc472e434-e1.jpg`
 - Low сундук ~12 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/18c5eae7-656b-4ea2-afec-bf91bb2b5b40-e2.glb`
 - Medium сундук ~25 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/2c2cff9e-ccc4-4d68-a2a9-e44bbabb2283-e2.glb`
 - High рыцарь ~47 MB: `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/315cf9fb-d9de-4349-900c-0cf2b09a6aa2-e1.glb`

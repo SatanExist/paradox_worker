@@ -143,6 +143,7 @@ export function createStudioViewer(container, options = {}) {
   scene.add(grid);
 
   let root = null;
+  let loadSeq = 0;
   let framed = { center: new THREE.Vector3(), maxDim: 1 };
   let objectUrl = null;
   let iblOn = true;
@@ -300,15 +301,57 @@ export function createStudioViewer(container, options = {}) {
     setView("front");
   }
 
+  function disposeObject(obj) {
+    obj.traverse((c) => {
+      if (c.geometry) c.geometry.dispose();
+      const mat = c.material;
+      if (!mat) return;
+      for (const m of Array.isArray(mat) ? mat : [mat]) {
+        for (const value of Object.values(m)) {
+          if (value && value.isTexture) value.dispose();
+        }
+        m.dispose();
+      }
+    });
+  }
+
+  function clearRoot() {
+    if (!root) return;
+    scene.remove(root);
+    disposeObject(root);
+    root = null;
+  }
+
   async function loadFromUrl(url, label) {
+    const seq = ++loadSeq;
     onStatus("Loading…");
-    if (root) {
-      scene.remove(root);
-      root = null;
-    }
     const loader = new GLTFLoader();
     try {
-      const gltf = await loader.loadAsync(url);
+      let gltf;
+      if (url.startsWith("blob:")) {
+        gltf = await loader.loadAsync(url);
+      } else {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 120000);
+        let res;
+        try {
+          res = await fetch(url, { signal: ac.signal });
+        } finally {
+          clearTimeout(timer);
+        }
+        if (!res.ok) throw new Error(`GLB HTTP ${res.status}`);
+        const buf = await res.arrayBuffer();
+        if (seq !== loadSeq) return;
+        onStatus(`Parsing ${(buf.byteLength / 1e6).toFixed(1)} MB…`);
+        gltf = await new Promise((resolve, reject) => {
+          loader.parse(buf, "", resolve, reject);
+        });
+      }
+      if (seq !== loadSeq) {
+        disposeObject(gltf.scene);
+        return;
+      }
+      clearRoot();
       root = gltf.scene;
       let verts = 0;
       let tris = 0;
@@ -328,7 +371,9 @@ export function createStudioViewer(container, options = {}) {
         `${label} · ${Math.round(verts).toLocaleString()} v / ${Math.round(tris).toLocaleString()} t`,
       );
     } catch (err) {
-      onStatus(err.message || String(err));
+      if (seq !== loadSeq) return;
+      const msg = err && err.name === "AbortError" ? "GLB timeout" : (err.message || String(err));
+      onStatus(msg);
       throw err;
     }
   }

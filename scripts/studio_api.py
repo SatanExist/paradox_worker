@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
@@ -117,29 +117,27 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/proxy-glb")
-def proxy_glb(url: str) -> StreamingResponse:
+def proxy_glb(url: str) -> Response:
     """Local-only helper so the browser can inspect an R2/https GLB."""
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise HTTPException(status_code=400, detail="url must be https")
     request = Request(url, headers={"User-Agent": "paradox-studio-lab"})
     try:
-        upstream = urlopen(request, timeout=90)
+        with urlopen(request, timeout=90) as upstream:
+            data = upstream.read()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    content_type = upstream.headers.get("Content-Type") or "model/gltf-binary"
-
-    def _chunks():
-        try:
-            while True:
-                chunk = upstream.read(256 * 1024)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            upstream.close()
-
-    return StreamingResponse(_chunks(), media_type=content_type)
+    if len(data) < 12 or data[:4] != b"glTF":
+        raise HTTPException(status_code=502, detail="upstream did not return a GLB")
+    return Response(
+        content=data,
+        media_type="model/gltf-binary",
+        headers={
+            "Content-Length": str(len(data)),
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @app.get("/api/product-copy")

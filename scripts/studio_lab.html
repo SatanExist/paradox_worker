@@ -155,6 +155,31 @@
     }
     #stageWrap { min-height: 0; position: relative; }
     #stage { position: absolute; inset: 0; }
+    #stageLoad {
+      position: absolute; inset: 0; z-index: 2;
+      display: none; place-items: center;
+      background: rgba(8, 8, 10, .55);
+    }
+    #stageLoad.show { display: grid; }
+    .stage-load-card {
+      width: min(280px, 86%);
+      padding: 22px 20px 18px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #16161a;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, .5);
+      text-align: center;
+    }
+    .stage-load-spin {
+      width: 28px; height: 28px; margin: 0 auto 12px;
+      border: 2px solid #2c2c32;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .stage-load-card b { display: block; font-size: 14px; margin-bottom: 6px; }
+    .stage-load-card span { color: var(--muted); font-size: 12px; line-height: 1.4; }
     #empty {
       position: absolute; inset: 0; display: grid; place-items: center;
       z-index: 3; background: radial-gradient(ellipse at center, #1a1a20 0%, #0e0e10 70%);
@@ -370,6 +395,13 @@
       </div>
       <div id="stageWrap">
         <div id="stage"></div>
+        <div id="stageLoad">
+          <div class="stage-load-card">
+            <div class="stage-load-spin"></div>
+            <b>Загрузка модели</b>
+            <span id="stageLoadMsg">…</span>
+          </div>
+        </div>
         <div id="empty">
           <div>
             <div class="geom"></div>
@@ -436,7 +468,11 @@
 
     const viewer = createStudioViewer(document.getElementById("stage"), {
       initialMode: "studio",
-      onStatus: (msg) => { statusEl.textContent = msg; },
+      onStatus: (msg) => {
+        statusEl.textContent = msg;
+        const loadMsg = document.getElementById("stageLoadMsg");
+        if (loadMsg) loadMsg.textContent = msg;
+      },
     });
 
     function showEmpty(on) {
@@ -655,9 +691,20 @@
       }
     }
 
+    function showStageLoad(on) {
+      document.getElementById("stageLoad").classList.toggle("show", !!on);
+    }
+
     async function openModel(url, label) {
       showEmpty(false);
-      await viewer.loadFromUrl(glbUrl(url), label);
+      showStageLoad(true);
+      try {
+        await viewer.loadFromUrl(glbUrl(url), label);
+        showStageLoad(false);
+      } catch (err) {
+        document.getElementById("stageLoadMsg").textContent = err.message || String(err);
+        statusEl.textContent = err.message || String(err);
+      }
     }
 
     async function loadCopy() {
@@ -726,9 +773,11 @@
 
     function glbUrl(url) {
       if (!url) return url;
-      if (url.startsWith("/") || url.startsWith("blob:")) return url;
-      if (apiBase === "" && url.startsWith("https://")) {
-        return `/api/proxy-glb?url=${encodeURIComponent(url)}`;
+      if (url.startsWith("/") || url.startsWith("blob:") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) {
+        return url;
+      }
+      if (url.startsWith("https://")) {
+        return `${apiBase}/api/proxy-glb?url=${encodeURIComponent(url)}`;
       }
       return url;
     }
@@ -747,8 +796,7 @@
         const data = await res.json();
         jobLine.textContent = jobMeta(data);
         if (data.status === "ready" && data.modelUrl) {
-          showEmpty(false);
-          await viewer.loadFromUrl(glbUrl(data.modelUrl), data.modelUrl);
+          await openModel(data.modelUrl, `${tier} · ${(data.jobId || "").slice(0, 8)}`);
           rememberJobCard(data, tier);
           loadWorkspace();
           return;
@@ -834,9 +882,17 @@
     document.getElementById("wire").onchange = (e) => viewer.setWireframe(e.target.checked);
     document.getElementById("albedo").onchange = (e) => viewer.setAlbedoOnly(e.target.checked);
     document.getElementById("openGlb").onclick = () => document.getElementById("pick").click();
-    document.getElementById("pick").onchange = (e) => {
+    document.getElementById("pick").onchange = async (e) => {
       const f = e.target.files && e.target.files[0];
-      if (f) { showEmpty(false); viewer.loadFile(f); }
+      if (!f) return;
+      showEmpty(false);
+      showStageLoad(true);
+      try {
+        await viewer.loadFile(f);
+        showStageLoad(false);
+      } catch (err) {
+        document.getElementById("stageLoadMsg").textContent = err.message || String(err);
+      }
     };
     document.getElementById("demo").onclick = () => {
       openModel(DEMO_GLB, "Knight polish").catch(() => {
@@ -854,7 +910,10 @@
       if (!f) return;
       if (/\.glb|\.gltf/i.test(f.name)) {
         showEmpty(false);
-        viewer.loadFile(f);
+        showStageLoad(true);
+        viewer.loadFile(f).then(() => showStageLoad(false)).catch((err) => {
+          document.getElementById("stageLoadMsg").textContent = err.message || String(err);
+        });
         return;
       }
       if (/^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name)) {

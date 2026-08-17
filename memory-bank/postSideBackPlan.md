@@ -113,9 +113,9 @@
 Рекомендуемый порядок (один трек за раз):
 
 ```
-✅ P3  Freeze T2 v17 (native PBR + PNG + polish)
+✅ P3  Freeze T2 v17+ (native PBR + PNG + polish); постеры v21
 🔄 P1  Studio UI                          ← товарищ сейчас
-1) lab API   ✅ `.venv-studio` + `.\scripts\studio_lab.ps1`
+1) lab API+viewer ✅ полка JPEG + лоадер-карточка (`studio_lab.html`)
 2) Draco     только если карточка тормозит (после сайта)
 3) MCP       Blender/Unreal = тот же studio_api
 4) W3b MVPainter 48GB — только если polish мало
@@ -124,7 +124,7 @@
 ❌ img2mv — не этап
 ```
 
-**Split 2026-08-13:** визуал Studio = товарищ; generation = paradox_worker (P2). P1 bridge (`viewSlots`) уже готов к подключению.
+**Split 2026-08-13 / 2026-08-17:** визуал Studio = товарищ; generation = paradox_worker. P1 bridge + lab viewer готовы. Сайт копирует `posterCards.md`, не CSS lab.
 
 ---
 
@@ -151,12 +151,13 @@
 | 2026-08-11 | **Eyes HF ReconViaGen (Pedrokita): ОГО** — sharp side/back, 1 меч; screens in reconviagen/ |
 | 2026-08-11 | D-track **MASTER** expanded: prod=separate endpoint; naive multi closed; fusion patch=optional |
 | 2026-08-13 | **img2mv класс FROZEN** (`synthMultiViewProd.md` §14). Next = P1 UX → P2 tex → P3 freeze. RVG = real photos. 1-photo Meshy = P4.1 native 3D. |
+| 2026-08-17 | Lab viewer lock (лоадер-карточка, не постер на весь кадр). P1 UI = товарищ; generation = мы. |
 
 ---
 
 ## 6. Статус одной строкой
 
 ```
-img2mv: FROZEN (не в очереди). T2 v17 live. Next us: lab API. Next him: Studio.
+img2mv: FROZEN. T2 v21 live. Lab viewer lock. Next him: Studio UI. Next us: generation (GPU off).
 Then Draco-if-slow → MCP → MVPainter-if-needed → RVG-if-real → Hi3D last.
 ```
