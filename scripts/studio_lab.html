@@ -242,8 +242,6 @@
       display: block;
       border: 0;
     }
-    /* v20 GPU stills are Y-flipped + have a raster edge bar. Drop after v21. */
-    .card.is-gpu-poster .ph img { transform: scaleY(-1) scale(1.08); }
     .card .ph.pending::after {
       content: "…";
       position: absolute;
@@ -559,7 +557,7 @@
     }
 
     function seedPosterHoverDemo() {
-      const id = "7251fa75-4744-44c9-9c9f-ffcb08757489-e2";
+      const id = "b7c6924b-5f34-4aef-8475-697fc472e434-e1";
       const base = `https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/trellis2/${id}`;
       rememberJobCard({
         jobId: id,
@@ -572,7 +570,7 @@
           neon: `${base}_neon.jpg`,
           night: `${base}_night.jpg`,
         },
-        modelBytes: 5059656,
+        modelBytes: 11228668,
       }, "Low");
     }
 
@@ -639,7 +637,6 @@
         const phClass = ready ? "ph" : "ph pending";
         const phText = ready ? "" : "…";
         const src = ready ? ` src="${ready}"` : "";
-        if (m.thumbs) card.classList.add("is-gpu-poster");
         card.innerHTML = `<div class="${phClass}"><img alt=""${src} />${phText}<div class="meta"><b>${m.label}</b> ${fmtBytes(m.bytes)}</div></div>`;
         card.onclick = () => {
           box.querySelectorAll(".card").forEach((c) => c.classList.remove("on"));

@@ -1,7 +1,7 @@
 # Превью карточек: `posterUrl` (JPEG) vs `modelUrl` (GLB)
 
 > **Зачем:** сетка истории должна быть лёгкой и «как у сильных». GLB 12–97 MB в каждой плитке — нельзя ни в lab, ни на сайте.  
-> **Статус:** 🟡 T2 **v20** `31a1bc4` live (кадр ок, JPEG **Y-flip** + полоска). **v21** — nvdiffrast `clip Y *= -1` + crop края. Lab: CSS flip до v21, потом снять.  
+> **Статус:** 🟢 live T2 **v21** `trellis2-sha-2beac61` — GPU still полного меша, кадр fit-to-frame, **Y upright**, crop края. Hover `posterUrls`.  
 > **Не путать с Draco** — Draco потом для большого вьюера, не для сетки.
 
 ---

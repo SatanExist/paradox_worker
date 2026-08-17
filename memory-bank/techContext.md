@@ -215,7 +215,7 @@ Studio без этой переменной остаётся на v0 bake.
 Интерпретатор: `.venv-studio` на **Python 3.14.6**. Не `.venv` (это 3.14.0: после апгрейда системы `ctypes` ломает click/uvicorn). Python 3.11 на этом ПК зарегистрирован, но `python.exe` отсутствует.  
 Код: `studio_bridge/`, lab UI: `scripts/studio_lab.html` + `scripts/model_review.html` + `scripts/studio_viewer.js` (не `.mjs`: Windows `http.server` отдаёт `.mjs` как `text/plain`). Smoke: `scripts/studio_smoke.py`.  
 **Пресеты:** `low` / `medium` / `high` / `realistic` в `GET /api/product-copy` (`qualityPresets`). Default **medium**. Clay только при `textureMode: "clay"`.  
-**Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-ea4ea58` endpoint **v18** (`poster_url` JPEG). Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2` (~97 MB PNG+normal+polish). Poster smoke 2026-08-17: job `6e61d60c-d936-4726-acfd-87dd7d557d38-e2`.  
+**Live T2:** `ynzpzjvcbfl656` image `trellis2-sha-2beac61` endpoint **v21** (`poster_url` + `poster_urls`, кадр целого объекта, JPEG upright). Realistic smoke 2026-08-16: job `13796711-fc97-45cb-b6d3-580052cf5fb3-e2`. Poster v21 smoke 2026-08-17: job `b7c6924b-5f34-4aef-8475-697fc472e434-e1`.  
 **P1 multi UX (2026-08-13):** `viewSlots: {front, side?, back?, extra?}` на `POST /api/jobs`; copy — `GET /api/product-copy`; helper `studio_bridge/product_multi_ux.py`; offline check `scripts/check_product_multi_ux.py`. AI sheet не режим.  
 **Lab workspace (2026-08-17, не контракт сайта):** `GET /api/lab/workspace` — полка локальных GLB + рефы рыцарь/сундук; `POST /api/lab/upload-image` — файл → R2 public URL. UI: `studio_lab.html`.
 
