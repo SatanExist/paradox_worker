@@ -34,13 +34,13 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
       opencv-python-headless einops safetensors
 
 # Keep image torch; add matching wheels only.
+# Upstream README still says spconv 2.3.6; PyPI cu124/cu121 only ship 2.3.8.
 RUN pip install --no-cache-dir xformers==0.0.27.post2 \
       --index-url https://download.pytorch.org/whl/cu124 || \
     pip install --no-cache-dir xformers==0.0.28.post1 \
       --index-url https://download.pytorch.org/whl/cu124
 
-RUN pip install --no-cache-dir spconv-cu124==2.3.6 || \
-    pip install --no-cache-dir spconv-cu121==2.3.6
+RUN pip install --no-cache-dir spconv-cu124==2.3.8
 
 RUN git clone --depth 1 https://github.com/Stable-X/Stable3DGen.git /app/Stable3DGen
 
