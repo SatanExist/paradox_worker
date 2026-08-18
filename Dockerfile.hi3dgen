@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
       runpod Pillow requests python-dotenv huggingface_hub boto3 \
       "diffusers==0.32.2" accelerate "transformers==4.46.3" \
-      "kornia==0.8.0" "timm==0.6.7" \
+      "kornia==0.8.0" "timm==1.0.14" \
       tqdm scipy trimesh "numpy==1.26.4" scikit-image \
       opencv-python-headless einops safetensors
 
