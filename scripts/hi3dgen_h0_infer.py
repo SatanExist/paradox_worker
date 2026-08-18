@@ -18,6 +18,20 @@ import torch
 from PIL import Image
 
 
+def patch_xformers_block_diagonal_mask() -> None:
+    """Hi3DGen sparse attn imports BlockDiagonalMask from xops.fmha; newer xformers moved it."""
+    import xformers.ops as xops
+
+    if hasattr(xops.fmha, "BlockDiagonalMask"):
+        return
+    from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+
+    xops.fmha.BlockDiagonalMask = BlockDiagonalMask
+
+
+patch_xformers_block_diagonal_mask()
+
+
 def cache_weights(weights_dir: Path) -> None:
     from huggingface_hub import snapshot_download
 
