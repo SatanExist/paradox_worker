@@ -68,7 +68,7 @@ Gemini Flash дал **отличный** 2×2 sheet рыцаря (front/rear/lef
 ```
 1) B  Gemini→T2          ✅ soft-NO-GO eyes
 2) C1 W3D++ E2E          ❌ ABORT deps/AGPL
-3) C2 Hi3DGen            ⏸ next shape
+3) C2 Hi3DGen            🔄 H0 `scripts/hi3dgen_h0_spike.md` (research; GPU не стартован)
 4) A  honesty UX + real-photo multi checklist  🟢 spec `productMultiUx.md`
 5) D  confidence fusion  ⏸ only after good views
 ```

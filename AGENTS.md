@@ -2,12 +2,14 @@
 
 RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.  
 Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`.  
+H0 geometry: **Hi3DGen** — `Dockerfile.hi3dgen` / `worker_hi3dgen.py` (отдельный endpoint).  
 Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`.  
 Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.py`.
 
 ## С чего начать
 
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
+1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0 Hi3DGen; MCP last
 2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
 3. **`@memory-bank/t2InternetAudit.md`** — **как правильно T2** (официалы vs обзоры vs наш рыцарь; стоп кругам)
 4. **`@memory-bank/t2FinishPlan.md`** — **дожим T2** (prod recipe, side/back pass, tex; Hi3DGen после)
@@ -44,7 +46,7 @@ python scripts/reconviagen_hf_smoke.py --image path1.png --image path2.png --sav
 python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to fix)
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
-docker build -f Dockerfile.reconviagen -t paradox-reconviagen .  # ReconViaGen multi-view hybrid
+docker build -f Dockerfile.hi3dgen -t paradox-hi3dgen . # Hi3DGen mesh (CI → :hi3dgen-sha-*)
 docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
 docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow texture
 ```
@@ -55,7 +57,9 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 |------|------------|
 | `memory-bank/projectbrief.md` | Зачем существует проект |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
-| `memory-bank/t2FinishPlan.md` | **Дожим TRELLIS.2** (T0–T5; Hi3DGen после) |
+| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0 Hi3DGen → tex на новом меше → RVG; MCP last |
+| `Dockerfile.hi3dgen` | Hi3DGen mesh worker image (volume weights) |
+| `worker_hi3dgen.py` | RunPod handler: image → normal-bridge mesh GLB |
 | `memory-bank/sideBackUnblock.md` | **Side/Back unblock** — A/B/C после тупика MIT→T2 |
 | `memory-bank/postSideBackPlan.md` | **Roadmap после тупика** (P1–P4) |
 | `memory-bank/reconViaGenMvRefiner.md` | **D-track MASTER:** ReconViaGen integration + smart fusion |

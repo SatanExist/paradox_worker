@@ -64,6 +64,7 @@
   - **v1:** `:latest`, `:sha-<short>`, `:stable` (prod)
   - **TRELLIS.2:** `:trellis2-latest`, `:trellis2-sha-<short>` (актуальный POC: `trellis2-sha-ea4ea58`, endpoint v18)
   - **ReconViaGen:** `:reconviagen-latest`, `:reconviagen-sha-<short>` (актуальный: `reconviagen-sha-a48c0e3`)
+  - **Hi3DGen:** `:hi3dgen-latest`, `:hi3dgen-sha-<short>` (после CI; веса `/runpod-volume/hi3dgen/weights`)
   - **Не использовать** обрезанный digest вручную — SHA-256 = **64** hex после `sha256:`
   - Digest копировать только из GitHub Packages / `docker inspect`, не из чата
 - **Network volume** (mount `/runpod-volume` на Pod часто как `/workspace`):

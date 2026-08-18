@@ -115,16 +115,15 @@
 ```
 ✅ P3  Freeze T2 v17+ (native PBR + PNG + polish); постеры v21
 🔄 P1  Studio UI                          ← товарищ сейчас
-1) lab API+viewer ✅ полка JPEG + лоадер-карточка (`studio_lab.html`)
-2) Draco     только если карточка тормозит (после сайта)
-3) MCP       Blender/Unreal = тот же studio_api
-4) W3b MVPainter 48GB — только если polish мало
-*) D   RVG если слоты реальные
-5) P4.1 Hi3DGen — микро-геометрия, не «ещё золотее»
+▲  Сети / tex / инструменты юзера         ← наш фокус
+   Hi3DGen · polish/MVPainter · RVG на реальных фото
+1) lab API+viewer ✅
+2) Draco skip (не в worker)
+▼  MCP / Blender / Unreal                 ← низший приоритет
 ❌ img2mv — не этап
 ```
 
-**Split 2026-08-13 / 2026-08-17:** визуал Studio = товарищ; generation = paradox_worker. P1 bridge + lab viewer готовы. Сайт копирует `posterCards.md`, не CSS lab.
+**Split 2026-08-18:** визуал Studio = товарищ; generation = сети/текстуры/инструменты. MCP/DCC не начинать. Сайт копирует `posterCards.md`, не CSS lab.
 
 ---
 
@@ -152,12 +151,13 @@
 | 2026-08-11 | D-track **MASTER** expanded: prod=separate endpoint; naive multi closed; fusion patch=optional |
 | 2026-08-13 | **img2mv класс FROZEN** (`synthMultiViewProd.md` §14). Next = P1 UX → P2 tex → P3 freeze. RVG = real photos. 1-photo Meshy = P4.1 native 3D. |
 | 2026-08-17 | Lab viewer lock (лоадер-карточка, не постер на весь кадр). P1 UI = товарищ; generation = мы. |
+| 2026-08-18 | **Приоритет:** сети / текстуры / инструменты юзера ▲. MCP/Blender/прочие API ▼. Draco skip. |
 
 ---
 
 ## 6. Статус одной строкой
 
 ```
-img2mv: FROZEN. T2 v21 live. Lab viewer lock. Next him: Studio UI. Next us: generation (GPU off).
-Then Draco-if-slow → MCP → MVPainter-if-needed → RVG-if-real → Hi3D last.
+img2mv: FROZEN. T2 v21 live. Draco skip. MCP last.
+Next him: Studio UI. Next us: сети / tex / юзер-тулзы (Hi3DGen · RVG · polish).
 ```

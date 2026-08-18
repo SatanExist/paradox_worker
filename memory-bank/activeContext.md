@@ -4,16 +4,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-17 веч** — lab viewer lock: карточка «Загрузка модели», proxy GLB, без гонки кликов. **Сайт = товарищ. Мы = generation.** GPU off.
+Последнее обновление: **2026-08-18** — H0 = **Dockerfile + CI + volume + serverless**. Голый pod abort. GPU off до зелёного GHCR.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
-| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md`. Референс lab: `scripts/studio_lab.html` |
-| **Мы / paradox_worker** | Generation. T2 **v21** live. Lab с нашей стороны закрыт. Не верстать сайт |
-| **Не трогать** | img2mv (FROZEN); Generate «на всякий случай»; CSS `scaleY(-1)` на постерах v21 |
-| **Наш next** | очередь: Draco *если* High ~47 MB тормозит сайт → MCP later → RVG при реальных слотах → Hi3DGen last |
+| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
+| **Мы / paradox_worker** | **H0 Hi3DGen** по D4: `Dockerfile.hi3dgen` → CI → GHCR → volume → serverless. Не голый pod |
+| **Не трогать** | img2mv; T2 knobs ради зада; Generate «на всякий случай»; MCP |
+| **Наш next** | commit/push scaffold → дождаться CI `hi3dgen-sha-*` → endpoint `workersMin=0` → один smoke |
 
 ---
 
@@ -39,12 +39,13 @@
 |---|-----|-------|---------|
 | ❌ | **img2mv** | никогда в этой очереди | класс FROZEN 2026-08-13 |
 | 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
-| — | Studio UI | **сейчас у товарища** | `git pull` `feat/trellis2-poc`; пакет `productMultiUx.md` §11 + `posterCards.md` |
-| 2 | **Draco** / Low-proxy | после живой карточки | **если** High ~47 MB тормозит; иначе skip |
-| 3 | **MCP** / Blender / Unreal | после стабильного сайта | тот же `studio_api`; ключ не в DCC |
-| 4 | **MVPainter** | после новых ассетов с полки | **если** W3a polish мало; сейчас High≈Realistic → не next |
-| * | RVG | не из списка, но в P4.0 | только реальные 2–4 фото |
-| 5 | **Hi3DGen** | последним | микро/зад; отдельный бюджет; после ощущения «T2 сдали» |
+| — | Studio UI | **сейчас у товарища** | сайт; мы не верстаем |
+| 2 | **Draco** | **skip** | не в worker; вернёмся только если сайт реально тормозит |
+| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | Hi3DGen; polish/MVPainter; RVG на реальных фото; инструменты в лабе |
+| ▼ | **MCP / Blender / Unreal** | **низший приоритет** | тот же `studio_api`; не начинать, пока живы сети/tex |
+| 4 | **MVPainter** | внутри ▲ | только если W3a polish мало |
+| * | RVG | внутри ▲, P4.0 | только реальные 2–4 фото |
+| 5 | **Hi3DGen** | внутри ▲ | микро/зад; отдельный бюджет; теперь не «после MCP» |
 
 Один трек за раз. lab API жив на :8787. Generate в лабе жжёт GPU — только по кнопке.
 
@@ -57,10 +58,9 @@
 | Кто | Что |
 |-----|-----|
 | **Товарищ** | AI_MESH Studio UI: слоты, селектор пресетов, сетка `posterUrl`, большое окно = 1 GLB + карточка загрузки. Не GPU. |
-| **Этот ПК / Pedrokita** | **Generation:** T2 v21 live; не сайт. Очередь: Draco-если-тормозит → MCP later → RVG-если-реальные слоты → Hi3DGen last |
-| **Контракт** | `productMultiUx.md` §11 + `posterCards.md`. Lab = референс (`studio_lab.html`), не копировать ruby-jelly на сайт |
-| **Не делать здесь** | вёрстка Studio / landing / рестайл публичного сайта |
-| **Позже, не сейчас** | MCP / аддон Blender / плагин Unreal — те же jobs+product-copy; ключ RunPod только на бэке |
+| **Этот ПК / Pedrokita** | **Generation:** сети, текстуры, инструменты юзера. T2 v21 live. Не сайт. Не Blender API |
+| **Контракт** | `productMultiUx.md` §11 + `posterCards.md`. Lab = референс (`studio_lab.html`) |
+| **Не делать здесь** | вёрстка Studio / landing; MCP/аддон Blender / плагин Unreal в этом горизонте |
 
 ---
 
@@ -70,7 +70,7 @@
 |--|--|
 | **Ролик** | Claude Code/Cursor = дирижёр, не shape. Blender MCP ≠ img2mesh. 3D с фото = API (Fal/Meshy/**наш T2**) |
 | **Наш слой** | форма = T2 `studio_api`. Агент/Blender/Unreal = клиенты |
-| **Когда** | после Studio на сайте. Не пилить MCP в этом спринте |
+| **Когда** | **низший приоритет** (2026-08-18). Не пилить MCP, пока живы сети / текстуры / инструменты юзера |
 | **Как** | `generate` / `status` / `presets` над уже существующим API; GLB с R2 → Import |
 | **Не** | ключ RunPod в `.blend` / плагине Unreal; ждать что Claude вылепит рыцаря в Blender |
 
@@ -84,7 +84,7 @@
 | **Baseline** | native PBR PNG — 528k V / 669k F |
 | **W3a** | 🟢 PASS + **в worker** (High/Realistic `material_polish`) |
 | **W3b** | ⏸ MVPainter ≥40GB только если polish мало |
-| **Next** | глаза High vs Realistic опц.; GPU off; DCC не сейчас |
+| **Next** | в фокусе сетей/tex; MCP не блокер |
 | **W2b** | закрыт как prod character path |
 
 ## ⚪ P2 Texture W2b — closed for character
@@ -147,8 +147,8 @@
 | **P2 character** | ❌ W2b 80k закрыт; вау = native PBR + W3a polish |
 | **P3** | Tier freeze в продукте (пресеты уже в `product-copy`) |
 | **P4.0** | RVG только под реальные слоты |
-| **P4.1** | Hi3DGen / TripoSG — микро-геометрия, не «золотее» |
-| **Next мы** | generation-очередь, не UI. GPU off. Не img2mv |
+| **P4.1** | Hi3DGen / TripoSG — микро-геометрия; теперь в фокусе сетей, не «после MCP» |
+| **Next мы** | сети / tex / юзер-тулзы. MCP last. Не img2mv |
 | **Next он** | Studio на сайте по §11 + `posterCards.md` |
 
 ---
@@ -243,7 +243,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 | ✅ | **P2 character** MV-Adapter 80k | закрыт (фольга); только чистый проп |
 | 🔄 | **P3 / F5** Tier freeze copy на сайте | API готов; вёрстка у товарища |
 | ⏸ | **D** RVG endpoint | image live; ждать реальные виды |
-| ⏸ | **P4.1 / C2** Hi3DGen / TripoSG | later |
+| ⏸ | **P4.1 / C2** Hi3DGen / TripoSG | **H0 открыт** — `hi3dgen_h0_spike.md`; GPU ещё нет |
 | ❌ | Повтор Unique3D/W3D/Gemini→T2 / remesh knobs / новый img2mv | closed |
 | ❌ | Era3D / Hunyuan / Zero123++ / SPAR3D core | AGPL / EU-ban / NC / $1M |
 
@@ -267,7 +267,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | lab viewer lock (v21 + лоадер); UI у товарища; generation-очередь без GPU |
+| Фокус | приоритет: сети/tex/инструменты юзера; MCP last; Draco skip |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -997,7 +997,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation, GPU off |
+| 2026-08-18 | Pedrokita | H0: голый pod abort; scaffold Dockerfile.hi3dgen + worker + CI | push → CI green → serverless workersMin=0; один smoke |
+| 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation |
 | 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | T2 **v19** `7b11b25`; кадр слишком близко |
 | 2026-08-17 | Pedrokita | poster camera NDC-fit + мягче свет | T2 **v20** `31a1bc4`; JPEG вверх ногами |
 | 2026-08-17 | Pedrokita | lab полка = 2 квадрата; poster Y-flip+crop | T2 **v21** `2beac61`; Low smoke `b7c6924b` upright |

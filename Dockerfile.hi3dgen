@@ -1,0 +1,59 @@
+# Hi3DGen (Stable3DGen) — MIT normal-bridge mesh. Not TRELLIS.2.
+# Tags: ghcr.io/satanexist/paradox_worker:hi3dgen-sha-<short>
+#
+# Weights stay on the network volume (HF_HOME / HI3DGEN_WEIGHTS), not in the image.
+# GHA: no flash-attn compile; no kaolin/nvdiffrast (upstream stripped them).
+
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    SPCONV_ALGO=native \
+    ATTN_BACKEND=sdpa \
+    HF_HOME=/runpod-volume/huggingface_cache \
+    TORCH_HOME=/runpod-volume/torch_hub \
+    HI3DGEN_REPO=/app/Stable3DGen \
+    HI3DGEN_WEIGHTS=/runpod-volume/hi3dgen/weights \
+    PYTHONPATH=/app:/app/Stable3DGen \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+      runpod Pillow requests python-dotenv huggingface_hub boto3 \
+      "diffusers>=0.28.0" accelerate "transformers==4.46.3" \
+      "kornia==0.8.0" "timm==0.6.7" \
+      tqdm scipy trimesh "numpy==1.26.4" scikit-image \
+      opencv-python-headless einops safetensors
+
+# Keep image torch; add matching wheels only.
+RUN pip install --no-cache-dir xformers==0.0.27.post2 \
+      --index-url https://download.pytorch.org/whl/cu124 || \
+    pip install --no-cache-dir xformers==0.0.28.post1 \
+      --index-url https://download.pytorch.org/whl/cu124
+
+RUN pip install --no-cache-dir spconv-cu124==2.3.6 || \
+    pip install --no-cache-dir spconv-cu121==2.3.6
+
+RUN git clone --depth 1 https://github.com/Stable-X/Stable3DGen.git /app/Stable3DGen
+
+COPY docker/smoke_hi3dgen_imports.py /tmp/smoke_hi3dgen_imports.py
+RUN python /tmp/smoke_hi3dgen_imports.py
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=hi3dgen
+
+COPY worker_hi3dgen.py /app/worker_hi3dgen.py
+COPY runpod_billing.py /app/runpod_billing.py
+COPY scripts/hi3dgen_h0_infer.py /app/scripts/hi3dgen_h0_infer.py
+
+WORKDIR /app/Stable3DGen
+CMD ["python", "-u", "/app/worker_hi3dgen.py"]
