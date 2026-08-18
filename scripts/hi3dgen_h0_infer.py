@@ -90,6 +90,10 @@ def load_models(repo: Path, volume_dir: Path | None = None):
         cache_weights(weights_dir)
 
     from hi3dgen.pipelines import Hi3DGenPipeline
+    import hi3dgen.pipelines.hi3dgen as _h0_pipe
+
+    # Upstream _init_image_cond_model uses os.path without importing os.
+    _h0_pipe.os = os
 
     print("load Hi3DGenPipeline", flush=True)
     pipe = Hi3DGenPipeline.from_pretrained(str(weights_dir / "trellis-normal-v0-1"))
