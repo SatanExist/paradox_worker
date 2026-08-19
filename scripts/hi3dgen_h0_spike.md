@@ -1,6 +1,6 @@
 # H0 spike — Hi3DGen (1-photo high-fidelity geometry)
 
-> **Статус:** 🟡 **H0c FlexiCubes** (2026-08-19). Глаза H0/H0b1 = **мыло**. Не GO. Метод не закрыт.  
+> **Статус:** 🟡 **H0c ≠ демо.** Глаза: комок глины / мыло спереди. Это **наш прогон**, не потолок Hi3DGen. Метод **открыт**.  
 > **План:** `memory-bank/netsTexToolsPlan.md`  
 > **Не путать с** TRELLIS.2 worker (`worker_trellis2.py`). Это отдельный стек.
 
@@ -8,7 +8,7 @@
 
 Сеть = **фото → нормаль → меш**. Не T2. PBR нет. «Multiple Images» в UI — *coming soon*, не RVG.
 
-Официальный ритуал ([`app.py`](https://github.com/Stable-X/Stable3DGen/blob/main/app.py), [arXiv 2503.22236](https://arxiv.org/html/2503.22236v2)):
+Официальный ритуал ([HF Space `app.py`](https://huggingface.co/spaces/Stable-X/Hi3DGen/blob/main/app.py), [arXiv 2503.22236](https://arxiv.org/html/2503.22236v2)):
 
 1. Одно **изолированное** фото предмета (лучше почти-изометрия / CGI-эстетика — appendix).
 2. Preprocess **1024** (квадрат + pad). Фон: GitHub/наш = **BiRefNet**; HF Space = **rembg**.
@@ -64,7 +64,7 @@ HF Space: https://huggingface.co/spaces/Stable-X/Hi3DGen — не prod. Голы
 
 Не: `setup.sh` на живом pod, SSH/SCP oneshot, always-on `workersMin>0`, общий диск с T2.
 
-Env: `HI3DGEN_MESH_EXTRACT=flexicubes` (default). `mc` = старый marching cubes, только A/B.
+Код в образе = **HF Space** `e574b11` (тот же `app.py`, rembg u2net, FlexiCubes). Не GitHub HEAD.
 
 ## Глаза H0 (2026-08-19, Pedrokita)
 
@@ -83,12 +83,34 @@ R2: `hi3dgen/7bf18394-debe-4f8a-8334-901c18cb543b-e2.glb`.
 |-----|------|------|
 | **H0b1** | slat 6 → **12** | 7.49 vs 7.46 MB, ~56 с. Pedrokita: **мыло**. Slat не рычаг |
 | H0b2 | slat **25** | **не делать** |
-| H0b3 | normal 768 → 1024 | не Gradio; только если нормаль мыльная |
-| **H0c** | **FlexiCubes extract** | next: веса декодера наконец используются |
+| H0b3 | normal 768 → 1024 | не Gradio; нормаль H0c острая — не рычаг |
+| **H0c** | FlexiCubes extract на GitHub-стеке | +34 verts vs MC; **глаза: всё ещё комок**. Не вердикт сети |
+
+### H0c — FlexiCubes (глаза 2026-08-19)
+
+Smoke: seed 42 / ss=50 / slat=6 / `mesh_extract=flexicubes`.  
+Локально: `preview_textures/h0c_armor_flexicubes.glb` + `h0c_armor_flexicubes_normal.png`.
+
+| | H0 MC | H0c FlexiCubes |
+|--|--|--|
+| Вершины | 155 382 | 155 416 (+34) |
+| Файл | 7.46 MB | 7.46 MB |
+
+Нормаль YOSO острая. Меш — **комок глины**, даже перед: Pedrokita. Это не «потолок Hi3DGen».
+
+Мы гнали **GitHub Stable3DGen**, который авторы сами считают хуже [HF Space](https://huggingface.co/spaces/Stable-X/Hi3DGen) ([#36](https://github.com/Stable-X/Stable3DGen/issues/36)):
+
+| | Демо (HF Space) | Наш H0/H0c |
+|--|--|--|
+| Preprocess | **rembg `u2net`** | **BiRefNet** |
+| Extract | оригинальный `flexicube.py` (NVIDIA) | GitHub MC, потом наш патч MaxtirError |
+| `to_trimesh` | faces + computed normals | то же; **6ch vertex_attrs не пишутся в GLB** |
+
+H0c не уравнял нас с демо. **H0d** = клон Space в Docker (как T2 клонит microsoft/TRELLIS.2).
 
 ## Зачем нам
 
-T2 ultra: макро ок, микро (львы/табард) мыло. Knobs закрыты. Hi3DGen — единственный оставшийся **открытый** bet на скульптуру с 1 фото.
+T2 ultra: макро ок, микро мыло. Hi3DGen в демо даёт HF geometry. Наш GLB пока не тот пайплайн.
 
 ## Сравнение (глаза)
 
@@ -122,7 +144,6 @@ T2 ultra: макро ок, микро (львы/табард) мыло. Knobs з
 
 ## Следующий шаг после глаз
 
-- Сейчас → **H0c** FlexiCubes (CI → Release `s15aqi9lxs` → smoke seed 42 slat=6).  
-- Если нормаль острая, а меш всё ещё мыло — тогда rembg vs BiRefNet, не slat.  
-- GO после H0c → H1 paint.  
-- NO-GO → не TripoSG без новой просьбы.
+- Образ = **HF Space** (как T2 = microsoft/TRELLIS.2), не GitHub HEAD.  
+- Push `Dockerfile.hi3dgen` → CI → Release **только** `s15aqi9lxs` → smoke seed 42.  
+- Не H1. Не slat=25. T2 не патчить.

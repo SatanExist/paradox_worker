@@ -22,10 +22,11 @@ os.environ.setdefault("SPCONV_ALGO", "native")
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface_cache")
 os.environ.setdefault("TORCH_HOME", "/runpod-volume/torch_hub")
-os.environ.setdefault("ATTN_BACKEND", "xformers")
+os.environ.setdefault("U2NET_HOME", "/runpod-volume/hi3dgen/u2net")
+os.environ.setdefault("ATTN_BACKEND", "sdpa")
 os.environ.setdefault("SPARSE_ATTN_BACKEND", "xformers")
 
-REPO = Path(os.environ.get("HI3DGEN_REPO", "/app/Stable3DGen"))
+REPO = Path(os.environ.get("HI3DGEN_REPO", "/app/Hi3DGen"))
 VOLUME_WEIGHTS = Path(os.environ.get("HI3DGEN_WEIGHTS", "/runpod-volume/hi3dgen/weights"))
 DEFAULT_OUTPUT_DIR = os.environ.get("HI3DGEN_OUTPUT_DIR", "/runpod-volume/outputs")
 
@@ -129,7 +130,7 @@ def handler(job: dict) -> dict:
         normal_url = None
         if nrm_path.is_file():
             normal_url = _upload_r2(str(nrm_path), f"hi3dgen/{job_id}_normal.png")
-        extract = os.environ.get("HI3DGEN_MESH_EXTRACT", "flexicubes")
+        extract = "space-flexicubes"
         return {
             "job_id": job_id,
             "glb_path": str(out_path),

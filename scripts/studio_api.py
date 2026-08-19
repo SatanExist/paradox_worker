@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import os
 import sys
@@ -116,18 +117,25 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+PROXY_GLB_TIMEOUT_SEC = 8
+
+
+def _fetch_glb_bytes(url: str) -> bytes:
+    request = Request(url, headers={"User-Agent": "paradox-studio-lab"})
+    with urlopen(request, timeout=PROXY_GLB_TIMEOUT_SEC) as upstream:
+        return upstream.read()
+
+
 @app.get("/api/proxy-glb")
-def proxy_glb(url: str) -> Response:
-    """Local-only helper so the browser can inspect an R2/https GLB."""
+async def proxy_glb(url: str) -> Response:
+    """Same-origin fetch for an R2/https GLB. Short timeout so DNS cannot freeze the lab."""
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise HTTPException(status_code=400, detail="url must be https")
-    request = Request(url, headers={"User-Agent": "paradox-studio-lab"})
     try:
-        with urlopen(request, timeout=90) as upstream:
-            data = upstream.read()
+        data = await asyncio.to_thread(_fetch_glb_bytes, url)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
     if len(data) < 12 or data[:4] != b"glTF":
         raise HTTPException(status_code=502, detail="upstream did not return a GLB")
     return Response(

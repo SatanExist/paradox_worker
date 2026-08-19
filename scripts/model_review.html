@@ -44,6 +44,7 @@
     <select id="preset">
       <option value="../preview_textures/h0_armor_hi3dgen.glb">Hi3DGen H0 — knight clay (~7 MB)</option>
       <option value="../preview_textures/h0b_armor_slat12.glb">Hi3DGen H0b — slat12 (~7 MB)</option>
+      <option value="../preview_textures/h0c_armor_flexicubes.glb">Hi3DGen H0c — FlexiCubes (~7 MB)</option>
       <option value="../preview_textures/armor_t2_v17_realistic.png.glb">Knight — Realistic 4K+polish (~97 MB)</option>
       <option value="../preview_textures/preset_high_armor.png.glb">Knight — High 2K+polish (~47 MB)</option>
       <option value="../preview_textures/preset_medium_chest.png.glb">Chest — Medium 2K+soft (~25 MB)</option>
@@ -115,7 +116,73 @@
     document.getElementById("light").onchange = (e) => viewer.setLightRig(e.target.value);
     document.getElementById("wire").onchange = (e) => viewer.setWireframe(e.target.checked);
     document.getElementById("albedo").onchange = (e) => viewer.setAlbedoOnly(e.target.checked);
-    preset.onchange = () => viewer.loadFromUrl(preset.value, preset.selectedOptions[0].text);
+    const LAB = "http://127.0.0.1:8787";
+    const LOCAL_FALLBACK = "../preview_textures/h0_armor_hi3dgen.glb";
+    const LOCAL_FALLBACK_LABEL = "Hi3DGen H0 — knight clay (~7 MB)";
+
+    function decodeFileParam(raw) {
+      if (!raw) return null;
+      let v = raw.trim();
+      if (v.startsWith("file=")) v = v.slice(5);
+      try {
+        if (v.includes("%")) v = decodeURIComponent(v);
+      } catch {
+        /* keep the raw value */
+      }
+      return v;
+    }
+
+    function readFileQuery() {
+      const params = new URLSearchParams(location.search);
+      const direct = decodeFileParam(params.get("file"));
+      if (direct) return direct;
+      const raw = location.search.replace(/^\?/, "");
+      if (!raw) return null;
+      let decoded = raw;
+      try {
+        decoded = decodeURIComponent(raw);
+      } catch {
+        /* keep */
+      }
+      if (decoded.startsWith("file=")) return decodeFileParam(decoded.slice(5));
+      return null;
+    }
+
+    function toViewerUrl(q) {
+      if (!q) return preset.value;
+      if (q.startsWith("../") || q.startsWith("http://") || q.startsWith("https://")) return q;
+      if (q.startsWith("/")) return `..${q}`;
+      return `../${q.replace(/^\/+/, "")}`;
+    }
+
+    function resolveGlbUrl(url) {
+      if (!url) return url;
+      if (url.startsWith("https://")) {
+        return `${LAB}/api/proxy-glb?url=${encodeURIComponent(url)}`;
+      }
+      return url;
+    }
+
+    async function loadModel(url, label) {
+      try {
+        await viewer.loadFromUrl(resolveGlbUrl(url), label);
+        return true;
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        status.textContent = `${msg} — локальный H0`;
+        if (url === LOCAL_FALLBACK || resolveGlbUrl(url) === LOCAL_FALLBACK) return false;
+        try {
+          await viewer.loadFromUrl(LOCAL_FALLBACK, LOCAL_FALLBACK_LABEL);
+        } catch (err2) {
+          status.textContent = err2 && err2.message ? err2.message : String(err2);
+        }
+        return false;
+      }
+    }
+
+    preset.onchange = () => {
+      loadModel(preset.value, preset.selectedOptions[0].text);
+    };
 
     window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
     window.addEventListener("dragleave", () => drop.classList.remove("on"));
@@ -126,14 +193,11 @@
       if (f) viewer.loadFile(f);
     });
 
-    const q = new URLSearchParams(location.search).get("file");
-    const initial = q
-      ? (q.startsWith("../") || q.startsWith("http") ? q : `../${q.replace(/^\/+/, "")}`)
-      : preset.value;
-
     async function loadShelf() {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 3000);
       try {
-        const res = await fetch("http://127.0.0.1:8787/api/lab/workspace");
+        const res = await fetch(`${LAB}/api/lab/workspace`, { signal: ac.signal });
         if (!res.ok) return;
         const data = await res.json();
         if (!data.models || !data.models.length) return;
@@ -150,12 +214,30 @@
         if (match) preset.value = match.value;
       } catch {
         /* keep hardcoded options when lab API is down */
+      } finally {
+        clearTimeout(timer);
       }
     }
 
-    loadShelf().then(() => {
-      viewer.loadFromUrl(initial, q || preset.selectedOptions[0].text);
-    });
+    async function boot() {
+      const q = readFileQuery();
+      const initial = toViewerUrl(q);
+      const label = q || preset.selectedOptions[0].text;
+      const shelfP = loadShelf();
+      if (initial.startsWith("https://")) {
+        status.textContent = "R2 GLB: сначала локальный H0, затем proxy…";
+        await loadModel(LOCAL_FALLBACK, LOCAL_FALLBACK_LABEL);
+        try {
+          await viewer.loadFromUrl(resolveGlbUrl(initial), q);
+        } catch {
+          status.textContent = "R2/proxy недоступен — локальный H0. Скачайте GLB в браузере и Open GLB.";
+        }
+      } else {
+        await loadModel(initial, label);
+      }
+      await shelfP;
+    }
+    boot();
   </script>
 </body>
 </html>

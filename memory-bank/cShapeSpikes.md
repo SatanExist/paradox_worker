@@ -21,13 +21,13 @@ Gate: better / same / worse Side/Back. Soft-NO-GO if blob like v1.
 | | |
 |--|--|
 | Role | next-tier character **geometry** (normal bridging) |
-| Code | [Stable-X/Stable3DGen](https://github.com/Stable-X/Stable3DGen) MIT (не ByteDance stub) |
+| Code | HF Space [Stable-X/Hi3DGen](https://huggingface.co/spaces/Stable-X/Hi3DGen) (`e574b11`); GitHub HEAD = хуже |
 | Weights | `trellis-normal-v0-1` + YOSO normal + BiRefNet |
 | Output | mesh GLB (геометрия; ~7.5 MB у нас, не «40 MB демо») |
 | Input | same armor ref |
 | Compare | vs High T2 **меш** (каркас) |
 | Spike | `scripts/hi3dgen_h0_spike.md` |
-| Status | 🟡 H0/H0b1 глаза: мыло (MC). Next **H0c FlexiCubes** |
+| Status | 🟡 H0d: эталон = HF Space (rembg + FlexiCubes). H0c GitHub = комок, не вердикт сети |
 
 Start after B eyes, or parallel if B clearly fails. B = soft-NO-GO → H0 is the live C2.
 

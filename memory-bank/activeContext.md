@@ -4,16 +4,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-19** — H0b1 глаза: **мыло**. Slat≠densify. Next = **H0c FlexiCubes** (не slat=25).
+Последнее обновление: **2026-08-19** — Hi3DGen как T2: клон **демо** (HF Space), не GitHub HEAD. Next = push → CI → Release `s15aqi9lxs` → smoke.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
 | **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | **Hi3DGen H0c** FlexiCubes extract. T2 v21 не трогать |
+| **Мы / paradox_worker** | H0d: образ = Space `Stable-X/Hi3DGen` (rembg + FlexiCubes). T2 v21 не трогать |
 | **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25 |
-| **Наш next** | CI `Dockerfile.hi3dgen` → Release `s15aqi9lxs` → smoke seed 42 **slat=6** |
+| **Наш next** | push `Dockerfile.hi3dgen` → CI → Release только `s15aqi9lxs` → smoke seed 42 |
 
 ---
 
@@ -41,11 +41,11 @@
 | 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
 | — | Studio UI | **сейчас у товарища** | сайт; мы не верстаем |
 | 2 | **Draco** | **skip** | не в worker; вернёмся только если сайт реально тормозит |
-| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | Hi3DGen; polish/MVPainter; RVG на реальных фото; инструменты в лабе |
+| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | Hi3DGen → HF-parity (rembg); потом RVG на реальных фото |
 | ▼ | **MCP / Blender / Unreal** | **низший приоритет** | тот же `studio_api`; не начинать, пока живы сети/tex |
 | 4 | **MVPainter** | внутри ▲ | только если W3a polish мало |
 | * | RVG | внутри ▲, P4.0 | только реальные 2–4 фото |
-| 5 | **Hi3DGen** | внутри ▲ | микро/зад; отдельный бюджет; теперь не «после MCP» |
+| 5 | **Hi3DGen** | внутри ▲ | как T2: клон демо (HF Space), не GitHub MC |
 
 Один трек за раз. lab API жив на :8787. Generate в лабе жжёт GPU — только по кнопке.
 
@@ -997,7 +997,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-19 | Pedrokita | H0b1 slat12 = то же мыло (~7.5 MB). Рецепт: ss=50/slat=6; рычаг = FlexiCubes не MC | **H0c** CI+Release; смотреть `normal_url` |
+| 2026-08-19 | Pedrokita | H0c GitHub = комок. Подключаем Hi3DGen **как T2**: clone HF Space (rembg+FlexiCubes), тонкий worker | push → CI → Release `s15aqi9lxs`; smoke seed 42 |
+| 2026-08-19 | Pedrokita | H0b1 slat12 = то же мыло (~7.5 MB). Рецепт: ss=50/slat=6; рычаг = FlexiCubes не MC | H0c прогнан, глаза soft-NO-GO |
 | 2026-08-19 | Pedrokita | H0 smoke OK; глаза: низкое качество, но орнаменты сзади/сбоку; свой volume `qm6i6st1tr` | H0b1 slat=12 (прогнан, не densify) |
 | 2026-08-18 | Pedrokita | H0: голый pod abort; scaffold Dockerfile.hi3dgen + worker + CI | push → CI green → serverless workersMin=0; один smoke |
 | 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation |

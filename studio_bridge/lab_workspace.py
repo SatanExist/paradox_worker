@@ -14,6 +14,7 @@ PREVIEW_DIR = ROOT / "preview_textures"
 PINNED_GLBS: tuple[tuple[str, str], ...] = (
     ("h0_armor_hi3dgen.glb", "Hi3DGen H0 — knight clay"),
     ("h0b_armor_slat12.glb", "Hi3DGen H0b — slat12"),
+    ("h0c_armor_flexicubes.glb", "Hi3DGen H0c — FlexiCubes"),
     ("armor_t2_v17_realistic.png.glb", "Knight — Realistic 4K+polish"),
     ("preset_high_armor.png.glb", "Knight — High 2K+polish"),
     ("preset_medium_chest.png.glb", "Chest — Medium 2K+soft"),

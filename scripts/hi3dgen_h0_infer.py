@@ -1,6 +1,8 @@
-"""Headless Hi3DGen: RGB → normal bridge → mesh GLB.
+"""Headless Hi3DGen: same call path as the HF Space app.py.
 
-H0 spike only. Not TRELLIS.2. Run from the Stable3DGen repo root (weights/ relative).
+RGB → rembg u2net (Space preprocess) → YOSO normal → TRELLIS-normal mesh GLB.
+
+Not TRELLIS.2. Run with HI3DGEN_REPO on PYTHONPATH (Docker: /app/Hi3DGen).
 """
 
 from __future__ import annotations
@@ -15,13 +17,16 @@ os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 import numpy as np
 import torch
+from huggingface_hub import snapshot_download
 from PIL import Image
 
 
 def patch_xformers_block_diagonal_mask() -> None:
-    """Hi3DGen sparse attn imports BlockDiagonalMask from xops.fmha; newer xformers moved it."""
-    import xformers.ops as xops
-
+    """Sparse attn may import BlockDiagonalMask from xops.fmha; newer xformers moved it."""
+    try:
+        import xformers.ops as xops
+    except ImportError:
+        return
     if hasattr(xops.fmha, "BlockDiagonalMask"):
         return
     from xformers.ops.fmha.attn_bias import BlockDiagonalMask
@@ -32,35 +37,13 @@ def patch_xformers_block_diagonal_mask() -> None:
 patch_xformers_block_diagonal_mask()
 
 
-def cache_weights(weights_dir: Path) -> None:
-    from huggingface_hub import snapshot_download
-
-    weights_dir.mkdir(parents=True, exist_ok=True)
-    for model_id, folder in (
-        ("Stable-X/trellis-normal-v0-1", "trellis-normal-v0-1"),
-        ("Stable-X/yoso-normal-v1-8-1", "yoso-normal-v1-8-1"),
-        ("ZhengPeng7/BiRefNet", "BiRefNet"),
-    ):
-        dest = weights_dir / folder
-        if dest.exists() and any(dest.iterdir()):
-            print(f"cached {model_id} -> {dest}", flush=True)
-            continue
-        print(f"download {model_id} -> {dest}", flush=True)
-        snapshot_download(repo_id=model_id, local_dir=str(dest), force_download=False)
-
-
-def link_repo_weights(repo: Path, volume_dir: Path) -> Path:
-    """Put Stable3DGen weights/ on the network volume (HF cache lives across jobs)."""
-    repo_weights = repo / "weights"
-    repo_weights.mkdir(parents=True, exist_ok=True)
-    cache_weights(volume_dir)
-    for folder in ("trellis-normal-v0-1", "yoso-normal-v1-8-1", "BiRefNet"):
-        src = (volume_dir / folder).resolve()
-        dst = repo_weights / folder
-        if dst.exists() or dst.is_symlink():
-            continue
-        os.symlink(str(src), str(dst), target_is_directory=True)
-    return repo_weights
+def cache_dir(volume_dir: Path | None, repo: Path) -> Path:
+    if volume_dir is not None:
+        volume_dir.mkdir(parents=True, exist_ok=True)
+        return volume_dir
+    dest = repo / "weights"
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
 
 
 def load_normal_predictor(weights_dir: Path):
@@ -95,25 +78,27 @@ def as_pil(image) -> Image.Image:
 
 
 def load_models(repo: Path, volume_dir: Path | None = None):
+    """T2 pattern: snapshot_download onto the volume, then from_pretrained(local_dir)."""
     repo = repo.resolve()
     os.chdir(repo)
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
-    weights_dir = link_repo_weights(repo, volume_dir.resolve()) if volume_dir else (repo / "weights")
-    if volume_dir is None:
-        cache_weights(weights_dir)
 
-    from hi3dgen.pipelines import Hi3DGenPipeline
-    import hi3dgen.pipelines.hi3dgen as _h0_pipe
+    weights_root = cache_dir(volume_dir, repo)
+    os.environ.setdefault("U2NET_HOME", str(weights_root / "u2net"))
+    Path(os.environ["U2NET_HOME"]).mkdir(parents=True, exist_ok=True)
 
-    # Upstream _init_image_cond_model uses os.path without importing os.
-    _h0_pipe.os = os
+    model_dir = snapshot_download(
+        "Stable-X/trellis-normal-v0-1",
+        local_dir=str(weights_root / "trellis-normal-v0-1"),
+    )
+    print(f"load TrellisImageTo3DPipeline {model_dir}", flush=True)
+    from trellis.pipelines.trellis_image_to_3d import TrellisImageTo3DPipeline
 
-    print("load Hi3DGenPipeline", flush=True)
-    pipe = Hi3DGenPipeline.from_pretrained(str(weights_dir / "trellis-normal-v0-1"))
+    pipe = TrellisImageTo3DPipeline.from_pretrained(model_dir)
     pipe.cuda()
     print("load StableNormal", flush=True)
-    normal_predictor = load_normal_predictor(weights_dir)
+    normal_predictor = load_normal_predictor(weights_root)
     return pipe, normal_predictor
 
 
@@ -132,8 +117,9 @@ def infer_mesh(
     normal_resolution: int = 768,
     preprocess_resolution: int = 1024,
 ) -> Path:
-    print(f"preprocess size={image.size} res={preprocess_resolution}", flush=True)
-    image = pipe.preprocess_image(image.convert("RGBA"), resolution=preprocess_resolution)
+    # Space app.py: preprocess_image(image, resolution=1024) then YOSO then run(preprocess_image=False).
+    print(f"preprocess rembg size={image.size} res={preprocess_resolution}", flush=True)
+    image = pipe.preprocess_image(image, resolution=preprocess_resolution)
     print(f"normal bridge {normal_resolution}", flush=True)
     normal_image = as_pil(
         normal_predictor(
@@ -150,11 +136,7 @@ def infer_mesh(
 
     ss_steps = max(1, min(50, int(ss_steps)))
     slat_steps = max(1, min(50, int(slat_steps)))
-    extract = os.environ.get("HI3DGEN_MESH_EXTRACT", "flexicubes")
-    print(
-        f"run mesh seed={seed} ss={ss_steps} slat={slat_steps} extract={extract}",
-        flush=True,
-    )
+    print(f"run mesh seed={seed} ss={ss_steps} slat={slat_steps} extract=space-flexicubes", flush=True)
     outputs = pipe.run(
         normal_image,
         seed=seed,
@@ -172,12 +154,12 @@ def infer_mesh(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Hi3DGen H0 headless infer")
+    ap = argparse.ArgumentParser(description="Hi3DGen H0 headless infer (HF Space stack)")
     ap.add_argument("--image", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--normal-out", type=Path, default=None)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--repo", type=Path, default=Path("."))
+    ap.add_argument("--repo", type=Path, default=Path(os.environ.get("HI3DGEN_REPO", ".")))
     ap.add_argument("--volume-weights", type=Path, default=None)
     ap.add_argument("--ss-steps", type=int, default=50)
     ap.add_argument("--slat-steps", type=int, default=6)
