@@ -98,6 +98,8 @@ def handler(job: dict) -> dict:
     if not image_url:
         return {"error": "Missing image_url"}
     seed = int(job_input.get("seed", 42))
+    ss_steps = int(job_input.get("ss_steps", 50))
+    slat_steps = int(job_input.get("slat_steps", 6))
     job_id = str(job.get("id") or f"h0-{int(time.time())}")
     img_path = None
     try:
@@ -114,6 +116,8 @@ def handler(job: dict) -> dict:
             out_path,
             seed=seed,
             normal_out=nrm_path,
+            ss_steps=ss_steps,
+            slat_steps=slat_steps,
         )
         size = out_path.stat().st_size
         model_url = _upload_r2(str(out_path), f"hi3dgen/{job_id}.glb")
@@ -124,6 +128,8 @@ def handler(job: dict) -> dict:
             "model_url": model_url,
             "elapsed_ms": int((time.perf_counter() - t0) * 1000),
             "seed": seed,
+            "ss_steps": ss_steps,
+            "slat_steps": slat_steps,
             "variant": "hi3dgen",
         }
     except Exception as exc:

@@ -117,26 +117,47 @@ def load_models(repo: Path, volume_dir: Path | None = None):
     return pipe, normal_predictor
 
 
-def infer_mesh(pipe, normal_predictor, image: Image.Image, out: Path, *, seed: int, normal_out: Path | None = None) -> Path:
-    print(f"preprocess size={image.size}", flush=True)
-    image = pipe.preprocess_image(image.convert("RGBA"), resolution=1024)
-    print("normal bridge 768", flush=True)
+def infer_mesh(
+    pipe,
+    normal_predictor,
+    image: Image.Image,
+    out: Path,
+    *,
+    seed: int,
+    normal_out: Path | None = None,
+    ss_steps: int = 50,
+    slat_steps: int = 6,
+    ss_cfg: float = 3.0,
+    slat_cfg: float = 3.0,
+    normal_resolution: int = 768,
+    preprocess_resolution: int = 1024,
+) -> Path:
+    print(f"preprocess size={image.size} res={preprocess_resolution}", flush=True)
+    image = pipe.preprocess_image(image.convert("RGBA"), resolution=preprocess_resolution)
+    print(f"normal bridge {normal_resolution}", flush=True)
     normal_image = as_pil(
-        normal_predictor(image, resolution=768, match_input_resolution=True, data_type="object")
+        normal_predictor(
+            image,
+            resolution=normal_resolution,
+            match_input_resolution=True,
+            data_type="object",
+        )
     )
     if normal_out:
         normal_out.parent.mkdir(parents=True, exist_ok=True)
         normal_image.save(normal_out)
         print(f"wrote {normal_out}", flush=True)
 
-    print(f"run mesh seed={seed}", flush=True)
+    ss_steps = max(1, min(50, int(ss_steps)))
+    slat_steps = max(1, min(50, int(slat_steps)))
+    print(f"run mesh seed={seed} ss={ss_steps} slat={slat_steps}", flush=True)
     outputs = pipe.run(
         normal_image,
         seed=seed,
         formats=["mesh"],
         preprocess_image=False,
-        sparse_structure_sampler_params={"steps": 50, "cfg_strength": 3},
-        slat_sampler_params={"steps": 6, "cfg_strength": 3},
+        sparse_structure_sampler_params={"steps": ss_steps, "cfg_strength": float(ss_cfg)},
+        slat_sampler_params={"steps": slat_steps, "cfg_strength": float(slat_cfg)},
     )
     mesh = outputs["mesh"][0]
     trimesh_mesh = mesh.to_trimesh(transform_pose=True)
@@ -154,6 +175,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--repo", type=Path, default=Path("."))
     ap.add_argument("--volume-weights", type=Path, default=None)
+    ap.add_argument("--ss-steps", type=int, default=50)
+    ap.add_argument("--slat-steps", type=int, default=6)
     args = ap.parse_args()
 
     pipe, predictor = load_models(args.repo, args.volume_weights)
@@ -164,6 +187,8 @@ def main() -> int:
         args.out,
         seed=args.seed,
         normal_out=args.normal_out,
+        ss_steps=args.ss_steps,
+        slat_steps=args.slat_steps,
     )
     return 0
 

@@ -1,6 +1,6 @@
 # H0 spike — Hi3DGen (1-photo high-fidelity geometry)
 
-> **Статус:** 🔄 **D4 path** — `Dockerfile.hi3dgen` + CI → GHCR → volume → serverless. Голый pod **ABORT** (2026-08-18).  
+> **Статус:** 🟡 **глаза H0** (2026-08-19) — не GO в default, не NO-GO. Метод живой. Next = **H0b** (плотность).  
 > **План:** `memory-bank/netsTexToolsPlan.md`  
 > **Не путать с** TRELLIS.2 worker (`worker_trellis2.py`). Это отдельный стек.
 
@@ -26,12 +26,33 @@ HF Space: https://huggingface.co/spaces/Stable-X/Hi3DGen — не prod, 2026-08-
 ## Ops (как T2 / RVG D4)
 
 1. Push `Dockerfile.hi3dgen` → CI `build-hi3dgen` → `ghcr.io/satanexist/paradox_worker:hi3dgen-sha-<short>`  
-2. Network volume тот же паттерн: `HF_HOME=/runpod-volume/huggingface_cache`, веса ` /runpod-volume/hi3dgen/weights`  
-3. Отдельный **serverless** endpoint, `workersMin=0`, env как T2 (HF_TOKEN, R2_*)  
-4. New Release на image tag → **один** smoke `test_req_hi3dgen.py` (рыцарь seed 42) → GPU слить  
+2. **Свой** volume `paradox-hi3dgen` (`qm6i6st1tr`, EU-RO-1, 80 GB). Не том T2 `netu72a8j2`. Веса `/runpod-volume/hi3dgen/weights`  
+3. Отдельный serverless `mvpjjsb2fxj2ht`, `workersMin=0`. T2 `ynzpzjvcbfl656` v21 не патчить  
+4. New Release **только** template `s15aqi9lxs` → smoke `test_req_hi3dgen.py` (рыцарь seed 42) → GPU слить  
 5. Глаза в lab: High T2 vs H0, **каркас** + albedo off  
 
-Не: `setup.sh` на живом pod, SSH/SCP oneshot, always-on `workersMin>0`.
+Не: `setup.sh` на живом pod, SSH/SCP oneshot, always-on `workersMin>0`, общий диск с T2.
+
+## Глаза H0 (2026-08-19, Pedrokita)
+
+Артефакт: `preview_textures/h0_armor_hi3dgen.glb` (~7.5 MB), seed 42, official default **ss=50 / slat=6** (как Gradio).  
+R2: `hi3dgen/7bf18394-debe-4f8a-8334-901c18cb543b-e2.glb`.
+
+| | |
+|--|--|
+| Макро | «низкокачественная» vs T2 High; силуэт цел, один меч |
+| Микро / бок / зад | **орнаменты уже видны** (спина, табард, плечи) — дырка T2 |
+| Вердикт | не default; **метод не закрывать** |
+| 7.5 vs ~40 MB демо | не баг шагов SS (уже max 50); плотность скорее в **slat** и/или экспорте |
+
+### H0b — докрутка по шагам (один knob за прогон)
+
+| Шаг | Knob | Зачем |
+|-----|------|--------|
+| **H0b1** | `slat_steps` 6 → **12**, ss=50, seed 42 | больше structured latent; сравнивать с 7.5 MB |
+| H0b2 | slat **25**, если 12 мало | ещё деталь; не прыгать в 50 сразу |
+| H0b3 | normal 768 → 1024 | карта нормалей; только если slat насытился |
+| Не | ss>50 (слайдер апстрима), T2 knobs, H1 paint, decimate | рано |
 
 ## Зачем нам
 
@@ -66,5 +87,6 @@ T2 ultra: макро ок, микро (львы/табард) мыло. Knobs з
 
 ## Следующий шаг после глаз
 
-- GO → H1 в `netsTexToolsPlan.md` (чем красить этот меш).  
+- Сейчас → **H0b1** (slat 12), не H1.  
+- GO после плотности → H1 в `netsTexToolsPlan.md` (чем красить этот меш).  
 - NO-GO → не TripoSG без новой просьбы; вернуться к инструментам лабы на T2.

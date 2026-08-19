@@ -4,16 +4,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-18** — H0 = **Dockerfile + CI + volume + serverless**. Голый pod abort. GPU off до зелёного GHCR.
+Последнее обновление: **2026-08-19** — H0 глаза: не GO / не NO-GO. Орнаменты сзади и сбоку уже есть. Next = **H0b1 slat=12**.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
 | **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | **H0 Hi3DGen** по D4: `Dockerfile.hi3dgen` → CI → GHCR → volume → serverless. Не голый pod |
-| **Не трогать** | img2mv; T2 knobs ради зада; Generate «на всякий случай»; MCP |
-| **Наш next** | commit/push scaffold → дождаться CI `hi3dgen-sha-*` → endpoint `workersMin=0` → один smoke |
+| **Мы / paradox_worker** | **Hi3DGen H0b** на своём endpoint/volume. T2 v21 не трогать |
+| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2 |
+| **Наш next** | H0b1: slat 6→12, seed 42, каркас vs `h0_armor_hi3dgen.glb` |
 
 ---
 
@@ -997,6 +997,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| 2026-08-19 | Pedrokita | H0 smoke OK; глаза: низкое качество, но орнаменты сзади/сбоку; свой volume `qm6i6st1tr` | **H0b1** slat=12 seed 42; не H1 |
 | 2026-08-18 | Pedrokita | H0: голый pod abort; scaffold Dockerfile.hi3dgen + worker + CI | push → CI green → serverless workersMin=0; один smoke |
 | 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation |
 | 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | T2 **v19** `7b11b25`; кадр слишком близко |
