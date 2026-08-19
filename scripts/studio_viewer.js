@@ -1,8 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
+
+const DRACO_DECODER = "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/libs/draco/gltf/";
 
 /**
  * Shared GLB viewer: studio card (IBL + floor + orbit) and standard inspect.
@@ -144,14 +147,24 @@ export function createStudioViewer(container, options = {}) {
 
   let root = null;
   let loadSeq = 0;
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath(DRACO_DECODER);
+
+  function makeGltfLoader() {
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(dracoLoader);
+    return loader;
+  }
   let framed = { center: new THREE.Vector3(), maxDim: 1 };
   let objectUrl = null;
   let iblOn = true;
   let autoOrbit = mode === "studio";
   let wireframe = false;
   let albedoOnly = false;
+  let previewShade = false;
   let lightRig = "studio";
   let running = true;
+  const previewMat = new THREE.MeshNormalMaterial({ flatShading: true });
 
   function rememberPbr(mesh) {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -172,6 +185,12 @@ export function createStudioViewer(container, options = {}) {
     root.traverse((c) => {
       if (!c.isMesh) return;
       if (!c.userData.origPbr) rememberPbr(c);
+      if (!c.userData.stdMat) c.userData.stdMat = c.material;
+      if (previewShade) {
+        c.material = previewMat;
+        return;
+      }
+      c.material = c.userData.stdMat;
       const mats = Array.isArray(c.material) ? c.material : [c.material];
       mats.forEach((m, i) => {
         const orig = c.userData.origPbr[i];
@@ -325,7 +344,7 @@ export function createStudioViewer(container, options = {}) {
   async function loadFromUrl(url, label) {
     const seq = ++loadSeq;
     onStatus("Loading…");
-    const loader = new GLTFLoader();
+    const loader = makeGltfLoader();
     try {
       let gltf;
       if (url.startsWith("blob:")) {
@@ -429,6 +448,10 @@ export function createStudioViewer(container, options = {}) {
       albedoOnly = !!on;
       applyMaterialFlags();
     },
+    setPreviewShade(on) {
+      previewShade = !!on;
+      applyMaterialFlags();
+    },
     getMode() {
       return mode;
     },
@@ -442,6 +465,7 @@ export function createStudioViewer(container, options = {}) {
       skybox.material.dispose();
       floor.geometry.dispose();
       floor.material.dispose();
+      dracoLoader.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },

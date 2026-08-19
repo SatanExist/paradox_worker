@@ -34,10 +34,11 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/scripts")
 sys.path.insert(0, str(REPO))
 
-from hi3dgen_h0_infer import infer_mesh, load_models  # noqa: E402
+from hi3dgen_h0_infer import infer_mesh, load_models, resolve_normal_model  # noqa: E402
 
 _pipe = None
 _normal = None
+_normal_kind = None
 
 
 def _download_image(url: str) -> str:
@@ -91,11 +92,13 @@ def _upload_r2(local_path: str, object_key: str) -> str | None:
     return url
 
 
-def load_pipeline() -> None:
-    global _pipe, _normal
-    if _pipe is not None:
+def load_pipeline(normal_model: str = "yoso") -> None:
+    global _pipe, _normal, _normal_kind
+    kind = resolve_normal_model(normal_model)
+    if _pipe is not None and _normal_kind == kind:
         return
-    _pipe, _normal = load_models(REPO, VOLUME_WEIGHTS)
+    _pipe, _normal = load_models(REPO, VOLUME_WEIGHTS, normal_model=kind)
+    _normal_kind = kind
 
 
 def handler(job: dict) -> dict:
@@ -106,11 +109,15 @@ def handler(job: dict) -> dict:
     seed = int(job_input.get("seed", 42))
     ss_steps = int(job_input.get("ss_steps", 50))
     slat_steps = int(job_input.get("slat_steps", 6))
+    try:
+        normal_model = resolve_normal_model(str(job_input.get("normal_model") or "yoso"))
+    except ValueError as exc:
+        return {"error": str(exc)}
     job_id = str(job.get("id") or f"h0-{int(time.time())}")
     img_path = None
     try:
         t0 = time.perf_counter()
-        load_pipeline()
+        load_pipeline(normal_model)
         img_path = _download_image(image_url)
         os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
         out_path = Path(DEFAULT_OUTPUT_DIR) / f"{job_id}.glb"
@@ -124,6 +131,7 @@ def handler(job: dict) -> dict:
             normal_out=nrm_path,
             ss_steps=ss_steps,
             slat_steps=slat_steps,
+            normal_model=normal_model,
         )
         size = out_path.stat().st_size
         model_url = _upload_r2(str(out_path), f"hi3dgen/{job_id}.glb")
@@ -142,6 +150,7 @@ def handler(job: dict) -> dict:
             "seed": seed,
             "ss_steps": ss_steps,
             "slat_steps": slat_steps,
+            "normal_model": normal_model,
             "variant": "hi3dgen",
         }
     except Exception as exc:

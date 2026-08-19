@@ -46,6 +46,9 @@
       <option value="../preview_textures/h0b_armor_slat12.glb">Hi3DGen H0b — slat12 (~7 MB)</option>
       <option value="../preview_textures/h0c_armor_flexicubes.glb">Hi3DGen H0c — FlexiCubes (~7 MB)</option>
       <option value="../preview_textures/h0d_armor_space.glb">Hi3DGen H0d — HF Space (~7 MB)</option>
+      <option value="../preview_textures/h0e_armor_space_attrs.glb">Hi3DGen H0e — Space vertex_attrs (~7.4 MB)</option>
+      <option value="../preview_textures/h0e_space_ex0.glb">Hi3DGen H0e — Space example 0 dragon (~27 MB)</option>
+      <option value="../preview_textures/h0f_armor_bust.glb">Hi3DGen H0f — knight bust crop (~21 MB)</option>
       <option value="../preview_textures/armor_t2_v17_realistic.png.glb">Knight — Realistic 4K+polish (~97 MB)</option>
       <option value="../preview_textures/preset_high_armor.png.glb">Knight — High 2K+polish (~47 MB)</option>
       <option value="../preview_textures/preset_medium_chest.png.glb">Chest — Medium 2K+soft (~25 MB)</option>
@@ -70,6 +73,7 @@
     <label><input type="checkbox" id="env" checked /> IBL</label>
     <label><input type="checkbox" id="wire" /> Каркас</label>
     <label><input type="checkbox" id="albedo" /> Только albedo</label>
+    <label><input type="checkbox" id="previewShade" /> Нормаль как Preview</label>
     <span id="status">…</span>
   </div>
   <script type="importmap">
@@ -117,6 +121,7 @@
     document.getElementById("light").onchange = (e) => viewer.setLightRig(e.target.value);
     document.getElementById("wire").onchange = (e) => viewer.setWireframe(e.target.checked);
     document.getElementById("albedo").onchange = (e) => viewer.setAlbedoOnly(e.target.checked);
+    document.getElementById("previewShade").onchange = (e) => viewer.setPreviewShade(e.target.checked);
     const LAB = "http://127.0.0.1:8787";
     const LOCAL_FALLBACK = "../preview_textures/h0_armor_hi3dgen.glb";
     const LOCAL_FALLBACK_LABEL = "Hi3DGen H0 — knight clay (~7 MB)";

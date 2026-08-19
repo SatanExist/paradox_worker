@@ -67,6 +67,28 @@ def load_normal_predictor(weights_dir: Path):
         )
 
 
+def load_nirne_predictor(weights_dir: Path):
+    """Paper image-to-normal (ICCV 2025). Not the Space YOSO turbo demo."""
+    nirne_dir = weights_dir / "NiRNE"
+    snapshot_download("adsfda/NiRNE", local_dir=str(nirne_dir))
+    hub_local = Path(torch.hub.get_dir()) / "lzt02_NiRNE_main"
+    kwargs = dict(local_cache_dir=str(weights_dir), device="cuda:0")
+    try:
+        return torch.hub.load(str(hub_local), "NiRNE", source="local", **kwargs)
+    except Exception as exc:
+        print(f"local NiRNE hub miss ({exc}); trust_repo download", flush=True)
+        return torch.hub.load("lzt02/NiRNE", "NiRNE", trust_repo=True, **kwargs)
+
+
+def resolve_normal_model(name: str) -> str:
+    kind = (name or "yoso").strip().lower()
+    if kind in {"yoso", "space", "stable-normal", "stablenormal"}:
+        return "yoso"
+    if kind in {"nirne", "paper"}:
+        return "nirne"
+    raise ValueError(f"unknown normal_model={name!r} (yoso|nirne)")
+
+
 def as_pil(image) -> Image.Image:
     if isinstance(image, Image.Image):
         return image
@@ -78,7 +100,7 @@ def as_pil(image) -> Image.Image:
     raise TypeError(f"unsupported normal image type: {type(image)}")
 
 
-def load_models(repo: Path, volume_dir: Path | None = None):
+def load_models(repo: Path, volume_dir: Path | None = None, normal_model: str = "yoso"):
     """T2 pattern: snapshot_download onto the volume, then from_pretrained(local_dir)."""
     repo = repo.resolve()
     os.chdir(repo)
@@ -98,8 +120,13 @@ def load_models(repo: Path, volume_dir: Path | None = None):
 
     pipe = TrellisImageTo3DPipeline.from_pretrained(model_dir)
     pipe.cuda()
-    print("load StableNormal", flush=True)
-    normal_predictor = load_normal_predictor(weights_root)
+    kind = resolve_normal_model(normal_model)
+    if kind == "nirne":
+        print("load NiRNE (paper)", flush=True)
+        normal_predictor = load_nirne_predictor(weights_root)
+    else:
+        print("load StableNormal YOSO (Space)", flush=True)
+        normal_predictor = load_normal_predictor(weights_root)
     return pipe, normal_predictor
 
 
@@ -159,17 +186,22 @@ def infer_mesh(
     slat_cfg: float = 3.0,
     normal_resolution: int = 768,
     preprocess_resolution: int = 1024,
+    normal_model: str = "yoso",
 ) -> Path:
     # Space app.py: preprocess_image(image, resolution=1024) then YOSO then run(preprocess_image=False).
     print(f"preprocess rembg size={image.size} res={preprocess_resolution}", flush=True)
     image = pipe.preprocess_image(image, resolution=preprocess_resolution)
-    print(f"normal bridge {normal_resolution}", flush=True)
+    kind = resolve_normal_model(normal_model)
+    # rembg already isolated the subject. NiRNE data_type=object would run BiRefNet
+    # (GitHub HEAD path, worse than Space rembg — Stable3DGen#36).
+    data_type = "indoor" if kind == "nirne" else "object"
+    print(f"normal bridge {kind} {normal_resolution} data_type={data_type}", flush=True)
     normal_image = as_pil(
         normal_predictor(
             image,
             resolution=normal_resolution,
             match_input_resolution=True,
-            data_type="object",
+            data_type=data_type,
         )
     )
     if normal_out:
@@ -203,9 +235,10 @@ def main() -> int:
     ap.add_argument("--volume-weights", type=Path, default=None)
     ap.add_argument("--ss-steps", type=int, default=50)
     ap.add_argument("--slat-steps", type=int, default=6)
+    ap.add_argument("--normal-model", default="yoso", help="yoso (Space demo) or nirne (paper)")
     args = ap.parse_args()
 
-    pipe, predictor = load_models(args.repo, args.volume_weights)
+    pipe, predictor = load_models(args.repo, args.volume_weights, normal_model=args.normal_model)
     infer_mesh(
         pipe,
         predictor,
@@ -215,6 +248,7 @@ def main() -> int:
         normal_out=args.normal_out,
         ss_steps=args.ss_steps,
         slat_steps=args.slat_steps,
+        normal_model=args.normal_model,
     )
     return 0
 

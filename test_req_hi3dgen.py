@@ -21,6 +21,7 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--ss-steps", type=int, default=50)
     ap.add_argument("--slat-steps", type=int, default=6)
+    ap.add_argument("--normal-model", default="yoso", help="yoso (Space) or nirne (paper)")
     args = ap.parse_args()
     key = os.getenv("RUNPOD_API_KEY", "").strip()
     if not key or not args.endpoint:
@@ -32,6 +33,7 @@ def main() -> int:
             "seed": args.seed,
             "ss_steps": args.ss_steps,
             "slat_steps": args.slat_steps,
+            "normal_model": args.normal_model,
         }
     }
     r = requests.post(
@@ -42,7 +44,7 @@ def main() -> int:
     )
     r.raise_for_status()
     job_id = r.json().get("id")
-    print("submitted", job_id, "ss", args.ss_steps, "slat", args.slat_steps)
+    print("submitted", job_id, "ss", args.ss_steps, "slat", args.slat_steps, "normal", args.normal_model)
     status_url = f"https://api.runpod.ai/v2/{args.endpoint}/status/{job_id}"
     for _ in range(180):
         time.sleep(10)
