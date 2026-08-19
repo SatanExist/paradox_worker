@@ -106,7 +106,9 @@ Smoke: seed 42 / ss=50 / slat=6 / `mesh_extract=flexicubes`.
 | Extract | оригинальный `flexicube.py` (NVIDIA) | GitHub MC, потом наш патч MaxtirError |
 | `to_trimesh` | faces + computed normals | то же; **6ch vertex_attrs не пишутся в GLB** |
 
-H0c не уравнял нас с демо. **H0d** = клон Space в Docker (как T2 клонит microsoft/TRELLIS.2).
+H0c не уравнял нас с демо. **H0d** = клон Space, но смотрели **clay GLB без `vertex_attrs`**.  
+Демо «шикарно» = вкладка Preview: nvdiffrast `color`=`attrs[:,:3]` + `normal_map`=`attrs[:,3:]`.  
+`to_trimesh()` это выкидывает → 7 MB мыло. Next = экспорт 6ch в GLB.
 
 ## Зачем нам
 

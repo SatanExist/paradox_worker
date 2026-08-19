@@ -17,6 +17,7 @@ os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 import numpy as np
 import torch
+import trimesh
 from huggingface_hub import snapshot_download
 from PIL import Image
 
@@ -102,6 +103,48 @@ def load_models(repo: Path, volume_dir: Path | None = None):
     return pipe, normal_predictor
 
 
+def export_space_glb(mesh, out: Path) -> None:
+    """Write the Space mesh the way the Preview tab actually looks.
+
+    HF Space wow is nvdiffrast `vertex_attrs` (RGB + detail normal), not clay
+    face-normals. GitHub/Space `to_trimesh()` drops those 6 channels → 7 MB soap.
+    """
+    pose = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float64)
+    vertices = mesh.vertices.detach().cpu().numpy() @ pose
+    faces = mesh.faces.detach().cpu().numpy()
+    vertex_normals = None
+    vertex_colors = None
+    va = getattr(mesh, "vertex_attrs", None)
+    if va is not None:
+        va_np = va.detach().cpu().numpy()
+        print(f"vertex_attrs shape={tuple(va_np.shape)} min={va_np.min():.4f} max={va_np.max():.4f}", flush=True)
+        if va_np.shape[-1] >= 3:
+            cols = va_np[:, :3]
+            if cols.max() > 1.0:
+                cols = cols / 255.0
+            cols = np.clip(cols, 0.0, 1.0)
+            vertex_colors = (cols * 255.0).astype(np.uint8)
+        if va_np.shape[-1] >= 6:
+            nrm = va_np[:, 3:6] @ pose
+            nrm = nrm / (np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-8)
+            vertex_normals = nrm.astype(np.float64)
+    if vertex_normals is None:
+        geo = getattr(mesh, "vertex_normal", None)
+        if geo is not None:
+            vertex_normals = geo.detach().cpu().numpy() @ pose
+        print("WARN: no 6ch vertex_attrs; GLB will look like clay", flush=True)
+    tm = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        vertex_normals=vertex_normals,
+        vertex_colors=vertex_colors,
+        process=False,
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tm.export(str(out))
+    print(f"wrote {out} bytes={out.stat().st_size} colors={vertex_colors is not None}", flush=True)
+
+
 def infer_mesh(
     pipe,
     normal_predictor,
@@ -146,10 +189,7 @@ def infer_mesh(
         slat_sampler_params={"steps": slat_steps, "cfg_strength": float(slat_cfg)},
     )
     mesh = outputs["mesh"][0]
-    trimesh_mesh = mesh.to_trimesh(transform_pose=True)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    trimesh_mesh.export(str(out))
-    print(f"wrote {out} bytes={out.stat().st_size}", flush=True)
+    export_space_glb(mesh, out)
     return out
 
 
