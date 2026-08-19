@@ -4,16 +4,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-19** — H0 глаза: не GO / не NO-GO. Орнаменты сзади и сбоку уже есть. Next = **H0b1 slat=12**.
+Последнее обновление: **2026-08-19** — H0b1 глаза: **мыло**. Slat≠densify. Next = **H0c FlexiCubes** (не slat=25).
 
 ### Сейчас (split)
 
 | | |
 |--|--|
 | **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | **Hi3DGen H0b** на своём endpoint/volume. T2 v21 не трогать |
-| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2 |
-| **Наш next** | H0b1: slat 6→12, seed 42, каркас vs `h0_armor_hi3dgen.glb` |
+| **Мы / paradox_worker** | **Hi3DGen H0c** FlexiCubes extract. T2 v21 не трогать |
+| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25 |
+| **Наш next** | CI `Dockerfile.hi3dgen` → Release `s15aqi9lxs` → smoke seed 42 **slat=6** |
 
 ---
 
@@ -997,7 +997,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
-| 2026-08-19 | Pedrokita | H0 smoke OK; глаза: низкое качество, но орнаменты сзади/сбоку; свой volume `qm6i6st1tr` | **H0b1** slat=12 seed 42; не H1 |
+| 2026-08-19 | Pedrokita | H0b1 slat12 = то же мыло (~7.5 MB). Рецепт: ss=50/slat=6; рычаг = FlexiCubes не MC | **H0c** CI+Release; смотреть `normal_url` |
+| 2026-08-19 | Pedrokita | H0 smoke OK; глаза: низкое качество, но орнаменты сзади/сбоку; свой volume `qm6i6st1tr` | H0b1 slat=12 (прогнан, не densify) |
 | 2026-08-18 | Pedrokita | H0: голый pod abort; scaffold Dockerfile.hi3dgen + worker + CI | push → CI green → serverless workersMin=0; один smoke |
 | 2026-08-17 веч | Pedrokita | lab: лоадер-карточка, proxy GLB buffer, без гонки кликов; контракт в `posterCards.md` | товарищ — Studio UI; мы — generation |
 | 2026-08-17 | Pedrokita | GPU poster nvdiffrast + hover `posterUrls` (5 студий) | T2 **v19** `7b11b25`; кадр слишком близко |

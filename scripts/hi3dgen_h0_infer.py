@@ -150,7 +150,11 @@ def infer_mesh(
 
     ss_steps = max(1, min(50, int(ss_steps)))
     slat_steps = max(1, min(50, int(slat_steps)))
-    print(f"run mesh seed={seed} ss={ss_steps} slat={slat_steps}", flush=True)
+    extract = os.environ.get("HI3DGEN_MESH_EXTRACT", "flexicubes")
+    print(
+        f"run mesh seed={seed} ss={ss_steps} slat={slat_steps} extract={extract}",
+        flush=True,
+    )
     outputs = pipe.run(
         normal_image,
         seed=seed,

@@ -10,8 +10,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_DIR = ROOT / "preview_textures"
 
-# Pinned first in the shelf — the 2026-08-16 ladder we actually judged.
+# Pinned first in the shelf. Current H0 work, then the 2026-08-16 T2 ladder.
 PINNED_GLBS: tuple[tuple[str, str], ...] = (
+    ("h0_armor_hi3dgen.glb", "Hi3DGen H0 — knight clay"),
+    ("h0b_armor_slat12.glb", "Hi3DGen H0b — slat12"),
     ("armor_t2_v17_realistic.png.glb", "Knight — Realistic 4K+polish"),
     ("preset_high_armor.png.glb", "Knight — High 2K+polish"),
     ("preset_medium_chest.png.glb", "Chest — Medium 2K+soft"),

@@ -13,8 +13,10 @@ if str(repo) not in sys.path:
 
 assert (repo / "hi3dgen").is_dir(), f"missing hi3dgen package in {repo}"
 import hi3dgen.pipelines  # noqa: F401
+from hi3dgen.representations.mesh.cube2mesh import SparseFeatures2Mesh  # noqa: F401
+from hi3dgen.representations.mesh.flexicubes.flexicubes import FlexiCubes  # noqa: F401
 
 import torch
 
 print("torch", torch.__version__, "cuda_built", torch.cuda.is_available())
-print("hi3dgen pipelines ok")
+print("hi3dgen pipelines ok; flexicubes import ok")

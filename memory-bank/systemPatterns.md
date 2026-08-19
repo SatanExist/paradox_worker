@@ -87,6 +87,7 @@ os.environ.setdefault("ATTN_BACKEND", "xformers")
 | 2026-08-03 | `remesh_project` не рычаг sharpness на этом ассете | F@D' / G = same |
 | 2026-08-11 | **Тяжёлые GPU-стеки (T2/RVG/MV): сразу Dockerfile + GHCR image**, не голый pod + upstream `setup.sh` | D3 ReconViaGen: ToS/torch/sudo/hub/o-voxel hell; pod = только emergency eyes; prod = D4 image |
 | 2026-08-13 | **Класс MIT img2mv→shape FROZEN** | Нет коммерчески чистого Meshy-класса img2mv в OSS/EU. RVG = fusion реальных видов, не 1-photo. Next = P1 UX + P2 tex; 1-photo back = native 3D P4.1 |
+| 2026-08-19 | Hi3DGen extract = **FlexiCubes**, не GitHub marching cubes | Декодер пишет 21 вес; MC их игнорирует → мыло. MaxtirError fork + stub `check_tensor`, без kaolin. Slat≠densify |
 
 ## Spike ops (обязательно)
 
@@ -240,8 +241,7 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 - Studio = IBL + циклорама (GroundedSkybox) + тень на полу, без серого диска. Inspect = сетка, без IBL.
 - Свет: Studio / Gallery / Outdoor / Neon / Night. Neon/Night не для приёмки материала.
 
-## DCC / MCP later (2026-08-16)
+## DCC / MCP — низший приоритет (2026-08-18)
 
-Клиенты Blender, Unreal, Cursor — **тот же** `studio_api` (`/api/jobs`, `/api/product-copy`), не RunPod напрямую.  
-Claude Code не генерит меш: оркестрирует job → `modelUrl` → импорт. Blender MCP = скрипты в сцене, не TRELLIS.  
-Ключ GPU только на бэке. Не делать в текущем спринте.
+Клиенты Blender, Unreal, Cursor — **тот же** `studio_api`, не RunPod напрямую.  
+**Не начинать**, пока живы сети, текстуры и инструменты юзера. Ключ GPU только на бэке.

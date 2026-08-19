@@ -27,11 +27,14 @@ def main() -> None:
     tmp = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "preview_textures"
     models = list_local_glbs(tmp, limit=40)
     names = [m["id"] for m in models]
+    if (tmp / "h0_armor_hi3dgen.glb").is_file():
+        assert names[0] == "h0_armor_hi3dgen.glb"
+        assert models[0]["label"].startswith("Hi3DGen H0")
     if (tmp / "preset_high_armor.png.glb").is_file():
         assert names.index("preset_high_armor.png.glb") < names.index(
             "armor_w2b_ultra_tex200k.glb"
         ) if "armor_w2b_ultra_tex200k.glb" in names else True
-        assert models[0]["pinned"] is True
+        assert any(m["pinned"] for m in models)
 
     payload = workspace_payload(tmp)
     assert "refs" in payload and "models" in payload

@@ -74,11 +74,16 @@ def _upload_r2(local_path: str, object_key: str) -> str | None:
         region_name=os.environ.get("R2_REGION", "auto"),
         config=Config(signature_version="s3v4"),
     )
+    content_type = "model/gltf-binary"
+    if object_key.lower().endswith(".png"):
+        content_type = "image/png"
+    elif object_key.lower().endswith(".jpg") or object_key.lower().endswith(".jpeg"):
+        content_type = "image/jpeg"
     client.upload_file(
         local_path,
         bucket,
         object_key,
-        ExtraArgs={"ContentType": "model/gltf-binary"},
+        ExtraArgs={"ContentType": content_type},
     )
     url = f"{public_base}/{object_key}"
     print(f"Uploaded to R2: {url}")
@@ -121,11 +126,17 @@ def handler(job: dict) -> dict:
         )
         size = out_path.stat().st_size
         model_url = _upload_r2(str(out_path), f"hi3dgen/{job_id}.glb")
+        normal_url = None
+        if nrm_path.is_file():
+            normal_url = _upload_r2(str(nrm_path), f"hi3dgen/{job_id}_normal.png")
+        extract = os.environ.get("HI3DGEN_MESH_EXTRACT", "flexicubes")
         return {
             "job_id": job_id,
             "glb_path": str(out_path),
             "glb_bytes": size,
             "model_url": model_url,
+            "normal_url": normal_url,
+            "mesh_extract": extract,
             "elapsed_ms": int((time.perf_counter() - t0) * 1000),
             "seed": seed,
             "ss_steps": ss_steps,

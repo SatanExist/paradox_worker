@@ -24,7 +24,9 @@
 | `Dockerfile.trellis2` | quality (CUDA 12.4, torch 2.6, einops, boto3) |
 | `Dockerfile.reconviagen` | ReconViaGen v0.5 hybrid (CUDA 12.4, torch 2.6 cu124, triton≥3.2, extensions) |
 | `Dockerfile.texture` | mesh paint (тот же стек, CMD → `worker_texture.py`) |
-| `worker_mvadapter.py` | MV-Adapter texture: mesh+image → `texture_i2tex` subprocess → R2 GLB |
+| `worker_hi3dgen.py` | Hi3DGen: image → normal bridge → mesh GLB (отдельный endpoint) |
+| `Dockerfile.hi3dgen` | Hi3DGen image (torch 2.4 cu124, FlexiCubes extract, no kaolin) |
+| `test_req_hi3dgen.py` | Smoke Hi3DGen (`RUNPOD_ENDPOINT_ID_HI3DGEN`) |
 | `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |
 | `test_req_mvadapter.py` | Smoke test MV-Adapter endpoint (`RUNPOD_ENDPOINT_ID_MVADAPTER`) |
 | `test_req.py` | Smoke test v1 endpoint |

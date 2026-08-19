@@ -46,7 +46,9 @@ Hi3DGen в `t2FinishPlan`: открывать **после** «T2 сдали» �
 ## H0 — зачем это первое
 
 Дырка продукта: **львы / табард мыло в меше**, не в JPEG-постерах.  
-Hi3DGen (Stable3DGen) = MIT, TRELLIS finetune + карта нормалей. Выход **геометрия** (~40 MB GLB), не native PBR.  
+Hi3DGen (Stable3DGen) = MIT, TRELLIS finetune + карта нормалей. Выход **геометрия**, не native PBR.  
+Официальный рецепт: preprocess 1024 → normal 768 → **ss=50 / slat=6 / CFG=3**. Gradio «~40 MB» ≠ densify.  
+GitHub MC **игнорирует 21 вес FlexiCubes** → мыло ([issue #36](https://github.com/Stable-X/Stable3DGen/issues/36)). H0c = вернуть FlexiCubes.  
 Сравниваем **форму** с T2, не «золотее».
 
 Мастер спайка: `scripts/hi3dgen_h0_spike.md`.
@@ -55,9 +57,10 @@ Hi3DGen (Stable3DGen) = MIT, TRELLIS finetune + карта нормалей. В�
 
 | Если | Тогда |
 |------|--------|
-| H0 Side/Back/микро **лучше** T2 ultra глазами | сначала **H0b** плотность; H1 paint после |
+| H0 Side/Back/микро **лучше** T2 ultra глазами | H1 paint после **H0c** (не slat) |
 | H0 глаза 2026-08-19 | орнаменты сзади/сбоку уже есть; макро «дешёвый»; **не закрывать** |
-| H0 same/worse на рыцаре после H0b | закрыть метод; TripoSG только если явно просим |
+| H0b1 slat=12 | Pedrokita: **мыло**; размер не вырос. **Не** slat=25 |
+| H0 same/worse на рыцаре после H0c | закрыть метод; TripoSG только если явно просим |
 | Нет реальных 2–4 фото | не открывать RVG |
 | Сайт тормозит на High | тогда можно вспомнить Draco; не сейчас |
 

@@ -2,7 +2,7 @@
 # Tags: ghcr.io/satanexist/paradox_worker:hi3dgen-sha-<short>
 #
 # Weights stay on the network volume (HF_HOME / HI3DGEN_WEIGHTS), not in the image.
-# GHA: no flash-attn compile; no kaolin/nvdiffrast (upstream stripped them).
+# GHA: no flash-attn compile. FlexiCubes in-image (no kaolin/nvdiffrast).
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
@@ -43,6 +43,18 @@ RUN pip install --no-cache-dir xformers==0.0.27.post2 \
 RUN pip install --no-cache-dir spconv-cu124==2.3.8
 
 RUN git clone --depth 1 https://github.com/Stable-X/Stable3DGen.git /app/Stable3DGen
+
+# FlexiCubes: decoder still emits the 21 trained weights; GitHub MC ignores them (soap).
+# MaxtirError fork = relative imports. No kaolin/nvdiffrast (patch strips check_tensor).
+ENV HI3DGEN_MESH_EXTRACT=flexicubes
+COPY docker/patch_hi3dgen_flexicubes.py /tmp/patch_hi3dgen_flexicubes.py
+RUN rm -rf /app/Stable3DGen/hi3dgen/representations/mesh/flexicubes && \
+    git clone https://github.com/MaxtirError/FlexiCubes.git \
+      /app/Stable3DGen/hi3dgen/representations/mesh/flexicubes && \
+    cd /app/Stable3DGen/hi3dgen/representations/mesh/flexicubes && \
+    git checkout f97beb0dd3c6c68f3ab5696b6dcaf9af69f0514e && \
+    touch /app/Stable3DGen/hi3dgen/representations/mesh/flexicubes/__init__.py && \
+    python /tmp/patch_hi3dgen_flexicubes.py
 
 COPY docker/smoke_hi3dgen_imports.py /tmp/smoke_hi3dgen_imports.py
 RUN python /tmp/smoke_hi3dgen_imports.py

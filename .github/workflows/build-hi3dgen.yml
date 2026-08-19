@@ -8,6 +8,7 @@ on:
       - "worker_hi3dgen.py"
       - "scripts/hi3dgen_h0_infer.py"
       - "docker/smoke_hi3dgen_imports.py"
+      - "docker/patch_hi3dgen_flexicubes.py"
       - ".github/workflows/build-hi3dgen.yml"
   workflow_dispatch:
 
