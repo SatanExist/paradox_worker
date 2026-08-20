@@ -1,8 +1,8 @@
 # Pixal3D — pixel-aligned image-to-3D on the TRELLIS.2 backbone.
 # Same native stack as Dockerfile.trellis2 (nvdiffrast / nvdiffrec / CuMesh /
-# FlexGEMM / o-voxel), so nothing new gets compiled here: the delta is the
-# Pixal3D fork (ElasticSLatFlowModel with image_attn_mode=proj) plus MoGe for
-# camera estimation.
+# FlexGEMM / o-voxel), plus NATTEN for the NAF feature upsampler that the
+# pixel-aligned conditioner needs. The rest of the delta is the Pixal3D fork
+# (ElasticSLatFlowModel with image_attn_mode=proj) plus MoGe.
 # Tags: ghcr.io/satanexist/paradox_worker:pixal3d-sha-<short>
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
@@ -103,6 +103,14 @@ RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-v
 
 # MoGe and diffusers can drag huggingface_hub back to 1.x; re-pin last.
 RUN pip install --no-cache-dir "huggingface_hub>=0.34,<1.0"
+
+# NATTEN is a hard import of valeoai/NAF, which DinoV3ProjFeatureExtractor
+# loads for the 2048-channel proj conditioner. Upstream pins 0.21.0; official
+# wheels for that line are torch 2.7+, and the authors' own wheel is cp310.
+# Compile only the GPUs this endpoint actually uses (4090/L40S=8.9, A6000/A40=8.6).
+ENV NATTEN_CUDA_ARCH="8.6;8.9" \
+    NATTEN_N_WORKERS=2
+RUN pip install --no-cache-dir --no-build-isolation natten==0.21.0
 
 COPY docker/smoke_pixal3d_imports.py /tmp/smoke_pixal3d_imports.py
 # SMOKE_FATAL=0 lets a failing image still be pushed, so the import problem can

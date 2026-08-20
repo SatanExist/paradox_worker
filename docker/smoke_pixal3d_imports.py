@@ -19,6 +19,7 @@ BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
     ("flex_gemm", "flex_gemm"),
     ("o_voxel", "o_voxel"),
     ("xformers", "xformers"),
+    ("natten", "natten"),
 )
 
 
@@ -47,6 +48,15 @@ def verify_built_package(dist_name: str, import_name: str) -> None:
     version = _dist_version(dist_name)
     root = _package_root(import_name)
     shared_objects = list(root.rglob("*.so"))
+    # NATTEN 0.21 ships the CUDA library as a separate `libnatten` package.
+    if not shared_objects and import_name == "natten":
+        try:
+            extra = _package_root("libnatten")
+        except ImportError:
+            extra = None
+        if extra is not None:
+            shared_objects = list(extra.rglob("*.so"))
+            root = extra
     if not shared_objects:
         raise RuntimeError(f"{import_name}: no compiled .so under {root}")
     print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
