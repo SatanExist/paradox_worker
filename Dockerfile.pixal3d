@@ -50,7 +50,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir runpod Pillow requests python-dotenv huggingface_hub boto3
+# huggingface_hub must stay below 1.0: transformers refuses to import with the
+# 1.x line, and plain `huggingface_hub` now resolves there.
+RUN pip install --no-cache-dir runpod Pillow requests python-dotenv boto3 \
+    "huggingface_hub>=0.34,<1.0"
 
 # TRELLIS.2 is still needed: o-voxel (GLB export) lives in its tree.
 RUN git clone -b main --depth 1 https://github.com/microsoft/TRELLIS.2.git /app/TRELLIS.2 && \
@@ -98,8 +101,14 @@ RUN git clone --depth 1 https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGE
 
 RUN pip install --no-cache-dir --no-build-isolation --no-deps /app/TRELLIS.2/o-voxel
 
+# MoGe and diffusers can drag huggingface_hub back to 1.x; re-pin last.
+RUN pip install --no-cache-dir "huggingface_hub>=0.34,<1.0"
+
 COPY docker/smoke_pixal3d_imports.py /tmp/smoke_pixal3d_imports.py
-RUN python /tmp/smoke_pixal3d_imports.py
+# SMOKE_FATAL=0 lets a failing image still be pushed, so the import problem can
+# be read from RunPod logs instead of costing another full CI build.
+ARG SMOKE_FATAL=1
+RUN python /tmp/smoke_pixal3d_imports.py || [ "${SMOKE_FATAL}" = "0" ]
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}

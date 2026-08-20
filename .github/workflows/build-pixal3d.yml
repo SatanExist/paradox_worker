@@ -9,6 +9,10 @@ on:
       - "docker/smoke_pixal3d_imports.py"
       - ".github/workflows/build-pixal3d.yml"
   workflow_dispatch:
+    inputs:
+      smoke_fatal:
+        description: "Fail the build when the import smoke fails (0 = push anyway)"
+        default: "1"
 
 jobs:
   build-pixal3d:
@@ -56,6 +60,7 @@ jobs:
           provenance: false
           build-args: |
             PARADOX_BUILD_SHA=${{ github.sha }}
+            SMOKE_FATAL=${{ github.event.inputs.smoke_fatal || '1' }}
           tags: |
             ghcr.io/satanexist/paradox_worker:pixal3d-latest
             ghcr.io/satanexist/paradox_worker:pixal3d-sha-${{ steps.meta.outputs.short_sha }}

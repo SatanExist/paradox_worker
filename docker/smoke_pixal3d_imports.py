@@ -75,13 +75,21 @@ def main() -> int:
         ("pixal3d", verify_pixal3d),
         ("moge", verify_moge),
     ]
+    # Run every check even after a failure: one build log should show all of
+    # them, otherwise each unknown import costs another 30-minute build.
+    failed: list[str] = []
     for label, check in checks:
+        print(f"--- check: {label}")
         try:
             check()
         except Exception:
             traceback.print_exc()
-            print(f"verify failed: {label}", file=sys.stderr)
-            return 1
+            print(f"SMOKE FAILED: {label}", file=sys.stderr)
+            failed.append(label)
+
+    if failed:
+        print(f"SMOKE SUMMARY: failed = {', '.join(failed)}", file=sys.stderr)
+        return 1
 
     print("all build checks OK")
     return 0
