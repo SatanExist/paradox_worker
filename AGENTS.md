@@ -8,8 +8,11 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 
 ## С чего начать
 
+0. **`@memory-bank/roadmap.md`** — 🧭 **ГЛАВНЫЙ ПЛАН:** фазы Ф0–Ф7, целевая карта парка, что нужно от юзера
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
-1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0 Hi3DGen; MCP last
+1a. **`@memory-bank/netParkProgram.md`** — парк 3D-сетей, гейт приёмки новой сети, условия возврата закрытых
+1a2. **`@memory-bank/netParkResearch2026.md`** — **числа под план:** 3D Arena Elo, лицензии, доступность весов, ловушки
+1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0 Hi3DGen 🔴 закрыт 2026-08-20; MCP last
 2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
 3. **`@memory-bank/t2InternetAudit.md`** — **как правильно T2** (официалы vs обзоры vs наш рыцарь; стоп кругам)
 4. **`@memory-bank/t2FinishPlan.md`** — **дожим T2** (prod recipe, side/back pass, tex; Hi3DGen после)
@@ -47,6 +50,12 @@ python scripts/cleanup_endpoints.py   # audit GPU list + idleTimeout (--apply to
 docker build -t paradox .             # v1 worker image
 docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
 docker build -f Dockerfile.hi3dgen -t paradox-hi3dgen . # Hi3DGen mesh (CI → :hi3dgen-sha-*)
+docker build -f Dockerfile.pixal3d -t paradox-pixal3d . # Pixal3D pixel-aligned (CI → :pixal3d-sha-*)
+python test_req_pixal3d.py --image-url "<img>" --resolution 1024 --save preview_textures/f2_pixal3d_knight.glb
+python scripts/f2_recon_space.py --net triposr --subject knight # Ф2 разведка через HF Spaces
+python scripts/f2_space_status.py # живы ли демо кандидатов и на каком железе
+python scripts/f2_check_weights.py # доступ к весам + размеры репозиториев
+python scripts/f2_capacity.py # RunPod: volumes и эндпоинты (сколько места под парк)
 docker build -f Dockerfile.texture -t paradox-texture .    # mesh paint image
 docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow texture
 ```
@@ -55,9 +64,15 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 
 | Файл | Назначение |
 |------|------------|
+| **`memory-bank/roadmap.md`** | 🧭 **Главный roadmap:** Ф0 среда → Ф1 микро → Ф2 риг → Ф3 части → Ф4 fast tier → Ф5 реальные фото → Ф6 tex → Ф7 MCP |
 | `memory-bank/projectbrief.md` | Зачем существует проект |
+| `memory-bank/netParkProgram.md` | **Парк 3D-сетей:** инвентарь, гейт приёмки, план шаги 1–6, условия возврата закрытых сетей |
+| `memory-bank/netParkResearch2026.md` | **Исследование 2026-08-20:** 3D Arena Elo, откуда миф «Hi3DGen лучший», Direct3D-S2 (MIT, веса, 1024³), ловушка Sparc3D, лицензия Hunyuan |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
-| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0 Hi3DGen → tex на новом меше → RVG; MCP last |
+| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0 Hi3DGen 🔴 закрыт → остаток трека ▲ (RVG / MVPainter); MCP last |
+| `scripts/pixal3d_n2_spike.md` | **N2 Pixal3D:** почему первая, дельта архитектуры, файлы, ops-чеклист, гейт |
+| `Dockerfile.pixal3d` | Pixal3D image: T2-стек + их форк + MoGe (ничего нового не компилируется) |
+| `worker_pixal3d.py` | RunPod handler: image → камера (MoGe) → pixel-aligned mesh + PBR GLB |
 | `Dockerfile.hi3dgen` | Hi3DGen mesh worker image (volume weights) |
 | `worker_hi3dgen.py` | RunPod handler: image → normal-bridge mesh GLB |
 | `memory-bank/sideBackUnblock.md` | **Side/Back unblock** — A/B/C после тупика MIT→T2 |

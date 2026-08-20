@@ -1,8 +1,39 @@
 # H0 spike — Hi3DGen (1-photo high-fidelity geometry)
 
-> **Статус:** 🟡 **H0e = тот же Space `app.py`, clay всё ещё мыло.** Не сломанный вызов. Сетка = TRELLIS FlexiCubes **256³**; обзоры смотрят Preview nvdiffrast + другие входы. Метод открыт до same-image на HF Space.  
+> **Статус:** 🟡 **ПЕРЕСТАВЛЕН 2026-08-20 (не закрыт).** Как путь к качеству — soft-NO-GO: файнтюн **TRELLIS v1** с extract 256³, same-image на официальном Space дал то же мыло, в 3D Arena **11-е место из 19** (Elo 1207, win 47.7%). Как **быстрый тир геометрии ≈8.5 с** — оставляем в парке, воркер уже развёрнут. Условия возврата к качеству: `netParkProgram.md` шаг 6. Исследование с числами: `netParkResearch2026.md`.  
 > **План:** `memory-bank/netsTexToolsPlan.md`  
 > **Не путать с** TRELLIS.2 worker (`worker_trellis2.py`). Это отдельный стек.
+
+## Вердикт H0 (2026-08-20) — почему закрыли
+
+Вопрос был: «обзоры обещали, что Hi3DGen круче Trellis2 — почему у нас мыло, тот ли это Hi3DGen».
+
+**Тот.** Образ = клон Space по пину `e574b11` (CI падает при несовпадении SHA), веса `trellis-normal-v0-1`, тот же `generate_3d`.
+
+| Проверка 2026-08-20 | Результат |
+|---------------------|-----------|
+| **Same-image на официальном Space** (`ref_gold_armor_bust.png`, дефолты, YOSO) | 407k verts / 19.5 MB, **то же мыло** на льве и кромках. Наш YOSO: 408k / 21.4 MB, NiRNE: 21.2 MB |
+| Есть ли более свежий меш-чекпойнт у Stable-X | **Нет.** `trellis-normal-v0-1` (2025-03) — единственный, и он наш |
+| Куда ушли авторы | `trellis-vggt-v0-1` (09.2025) → **`trellis-vggt-v0-2`** (10.2025), lib `reconviagen`. Мы уже на v0-2 (`worker_reconviagen.py`) |
+
+**Разгадка «круче Trellis2»:** бумага (arXiv 2503.22236, 03.2025) сравнивает себя с **Trellis-RGB / Hunyuan / Dora**, т.е. с TRELLIS **v1** на RGB-входе. Это «тюнингованный v1 > базовый v1», а не «> TRELLIS.2». Мы читали обзоры весны 2025 как обещание против v2.
+
+**Почему приём с T2 не переносится:** T2 разогнали переключением `pipeline_type` (`512 / 1024 / 1024_cascade / 1536_cascade`, `worker_trellis2.py:43`). У Hi3DGen такой ручки нет вообще: occupancy 16³ → SLAT 64³ → extract 256³, без каскада; 512 ≈ 520 GB VRAM ([#52](https://github.com/Stable-X/Stable3DGen/issues/52)). Bust-кроп (7.4 → 21 MB) и NiRNE были последние два честных рычага — оба отработаны.
+
+**Почему в шоукейсах иначе:** (1) класс входа — normal bridging живёт на высокочастотной нормали (камень, статуи, ткань, механика, реальные фото); гладкое отражающее золото не даёт рельефа, мостить нечего; (2) подача — PBR/свет/подставки, а Hi3DGen отдаёт голую геометрию.
+
+**Итог:** Hi3DGen не default и не апгрейд над T2. Остаётся в ящике под фото/статуи. За ультра-геометрией персонажа — T2 `1536_cascade`; за следующим шагом — RVG на реальных ракурсах.
+
+### Внешняя проверка (2026-08-20, `netParkResearch2026.md`)
+
+| Источник | Что даёт |
+|----------|----------|
+| [3D Arena](https://arxiv.org/html/2506.18787v1), 123k голосов, 19 моделей | Hi3DGen **11-е**, Elo 1207, win 47.7% — **ниже TRELLIS v1** (1306). Поправка в его пользу: текстурированные получают +144 Elo просто за текстуру, а он без текстур |
+| [Direct3D-S2](https://arxiv.org/html/2505.17412v1) абляция разрешений | 256³/384³ = «limited geometric details and misalignment», 512³ = «significantly enhanced high-frequency», 1024³ = «sharper edges». Hi3DGen сидит на **256³** → наше мыло опубликовано третьей стороной как эффект разрешения |
+| Та же бумага, таблица сравнения | Hi3DGen стоит **бейзлайном, который превосходят** |
+| Миф «лучший» | (1) свой user study против Hunyuan-2.0 / Dora / Clay / Tripo-2.5 / Trellis — все 2024–нач.2025; (2) [SECourses туториал](https://github.com/FurkanGozukara/Stable-Diffusion/wiki/Hi3DGen-Full-Tutorial-With-Ultra-Advanced-App-to-Generate-the-Very-Best-3D-Meshes-from-Static-Images) «the very best right now» — а его Ultra App **не апстрим** ([#50](https://github.com/Stable-X/Stable3DGen/issues/50)) |
+| Замер скорости (форум) | Hi3DGen **8.5 с** / ~5 MB голой геометрии против TRELLIS.2 **167 с** / ~35 MB → его настоящая ниша у нас = быстрый тир |
+| Непроверенный класс входа | DetailVerse + «works best with 1024-pixel»: сеть заточена под детально-плотные объекты. Реальное фото / камень мы **не гоняли** — это и есть условие возврата |
 
 ## Как пользоваться (бумага + `app.py` + issues)
 

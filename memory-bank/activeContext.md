@@ -1,19 +1,21 @@
 # Активный контекст
 
+> 🧭 **Главный план — `@memory-bank/roadmap.md`** (фазы Ф0–Ф7). Этот файл = статус «сейчас».
 > **Как пользоваться:** в начале каждого нового чата — `@memory-bank/activeContext.md`.
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-19** — Hi3DGen как T2: клон **демо** (HF Space), не GitHub HEAD. Next = push → CI → Release `s15aqi9lxs` → smoke.
+Последнее обновление: **2026-08-20** — **H0 Hi3DGen закрыт** (v1-файнтюн против нашего v2, потолок 256³, same-image на Space = то же мыло). Ультра-персонаж остаётся T2 `1536_cascade`; преемник Hi3DGen = RVG `trellis-vggt-v0-2`.  
+**Новая рамка:** `netParkProgram.md` (план шаги 1–6) + `netParkResearch2026.md` (числа). Hi3DGen **переставлен, не закрыт**: качество — нет (3D Arena 11/19, Elo 1207, ниже TRELLIS v1), быстрый тир 8.5 с — да. Микро-геометрия уходит к **Direct3D-S2** (MIT, веса на HF, `sdf_resolution=1024`). Sparc3D — ловушка (весов нет), Hunyuan — EU вне лицензии.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
 | **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | H0d: образ = Space `Stable-X/Hi3DGen` (rembg + FlexiCubes). T2 v21 не трогать |
-| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25 |
-| **Наш next** | push `Dockerfile.hi3dgen` → CI → Release только `s15aqi9lxs` → smoke seed 42 |
+| **Мы / paradox_worker** | H0 закрыт. Выбираем следующий пункт ▲: MVPainter (гейт W3a) или RVG (нужны реальные 2–4 фото). T2 v21 не трогать |
+| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen — не переоткрывать** |
+| **Наш next** | **Шаг 1** = N1 T2 `1536_cascade` на bust-кропе (один джоб). Дальше по `netParkProgram.md`: Direct3D-S2 → TokenRig (риг) → HoloPart (части) → быстрый тир на Hi3DGen |
 
 ---
 
@@ -41,11 +43,11 @@
 | 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
 | — | Studio UI | **сейчас у товарища** | сайт; мы не верстаем |
 | 2 | **Draco** | **skip** | не в worker; вернёмся только если сайт реально тормозит |
-| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | Hi3DGen → HF-parity (rembg); потом RVG на реальных фото |
+| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | Hi3DGen отработан и закрыт → остаток: RVG на реальных фото / MVPainter |
 | ▼ | **MCP / Blender / Unreal** | **низший приоритет** | тот же `studio_api`; не начинать, пока живы сети/tex |
 | 4 | **MVPainter** | внутри ▲ | только если W3a polish мало |
 | * | RVG | внутри ▲, P4.0 | только реальные 2–4 фото |
-| 5 | **Hi3DGen** | внутри ▲ | как T2: клон демо (HF Space), не GitHub MC |
+| 5 | ~~**Hi3DGen**~~ | 🔴 **закрыт 2026-08-20** | v1-файнтюн против нашего v2; потолок 256³; преемник = RVG `trellis-vggt-v0-2` |
 
 Один трек за раз. lab API жив на :8787. Generate в лабе жжёт GPU — только по кнопке.
 
@@ -997,6 +999,14 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-08-20** веч | Pedrokita | **Ф0 разблокирован:** шелл падал не из-за терминала, а из-за песочницы Windows (`workspace_readwrite` не поддерживается) → запускать вне неё. Записано в `techContext.md`. **N1 прогон 1** (`d0e8cc66…-e2`): ultra → **CUDA OOM на 4090** → авто-даунгрейд в `1024_cascade`. Итог bust: 416 788 verts / 78.1 MB против baseline полный рост ultra 526 663 / 92.3 MB → плотность выросла ~2× на более слабом пайплайне. $0.30, 14 мин | глаза на `t2_bust_ultra.glb`; для честного 1536 нужен GPU >24 GB |
+| **2026-08-20** веч | Pedrokita | **Главный roadmap** `roadmap.md`: Ф0 среда → Ф1 микро (N1 bust → Direct3D-S2) → Ф2 риг TokenRig → Ф3 части HoloPart → Ф4 fast tier на Hi3DGen → Ф5 реальные фото → Ф6 tex → Ф7 MCP. Целевая карта парка + инварианты | Ф0: перезапуск терминала, потом N1 |
+| **2026-08-20** веч | Pedrokita | **N2 Pixal3D: код интеграции готов** (`Dockerfile.pixal3d`, `worker_pixal3d.py`, `docker/smoke_pixal3d_imports.py`, `build-pixal3d.yml`, `test_req_pixal3d.py`, спайк `scripts/pixal3d_n2_spike.md`). Решение без PRO — сразу своя инфра. **Дельта архитектуры найдена без GPU:** у нас `SLatFlowModel`, у них `ElasticSLatFlowModel` + `image_attn_mode: proj` + `proj_in_channels: 2048` → шорткат через `TRELLIS2_MODEL_ID` отменён, нужен их форк (ветка **`master`**, `main` не существует). Новый образ **ничего не компилирует**: весь нативный стек T2 переиспользован. Новое требование входа — угол камеры от **MoGe-2** (или `manual_fov`). Веса 22.4 GB, `gated=False`. Ёмкость: 5 volumes / 260 GB, все нужные 5 сетей = 57.5 GB | **нужно разрешение на commit+push** → CI соберёт образ, затем volume + эндпоинт |
+| **2026-08-20** веч | Pedrokita | **Потолок бесплатного ZeroGPU найден.** Токен (из переменных RunPod) добавлен в `.env`, работает. Но лимитов два: суточная квота ~5 мин **и макс. длительность одного вызова ~120 с**. Pixal3D `generate_3d` (120 с) проходит, а `extract_glb_api` объявлен на **240 с** → не запустится никогда, снижение `decimation_target`/`texture_size` не помогает (длительность в декораторе). Вылечили попутно `403` на служебной превьюшке через `Client(download_files=False)`. **Итог: тяжёлые сети бесплатно на демо не проверить** → либо HF PRO (25 мин/сутки), либо сразу своя инфра | решение юзера: PRO vs своя инфра для Pixal3D |
+| **2026-08-20** веч | Pedrokita | **Ф2 волна 0 стартовала.** Харнесс `scripts/f2_recon_space.py` + `f2_space_status.py`. **TripoSR прогнан:** рыцарь 16.4 с, 45 123 verts / 1.7 MB → черновой тир подтверждён. **Pixal3D API = наш T2** (`ss_guidance_*`, `shape_slat_*`, `tex_slat_*`, `extract_glb_api`) → бэкенд TRELLIS.2 подтверждён контрактом, воркер ляжет почти 1:1. **Демо мертвы:** Direct3D-S2 на `cpu-basic`, Step1X-3D `PAUSED` → только своя инфра. TripoSG отдаёт пустой `RuntimeError` (похоже баг демо). Анонимная ZeroGPU-квота ~5 мин/сутки — съедена | **нужен `HF_TOKEN`**, иначе волна 0 стоит до сброса квоты |
+| **2026-08-20** веч | Pedrokita | **Roadmap пересобран под директиву «сначала ширина парка».** Ф1 закрыт PASS (глаза: «совсем другое дело»). Ф2 = ширина: волна 0 — прогон нашего рыцаря через официальные демо 6 сетей без своей инфры; волна 1 — интеграция по возрастанию цены. Риггинг сдвинут в Ф6. Новые кандидаты: **Pixal3D** (MIT, SIGGRAPH'26, `main` **на бэкенде TRELLIS.2** → дешевле всех в интеграции, но в карточке весов `extra_gated_eu_disallowed`), **SAM 3D Objects** (SAM Materials, комм. ок, реальные захламлённые фото + промпт; рядом SAM 3D Body с MHR-ригом), Step1X-3D (Apache-2.0, форма+текстура), TripoSG (MIT, >8 GB) | **Блокер ширины: нужен бесплатный `HF_TOKEN`** — без него ZeroGPU-квота рубит все демо |
+| **2026-08-20** веч | Pedrokita | **Исследование парка сетей** → `netParkProgram.md` + `netParkResearch2026.md`. 3D Arena: Hi3DGen 11/19 (Elo 1207) — миф «лучший» тянется из его user study против бейзлайнов 2024 и туториала SECourses. Абляция Direct3D-S2 подтвердила наш диагноз 256³. **Direct3D-S2** = MIT + веса + `sdf_resolution=1024` → главный кандидат на микро. **Sparc3D** = ловушка (весов нет, реклама Hitem3D). **Hunyuan** = EU вне Territory (цитата). Hi3DGen **переставлен** в быстрый тир 8.5 с | Шаг 1: N1 T2 bust-кроп |
+| **2026-08-20** | Pedrokita | **H0 отработан.** H0f bust + H0g NiRNE прогнаны; тот же bust на официальном Space = то же мыло (407k). Разгадка: Hi3DGen = файнтюн **TRELLIS v1** (бумага сравнивает с Trellis-RGB/Hunyuan/Dora), наш T2 = TRELLIS.2-4B. Каскада `pipeline_type` у Hi3DGen нет, extract 256³ фикс. Свежего чекпойнта у Stable-X нет; преемник = `trellis-vggt-v0-2` (RVG, уже стоит) | трек ▲ без Hi3DGen как качества |
 | 2026-08-19 | Pedrokita | H0c GitHub = комок. Подключаем Hi3DGen **как T2**: clone HF Space (rembg+FlexiCubes), тонкий worker | push → CI → Release `s15aqi9lxs`; smoke seed 42 |
 | 2026-08-19 | Pedrokita | H0b1 slat12 = то же мыло (~7.5 MB). Рецепт: ss=50/slat=6; рычаг = FlexiCubes не MC | H0c прогнан, глаза soft-NO-GO |
 | 2026-08-19 | Pedrokita | H0 smoke OK; глаза: низкое качество, но орнаменты сзади/сбоку; свой volume `qm6i6st1tr` | H0b1 slat=12 (прогнан, не densify) |

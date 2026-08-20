@@ -87,7 +87,7 @@
 | # | Задача | Когда |
 |---|--------|-------|
 | P4.0 | **ReconViaGen** — MASTER `reconViaGenMvRefiner.md` | fusion для **реальных** 2–4 фото; **не** Meshy с 1 кадра. Image `a48c0e3` live; `mesh` SIGSEGV; 1-photo GLB ≠ ultra |
-| P4.1 | Hi3DGen / TripoSG / Direct3D-S2 (C2) | **единственный оставшийся bet** на 1-photo back; не img2mv |
+| P4.1 | ~~Hi3DGen~~ / TripoSG / Direct3D-S2 (C2) | Hi3DGen 🟡 переставлен 2026-08-20 в быстрый тир (v1-файнтюн, потолок 256³ — как качество не годится). Форма: Pixal3D / Direct3D-S2 / TripoSG — через гейт `netParkProgram.md`, порядок в `roadmap.md` Ф2 |
 | P4.2 | Не кормить weak synth в naive T2 / RVG | locked; класс frozen |
 | P4.3 | Лицензии / EU prod | Hunyuan/Era3D/Zero123++ — нет |
 

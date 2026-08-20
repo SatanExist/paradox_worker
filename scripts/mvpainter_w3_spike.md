@@ -14,7 +14,7 @@
 | Albedo | да, с **запечённым светом** фото | delight |
 | Metallic / Roughness | да (B≈0.99 почти везде) | разделение ткань vs золото |
 | Normal / AO | нет | рельеф орнамента в шейдере |
-| Geometry micro | макро ок | львы не скульптура — это **Hi3DGen**, не paint |
+| Geometry micro | макро ок | львы не скульптура. ~~Hi3DGen~~ 🔴 закрыт 2026-08-20 → остался только T2 на большем разрешении (N1 bust-кроп, `netsTexToolsPlan.md`) |
 
 ## Два этажа (не путать)
 
@@ -22,7 +22,7 @@
 |------|-----|-----|--------|
 | **W3a CPU** | retinex albedo + bump-from-albedo на **тех же UV** | $0 | сразу; `scripts/glb_delight_pbr.py` |
 | **W3b MVPainter** | новые виды → `infer_pbr` (basecolor/M/R) → `infer_paint --use_pbr` | **≥40GB**, Blender 4.2 | только если W3a слабо И нужен learned delight |
-| **P4.1 Hi3DGen** | другая **форма** (normal-bridge) | отдельный стек | только если снова нужен микро-меш |
+| ~~**P4.1 Hi3DGen**~~ | другая **форма** (normal-bridge) | отдельный стек | 🔴 **закрыт 2026-08-20** — v1-файнтюн, потолок 256³ |
 
 MVPainter **не** обещает tangent normal map (README: basecolor + metallic + roughness).  
 Bump W3a — дешёвый фейк из albedo; не путать со скульптурой Hi3DGen.

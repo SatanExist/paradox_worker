@@ -426,6 +426,21 @@ python test_req.py
 
 TRELLIS inference работает **только внутри Docker на RunPod**, не локально (если только нет GPU-окружения как в Dockerfile).
 
+### Windows: агентский шелл падает молча (инцидент 2026-08-20)
+
+Симптом: любая команда возвращает «no exit status», при этом файлы читаются и правятся нормально. Легко принять за смерть терминала и уйти перезапускать Cursor — не помогает.
+
+Настоящая причина видна только в файле терминала:
+
+```
+error: "Sandbox policy 'workspace_readwrite' is not supported on this system.
+Reason: Windows sandbox helper only provides network proxy, not filesystem isolation"
+```
+
+**Лечение:** запускать команды **вне песочницы** (у агента — `required_permissions: ["all"]`). Диагностика: спавнить команду в фон и читать файл терминала — заголовок содержит настоящую ошибку, которой нет в ответе инструмента.
+
+Сопутствующее: если workspace слетел в `none`, корень возвращается через app-control `move_agent_to_root`, руками папку открывать не нужно.
+
 ## Деплой образа
 
 | Тег | Когда |
