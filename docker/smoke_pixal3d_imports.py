@@ -53,14 +53,27 @@ def verify_built_package(dist_name: str, import_name: str) -> None:
 
 
 def verify_pixal3d() -> None:
-    """The whole point of this image: the fork's own pipeline and proj mixin."""
-    from pixal3d.pipelines import Pixal3DImageTo3DPipeline
-    from pixal3d.trainers.flow_matching.mixins.image_conditioned_proj import (
-        DinoV3ProjFeatureExtractor,
-    )
+    """The whole point of this image: the fork's own pipeline and proj mixin.
 
-    print(f"Pixal3DImageTo3DPipeline: {Pixal3DImageTo3DPipeline.__module__}: OK")
-    print(f"DinoV3ProjFeatureExtractor: {DinoV3ProjFeatureExtractor.__module__}: OK")
+    Checked on the source tree rather than by importing them. Pulling the
+    pipeline in executes triton kernels, and triton refuses to initialise
+    without a GPU driver, which a CI runner does not have. What a build can
+    still prove is that the right fork landed on PYTHONPATH.
+    """
+    import pixal3d  # noqa: F401  - proves PYTHONPATH, stays clear of the lazy registry
+
+    root = _package_root("pixal3d")
+    wanted = {
+        root / "pipelines" / "__init__.py": "Pixal3DImageTo3DPipeline",
+        root / "trainers" / "flow_matching" / "mixins" / "image_conditioned_proj.py":
+            "class DinoV3ProjFeatureExtractor",
+    }
+    for path, needle in wanted.items():
+        if not path.is_file():
+            raise FileNotFoundError(f"missing {path}")
+        if needle not in path.read_text(encoding="utf-8"):
+            raise RuntimeError(f"{needle!r} not found in {path}")
+        print(f"{path.relative_to(root)} has {needle!r}: OK")
 
 
 def verify_moge() -> None:

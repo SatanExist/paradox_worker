@@ -33,11 +33,16 @@ Pixal3D нужен **угол зрения камеры**: он оценивае
 |------|------|
 | `Dockerfile.pixal3d` | образ: T2-стек без изменений + клон `TencentARC/Pixal3D@master` + MoGe. `PYTHONPATH` включает и Pixal3D, и TRELLIS.2 (o-voxel живёт в дереве T2) |
 | `worker_pixal3d.py` | handler: image_url → preprocess → камера (MoGe / `manual_fov`) → `pipeline.run(pipeline_type=f"{resolution}_cascade")` → `o_voxel.postprocess.to_glb` → volume + R2/base64 |
-| `docker/smoke_pixal3d_imports.py` | build-time проверка: скомпилированные .so + **их** `Pixal3DImageTo3DPipeline` и `DinoV3ProjFeatureExtractor` + MoGe |
+| `docker/smoke_pixal3d_imports.py` | build-time проверка: скомпилированные .so + MoGe + наличие **их** `Pixal3DImageTo3DPipeline` и `DinoV3ProjFeatureExtractor` в дереве |
 | `.github/workflows/build-pixal3d.yml` | → `ghcr.io/satanexist/paradox_worker:pixal3d-sha-*` |
 | `test_req_pixal3d.py` | async submit + poll + сохранение GLB под Review |
 
 Ветки апстрима: `master` (версия на TRELLIS.2, её и берём), `paper` (на Direct3D-S2), `pr-12`. Ветки `main`, о которой пишет README, **не существует** — в Dockerfile зашит `master` через `ARG PIXAL3D_REF`.
+
+### Две мины в сборке (найдены прогонами CI 2026-08-20)
+
+1. **`huggingface_hub` 1.x.** Голый `pip install huggingface_hub` теперь резолвится в ветку 1.x, а `transformers` её не принимает и падает на импорте. Пин `>=0.34,<1.0`, и **повторно последним шагом** — MoGe/diffusers тянут обратно. Подробности и следствия для остальных образов: `memory-bank/techContext.md`.
+2. **triton требует GPU-драйвер на импорте.** `pixal3d.pipelines` лениво тянет `flex_gemm` → triton autotune → `RuntimeError: 0 active drivers`. На CI-раннере GPU нет, поэтому **импортировать пайплайн в билд-тайме нельзя в принципе**. Смоук проверяет наличие классов по дереву исходников; настоящий импорт впервые случится на RunPod.
 
 ## Ops-чеклист (не выполнено)
 
