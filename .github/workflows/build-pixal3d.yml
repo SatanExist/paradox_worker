@@ -58,6 +58,10 @@ jobs:
           file: Dockerfile.pixal3d
           push: true
           provenance: false
+          # Without a cache a one-line worker change rebuilds the whole native
+          # stack, ~35 minutes. The worker is the layer we iterate on most.
+          cache-from: type=registry,ref=ghcr.io/satanexist/paradox_worker:pixal3d-buildcache
+          cache-to: type=registry,ref=ghcr.io/satanexist/paradox_worker:pixal3d-buildcache,mode=min
           build-args: |
             PARADOX_BUILD_SHA=${{ github.sha }}
             SMOKE_FATAL=${{ github.event.inputs.smoke_fatal || '1' }}

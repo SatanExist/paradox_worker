@@ -62,9 +62,58 @@ _PIPELINE = None
 
 
 def _dino_model_name() -> str:
+    """Local converted weights if the volume has them, else a non-gated mirror."""
+    local = Path(
+        os.environ.get(
+            "PIXAL3D_DINOV3_PATH", "/runpod-volume/dinov3-vitl16-pretrain-lvd1689m"
+        )
+    )
+    if (local / "config.json").is_file():
+        return str(local)
     return os.environ.get(
         "PIXAL3D_DINOV3_MODEL", "camenduru/dinov3-vitl16-pretrain-lvd1689m"
     )
+
+
+def _rewrite_pipeline_json(model_path: str) -> None:
+    """Swap the two gated repos upstream's pipeline.json points at.
+
+    `facebook/dinov3-*` and `briaai/RMBG-2.0` both need an accepted licence, and
+    RMBG is CC BY-NC on top of that. Same substitution worker_trellis2.py makes.
+
+    The file usually arrives as a symlink into the HF cache blobs, so it is
+    unlinked before writing: overwriting in place would corrupt the blob shared
+    with any other snapshot.
+    """
+    import json
+
+    pipeline_json = Path(model_path) / "pipeline.json"
+    if not pipeline_json.is_file():
+        print(f"pipeline.json not found under {model_path}; skip rewrites")
+        return
+
+    data = json.loads(pipeline_json.read_text(encoding="utf-8"))
+    args = data.get("args") or data
+    changed = False
+
+    for key, wanted in (
+        ("image_cond_model", _dino_model_name()),
+        ("rembg_model", os.environ.get("PIXAL3D_REMBG_MODEL", "ZhengPeng7/BiRefNet")),
+    ):
+        entry = args.get(key)
+        if not isinstance(entry, dict):
+            continue
+        entry_args = entry.setdefault("args", {})
+        old = entry_args.get("model_name")
+        if old != wanted:
+            entry_args["model_name"] = wanted
+            print(f"{key} model_name: {old!r} -> {wanted!r}")
+            changed = True
+
+    if changed:
+        if pipeline_json.is_symlink():
+            pipeline_json.unlink()
+        pipeline_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _low_vram() -> bool:
@@ -89,6 +138,8 @@ def _load_pipeline():
         repo_id=MODEL_ID,
         token=os.environ.get("HF_TOKEN") or None,
     )
+    _rewrite_pipeline_json(model_path)
+
     print(f"Loading Pixal3D from {model_path}...")
     pipeline = Pixal3DImageTo3DPipeline.from_pretrained(model_path)
 
