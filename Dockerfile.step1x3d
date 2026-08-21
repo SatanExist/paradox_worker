@@ -71,7 +71,13 @@ RUN pip install --no-cache-dir \
       "pytorch-lightning==2.2.4" "lightning-utilities==0.11.2" \
       "rembg==2.0.65" "onnxruntime==1.21.0" \
       "easydict==1.13" "kornia==0.8.0" "scikit-image==0.23.2" \
-      "imageio==2.34.1" "typeguard"
+      "imageio==2.34.1" "typeguard" \
+      "beautifulsoup4==4.12.3"
+
+# torch-cluster is imported lazily when VAE downsample is on; install the
+# matching cu124 wheel so a Geometry checkpoint that needs fps does not crash.
+RUN pip install --no-cache-dir torch-cluster \
+      -f https://data.pyg.org/whl/torch-2.5.1+cu124.html
 
 # diffusers / transformers can pull huggingface_hub 1.x back in.
 RUN pip install --no-cache-dir "huggingface_hub>=0.26.2,<1.0"

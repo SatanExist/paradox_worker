@@ -46,10 +46,17 @@ def verify_cpu_imports() -> None:
     import rembg  # noqa: F401
     import torch
     import trimesh  # noqa: F401
+    from bs4 import BeautifulSoup  # noqa: F401
     from transformers import BitImageProcessor  # noqa: F401
 
     print(f"torch=={torch.__version__} cuda_built={torch.version.cuda}: OK")
-    print("pymeshlab/rembg/trimesh/transformers: OK")
+    print("pymeshlab/rembg/trimesh/bs4/transformers: OK")
+
+
+def verify_pipeline_import() -> None:
+    from step1x3d_geometry.models.pipelines.pipeline import Step1X3DGeometryPipeline
+
+    print(f"Step1X3DGeometryPipeline ({Step1X3DGeometryPipeline.__module__}): OK")
 
 
 def main() -> int:
@@ -58,6 +65,7 @@ def main() -> int:
         ("no_texture_stack", verify_no_texture_stack),
         ("inference_init", verify_inference_init),
         ("cpu_imports", verify_cpu_imports),
+        ("pipeline_import", verify_pipeline_import),
     ]
     failed: list[str] = []
     for label, check in checks:
