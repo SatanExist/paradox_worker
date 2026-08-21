@@ -1,6 +1,6 @@
 # N3 — Direct3D-S2 (MIT): микро-геометрия, `sdf_resolution=1024`
 
-> **Статус:** 🟡 scaffold. Ждём commit+push → CI образ → endpoint.
+> **Статус:** 🟡 CI #1 упала на GPU-less import torchsparse (сами `.so` собрались). Фикс смоука → повторный push.
 > Место в плане: `memory-bank/roadmap.md` Ф2 приоритет 2, `netParkProgram.md` шаг 2.
 > Pixal3D как quality закрыт 2026-08-21 — это **другой класс** (sparse SDF 1024³), не ещё один TRELLIS.2.
 
@@ -51,7 +51,7 @@ mesh.export("out.glb")
 
 ## Ops-чеклист
 
-1. ⏳ commit + push → CI (запас 2–3 итерации: torchsparse капризный)
+1. ⏳ CI #1 (`17253e4`) собрала torchsparse за 16 мин и voxelize, но смоук упал: `import torchsparse` зовёт `torch.cuda.get_device_capability()` без драйвера на раннере. Смоук теперь проверяет `.so` без импорта.
 2. ⏳ `scripts/direct3ds2_create_endpoint.py --apply` после зелёного тега
 3. ⏳ A/B рыцарь `ref_gold_armor_cutout.png`, **сразу 1024**, без ручек. Не даунгрейдить в 512 «чтобы влезло»
 4. Глаза: лев на груди / палды vs `armor_t2_v17_realistic.png.glb`

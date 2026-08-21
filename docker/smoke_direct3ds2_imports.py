@@ -41,14 +41,20 @@ def _dist_version(dist_name: str) -> str:
 
 
 def verify_built_package(dist_name: str, import_name: str) -> None:
+    """Prove the extension is on disk. Do not import torchsparse: its
+    backends.init() calls torch.cuda.get_device_capability() and dies on a
+    GPU-less CI runner (same class of landmine as Pixal3D + triton).
+    """
     version = _dist_version(dist_name)
-    module = __import__(import_name)
-    origin = getattr(module, "__file__", None)
-    root = pathlib.Path(origin).parent if origin else _package_root(import_name)
+    root = _package_root(import_name)
     shared_objects = list(root.rglob("*.so"))
     if not shared_objects and import_name != "xformers":
         raise RuntimeError(f"{import_name}: no compiled .so under {root}")
     print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
+
+    if import_name == "torchsparse":
+        return
+    __import__(import_name)
 
 
 def verify_pipeline_tree() -> None:
