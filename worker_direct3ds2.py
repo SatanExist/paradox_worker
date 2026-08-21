@@ -107,7 +107,6 @@ def handler(job):
     seed = int(job_input.get("seed", 42))
     remesh = bool(job_input.get("remesh", False))
     simplify_ratio = float(job_input.get("simplify_ratio", 0.95))
-    remove_interior = bool(job_input.get("remove_interior", True))
     mc_threshold = float(job_input.get("mc_threshold", 0.2))
 
     image_path = None
@@ -120,13 +119,14 @@ def handler(job):
         image_path = _download_image(image_url)
         generator = torch.Generator(device="cuda").manual_seed(seed)
         print(f"Running Direct3D-S2 sdf_resolution={resolution} seed={seed} remesh={remesh}")
+        # Upstream __call__ does not take remove_interior: 512 keeps interior,
+        # 1024 always strips it inside inference().
         mesh = pipeline(
             image_path,
             sdf_resolution=resolution,
             generator=generator,
             remesh=remesh,
             simplify_ratio=simplify_ratio,
-            remove_interior=remove_interior,
             mc_threshold=mc_threshold,
         )["mesh"]
         infer_done = time.time()
