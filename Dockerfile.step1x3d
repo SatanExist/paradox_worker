@@ -84,7 +84,12 @@ from pathlib import Path
 p = Path("/app/Step1X-3D/step1x3d_geometry/__init__.py")
 text = p.read_text(encoding="utf-8")
 old = "from . import data, models, systems"
-new = "from . import models  # inference-only: skip training data/systems"
+new = (
+    "# inference-only image: do not import data/models/systems here.\n"
+    "# Eager models import circularly breaks "
+    "# `from step1x3d_geometry.models.pipelines.pipeline import ...`.\n"
+    "# from . import data, models, systems"
+)
 if old not in text:
     raise SystemExit(f"expected {old!r} in {p}")
 p.write_text(text.replace(old, new, 1), encoding="utf-8")

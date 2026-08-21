@@ -31,10 +31,13 @@ def verify_no_texture_stack() -> None:
 def verify_inference_init() -> None:
     init = REPO / "step1x3d_geometry" / "__init__.py"
     text = init.read_text(encoding="utf-8")
-    if "from . import data, models, systems" in text:
+    live = [
+        line
+        for line in text.splitlines()
+        if line.strip() == "from . import data, models, systems"
+    ]
+    if live:
         raise RuntimeError("geometry __init__ still imports training data/systems")
-    if "from . import models" not in text:
-        raise RuntimeError("geometry __init__ does not import models")
     print("inference-only package init: OK")
 
 
