@@ -1,0 +1,104 @@
+# Direct3D-S2 — sparse SDF image-to-3D (sdf_resolution=1024).
+# Separate stack from TRELLIS.2 / Pixal3D: torch 2.5.1 cu121, transformers 4.40.2,
+# torchsparse compiled from source. Do NOT swallow a torchsparse failure.
+# Tags: ghcr.io/satanexist/paradox_worker:direct3ds2-sha-<short>
+#
+# Weights stay on the T2 network volume (HF_HOME), not in the image.
+
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
+    MAX_JOBS=2 \
+    FORCE_CUDA=1 \
+    TORCHSPARSE_FORCE_CUDA=1 \
+    TORCH_CUDA_ARCH_LIST="8.6;8.9" \
+    PYOPENGL_PLATFORM=egl \
+    PYTHONPATH=/app:/app/Direct3D-S2 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    SPARSE_BACKEND=torchsparse \
+    SPARSE_ATTN_BACKEND=xformers \
+    ATTN_BACKEND=xformers \
+    HF_HOME=/runpod-volume/huggingface_cache \
+    TORCH_HOME=/runpod-volume/torch_hub \
+    DIRECT3DS2_REPO=/app/Direct3D-S2 \
+    DIRECT3DS2_OUTPUT_DIR=/runpod-volume/outputs
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    git-lfs \
+    wget \
+    curl \
+    ca-certificates \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-setuptools \
+    ninja-build \
+    cmake \
+    pkg-config \
+    build-essential \
+    libsparsehash-dev \
+    libcgal-dev \
+    libeigen3-dev \
+    libgl1 \
+    libglib2.0-0 \
+    libegl1 \
+    libgles2 \
+    libglvnd0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel ninja
+
+# Match upstream: torch 2.5.1 + cu121. xformers from the same index (no flash-attn).
+RUN pip install --no-cache-dir \
+      torch==2.5.1 torchvision==0.20.1 xformers \
+      --index-url https://download.pytorch.org/whl/cu121
+
+# huggingface_hub 1.x breaks transformers 4.40. Pin below 1.0 and again last.
+RUN pip install --no-cache-dir \
+      runpod Pillow requests python-dotenv boto3 \
+      "huggingface_hub>=0.23.2,<1.0" \
+      scikit-image trimesh omegaconf tqdm einops "numpy>=1.26,<2" \
+      "transformers==4.40.2" "diffusers>=0.29,<0.32" "triton==3.1.0" \
+      pymeshfix pyvista igraph \
+      timm kornia opencv-python-headless einops safetensors \
+      cython \
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+
+ARG DIRECT3DS2_REF=v1.1.0
+RUN git clone --depth 1 --branch ${DIRECT3DS2_REF} \
+      https://github.com/DreamTechAI/Direct3D-S2.git /app/Direct3D-S2 && \
+    pip install --no-cache-dir --no-deps /app/Direct3D-S2
+
+# Hard fail: without this the sparse VAE/DiT cannot run.
+# mit-han-lab tags stop at v2.0.0; Direct3D-S2 needs current main (same as
+# the authors' Dockerfile). Do not wrap this in `|| true`.
+RUN git clone --depth 1 https://github.com/mit-han-lab/torchsparse.git /tmp/torchsparse && \
+    pip install --no-cache-dir --no-build-isolation /tmp/torchsparse && \
+    rm -rf /tmp/torchsparse
+
+RUN pip install --no-cache-dir --no-build-isolation --no-deps \
+      /app/Direct3D-S2/third_party/voxelize
+
+# diffusers / transformers can pull huggingface_hub 1.x back in.
+RUN pip install --no-cache-dir "huggingface_hub>=0.23.2,<1.0"
+
+COPY docker/smoke_direct3ds2_imports.py /tmp/smoke_direct3ds2_imports.py
+ARG SMOKE_FATAL=1
+RUN python /tmp/smoke_direct3ds2_imports.py || [ "${SMOKE_FATAL}" = "0" ]
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=direct3ds2
+
+COPY worker_direct3ds2.py /app/worker_direct3ds2.py
+COPY runpod_billing.py /app/runpod_billing.py
+
+CMD ["python", "-u", "/app/worker_direct3ds2.py"]

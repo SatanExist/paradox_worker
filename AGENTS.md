@@ -1,9 +1,11 @@
 # paradox_worker — точка входа для агента
 
 RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.  
-Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`.  
-H0 geometry: **Hi3DGen** — `Dockerfile.hi3dgen` / `worker_hi3dgen.py` (отдельный endpoint).  
-Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`.  
+Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`. 
+H0 geometry: **Hi3DGen** — `Dockerfile.hi3dgen` / `worker_hi3dgen.py` (отдельный endpoint). 
+N2 Pixal3D: 🔴 закрыт как quality 2026-08-21 — `Dockerfile.pixal3d` / `worker_pixal3d.py` (idle). 
+N3 Direct3D-S2: sparse SDF 1024³ — `Dockerfile.direct3ds2` / `worker_direct3ds2.py`. 
+Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`. 
 Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.py`.
 
 ## С чего начать
@@ -52,6 +54,8 @@ docker build -f Dockerfile.trellis2 -t paradox-trellis2 .  # quality image
 docker build -f Dockerfile.hi3dgen -t paradox-hi3dgen . # Hi3DGen mesh (CI → :hi3dgen-sha-*)
 docker build -f Dockerfile.pixal3d -t paradox-pixal3d . # Pixal3D pixel-aligned (CI → :pixal3d-sha-*)
 python test_req_pixal3d.py --image-url "<img>" --resolution 1024 --save preview_textures/f2_pixal3d_knight.glb
+docker build -f Dockerfile.direct3ds2 -t paradox-direct3ds2 . # Direct3D-S2 SDF (CI → :direct3ds2-sha-*)
+python test_req_direct3ds2.py --image-url "<img>" --sdf-resolution 1024 --save preview_textures/n3_direct3ds2_knight_1024.glb
 python scripts/f2_recon_space.py --net triposr --subject knight # Ф2 разведка через HF Spaces
 python scripts/f2_space_status.py # живы ли демо кандидатов и на каком железе
 python scripts/f2_check_weights.py # доступ к весам + размеры репозиториев
@@ -70,8 +74,11 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/netParkResearch2026.md` | **Исследование 2026-08-20:** 3D Arena Elo, откуда миф «Hi3DGen лучший», Direct3D-S2 (MIT, веса, 1024³), ловушка Sparc3D, лицензия Hunyuan |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
 | `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0 Hi3DGen 🔴 закрыт → остаток трека ▲ (RVG / MVPainter); MCP last |
-| `scripts/pixal3d_n2_spike.md` | **N2 Pixal3D:** почему первая, дельта архитектуры, файлы, ops-чеклист, гейт |
-| `Dockerfile.pixal3d` | Pixal3D image: T2-стек + их форк + MoGe (ничего нового не компилируется) |
+| `scripts/pixal3d_n2_spike.md` | **N2 Pixal3D:** 🔴 закрыт 2026-08-21 как quality |
+| `scripts/direct3ds2_n3_spike.md` | **N3 Direct3D-S2:** sparse SDF 1024³, отдельный стек, гейт vs T2 |
+| `Dockerfile.direct3ds2` | Direct3D-S2 image: torch 2.5.1 cu121 + torchsparse + voxelize |
+| `worker_direct3ds2.py` | RunPod handler: image → sdf_resolution=1024 → clay GLB |
+| `Dockerfile.pixal3d` | Pixal3D image: T2-стек + их форк + MoGe + NATTEN |
 | `worker_pixal3d.py` | RunPod handler: image → камера (MoGe) → pixel-aligned mesh + PBR GLB |
 | `Dockerfile.hi3dgen` | Hi3DGen mesh worker image (volume weights) |
 | `worker_hi3dgen.py` | RunPod handler: image → normal-bridge mesh GLB |

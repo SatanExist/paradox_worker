@@ -27,6 +27,9 @@
 | `worker_hi3dgen.py` | Hi3DGen: image → normal bridge → mesh GLB (отдельный endpoint) |
 | `Dockerfile.hi3dgen` | Hi3DGen: clone **HF Space** `Stable-X/Hi3DGen` (rembg + FlexiCubes), как T2 клонит `microsoft/TRELLIS.2` |
 | `test_req_hi3dgen.py` | Smoke Hi3DGen (`RUNPOD_ENDPOINT_ID_HI3DGEN`) |
+| `worker_direct3ds2.py` | Direct3D-S2: image → sparse SDF 1024 → clay GLB (отдельный стек) |
+| `Dockerfile.direct3ds2` | Direct3D-S2: cuda 12.1 + torch 2.5.1 cu121 + torchsparse + voxelize |
+| `test_req_direct3ds2.py` | Smoke Direct3D-S2 (`RUNPOD_ENDPOINT_ID_DIRECT3DS2`) |
 | `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |
 | `test_req_mvadapter.py` | Smoke test MV-Adapter endpoint (`RUNPOD_ENDPOINT_ID_MVADAPTER`) |
 | `test_req.py` | Smoke test v1 endpoint |

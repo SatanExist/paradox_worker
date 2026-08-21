@@ -22,6 +22,8 @@ PINNED_GLBS: tuple[tuple[str, str], ...] = (
     ("h0g_armor_bust_nirne.glb", "Hi3DGen H0g — bust NiRNE"),
     ("h0_space_bust.glb", "Hi3DGen official Space — same bust"),
     ("t2_bust_ultra.glb", "N1 — T2 bust crop (1024_cascade after OOM)"),
+    ("n2_pixal3d_knight_1024.glb", "N2 — Pixal3D knight 1024 (low-VRAM)"),
+    ("n2_pixal3d_knight_1536.glb", "N2 — Pixal3D knight 1536 (low-VRAM)"),
     ("f2_triposr_knight.glb", "Ф2 recon — TripoSR knight (16s, fast tier)"),
     ("armor_t2_v17_realistic.png.glb", "Knight — Realistic 4K+polish"),
     ("preset_high_armor.png.glb", "Knight — High 2K+polish"),
