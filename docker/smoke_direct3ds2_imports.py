@@ -16,7 +16,6 @@ BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
     ("torchsparse", "torchsparse"),
     ("udf_ext", "udf_ext"),
     ("xformers", "xformers"),
-    ("flash-attn", "flash_attn"),
 )
 
 
@@ -53,9 +52,32 @@ def verify_built_package(dist_name: str, import_name: str) -> None:
         raise RuntimeError(f"{import_name}: no compiled .so under {root}")
     print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
 
-    if import_name in ("torchsparse", "udf_ext", "flash_attn"):
+    if import_name in ("torchsparse", "udf_ext"):
         return
     __import__(import_name)
+
+
+def verify_flash_attn() -> None:
+    """Official Linux wheels drop flash_attn_2_cuda*.so next to the package,
+    not under flash_attn/. Do not import: the .so needs libcuda.
+    """
+    version = _dist_version("flash-attn")
+    if version == "(no dist metadata)":
+        raise RuntimeError("flash-attn is not installed")
+    root = _package_root("flash_attn")
+    siblings = list(root.parent.glob("flash_attn_2_cuda*.so"))
+    nested = list(root.rglob("*.so"))
+    cuda_spec = importlib.util.find_spec("flash_attn_2_cuda")
+    if not siblings and not nested and cuda_spec is None:
+        raise RuntimeError(
+            f"flash_attn=={version}: no flash_attn_2_cuda extension "
+            f"next to {root} or as import spec"
+        )
+    print(
+        f"flash_attn=={version} "
+        f"(sibling .so={len(siblings)}, nested .so={len(nested)}, "
+        f"spec={cuda_spec is not None}): OK"
+    )
 
 
 def verify_pipeline_tree() -> None:
@@ -79,6 +101,7 @@ def verify_pipeline_import() -> None:
 def main() -> int:
     checks = [
         *[(name, lambda d=dist, n=name: verify_built_package(d, n)) for dist, name in BUILT_PACKAGES],
+        ("flash_attn", verify_flash_attn),
         ("pipeline_tree", verify_pipeline_tree),
         ("pipeline_import", verify_pipeline_import),
     ]
