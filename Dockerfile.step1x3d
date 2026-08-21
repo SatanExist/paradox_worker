@@ -71,14 +71,25 @@ RUN pip install --no-cache-dir \
       "pytorch-lightning==2.2.4" "lightning-utilities==0.11.2" \
       "rembg==2.0.65" "onnxruntime==1.21.0" \
       "easydict==1.13" "kornia==0.8.0" "scikit-image==0.23.2" \
-      "imageio==2.34.1"
+      "imageio==2.34.1" "typeguard"
 
 # diffusers / transformers can pull huggingface_hub 1.x back in.
 RUN pip install --no-cache-dir "huggingface_hub>=0.26.2,<1.0"
 
 ARG STEP1X3D_REF=main
 RUN git clone --depth 1 --branch ${STEP1X3D_REF} \
-      https://github.com/stepfun-ai/Step1X-3D.git /app/Step1X-3D
+      https://github.com/stepfun-ai/Step1X-3D.git /app/Step1X-3D && \
+    python - <<'PY'
+from pathlib import Path
+p = Path("/app/Step1X-3D/step1x3d_geometry/__init__.py")
+text = p.read_text(encoding="utf-8")
+old = "from . import data, models, systems"
+new = "from . import models  # inference-only: skip training data/systems"
+if old not in text:
+    raise SystemExit(f"expected {old!r} in {p}")
+p.write_text(text.replace(old, new, 1), encoding="utf-8")
+print("patched", p)
+PY
 
 COPY docker/smoke_step1x3d_imports.py /tmp/smoke_step1x3d_imports.py
 ARG SMOKE_FATAL=1

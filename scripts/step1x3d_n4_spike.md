@@ -71,6 +71,6 @@ Same-input, до ручек. Рыцарь `ref_gold_armor_cutout.png`.
 | `.github/workflows/build-step1x3d.yml` | → `ghcr.io/satanexist/paradox_worker:step1x3d-sha-*` |
 | `test_req_step1x3d.py` | async submit + poll |
 
-Не создавать эндпоинт до зелёного CI. `python scripts/step1x3d_create_endpoint.py` (dry) / `--apply`.
+Пакета `streaming` в первом джобе не было: `step1x3d_geometry/__init__.py` тянет training `data`/`systems`. После clone патчим init на `from . import models`. Плюс `typeguard` (его импортирует `utils/typing.py`).
 
 **Не делать:** texture bake «чтобы красивее»; octree sweep; always-on; переоткрывать N2/N3.

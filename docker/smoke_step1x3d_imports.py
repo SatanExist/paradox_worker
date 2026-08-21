@@ -28,6 +28,16 @@ def verify_no_texture_stack() -> None:
     print("pytorch3d/kaolin absent: OK")
 
 
+def verify_inference_init() -> None:
+    init = REPO / "step1x3d_geometry" / "__init__.py"
+    text = init.read_text(encoding="utf-8")
+    if "from . import data, models, systems" in text:
+        raise RuntimeError("geometry __init__ still imports training data/systems")
+    if "from . import models" not in text:
+        raise RuntimeError("geometry __init__ does not import models")
+    print("inference-only package init: OK")
+
+
 def verify_cpu_imports() -> None:
     import pymeshlab  # noqa: F401
     import rembg  # noqa: F401
@@ -43,6 +53,7 @@ def main() -> int:
     checks = [
         ("repo_tree", verify_repo_tree),
         ("no_texture_stack", verify_no_texture_stack),
+        ("inference_init", verify_inference_init),
         ("cpu_imports", verify_cpu_imports),
     ]
     failed: list[str] = []
