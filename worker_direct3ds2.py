@@ -17,6 +17,7 @@ from pathlib import Path
 import runpod
 
 # Must be set before importing direct3d_s2.modules.sparse.
+# xformers covers TRELLIS-style sparse attn. SSA still needs flash-attn in the image.
 os.environ.setdefault("SPARSE_BACKEND", "torchsparse")
 os.environ.setdefault("SPARSE_ATTN_BACKEND", "xformers")
 os.environ.setdefault("ATTN_BACKEND", "xformers")

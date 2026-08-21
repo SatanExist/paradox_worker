@@ -1,6 +1,6 @@
 # N3 — Direct3D-S2 (MIT): микро-геометрия, `sdf_resolution=1024`
 
-> **Статус:** 🟡 CI #1 упала на GPU-less import torchsparse (сами `.so` собрались). Фикс смоука → повторный push.
+> **Статус:** 🟡 образ `d68f31c` зелёный, эндпоинт `paradox-direct3ds2` создан. Первый job рыцаря 1024 **FAILED**: `ModuleNotFoundError: flash_attn`. SSA импортирует `flash_attn_varlen_func` безусловно — xformers это не закрывает. Wheel → rebuild.
 > Место в плане: `memory-bank/roadmap.md` Ф2 приоритет 2, `netParkProgram.md` шаг 2.
 > Pixal3D как quality закрыт 2026-08-21 — это **другой класс** (sparse SDF 1024³), не ещё один TRELLIS.2.
 
@@ -22,7 +22,7 @@ Hi3DGen сидит на extract 256³. T2/Pixal3D — та же линейка s
 
 Апстрим-Dockerfile глотает падение torchsparse (`|| echo failed`). Мы **нет**: без него сеть не сеть. Архитектуры только `8.6;8.9` (4090 / A6000 / A40 / L40S). Тег `v2.1.0` у mit-han-lab **не существует** (последний релиз `v2.0.0`) — клонируем `main`, как авторы.
 
-`flash-attn` из `requirements.txt` не собираем: `SPARSE_ATTN_BACKEND=xformers`. Их sparse-модуль это умеет.
+`SPARSE_ATTN_BACKEND=xformers` покрывает только TRELLIS-style sparse attn. **SSA** (`spatial_sparse_attention.py`) делает `from flash_attn import flash_attn_varlen_func` без fallback — ставим официальный wheel `flash_attn 2.7.4.post1` (torch2.5 cu12 cp310). Не компилируем из исходников.
 
 BiRefNet — уже `ZhengPeng7/BiRefNet` (не gated RMBG). Наш cutout рыцаря RGBA → rembg пропускается.
 

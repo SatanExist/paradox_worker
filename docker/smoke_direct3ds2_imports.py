@@ -16,6 +16,7 @@ BUILT_PACKAGES: tuple[tuple[str, str], ...] = (
     ("torchsparse", "torchsparse"),
     ("udf_ext", "udf_ext"),
     ("xformers", "xformers"),
+    ("flash-attn", "flash_attn"),
 )
 
 
@@ -52,7 +53,7 @@ def verify_built_package(dist_name: str, import_name: str) -> None:
         raise RuntimeError(f"{import_name}: no compiled .so under {root}")
     print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
 
-    if import_name in ("torchsparse", "udf_ext"):
+    if import_name in ("torchsparse", "udf_ext", "flash_attn"):
         return
     __import__(import_name)
 
