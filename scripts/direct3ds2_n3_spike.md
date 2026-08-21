@@ -1,63 +1,24 @@
 # N3 — Direct3D-S2 (MIT): микро-геометрия, `sdf_resolution=1024`
 
-> **Статус:** 🟡 образ `d68f31c` зелёный, эндпоинт `paradox-direct3ds2` создан. Первый job рыцаря 1024 **FAILED**: `ModuleNotFoundError: flash_attn`. SSA импортирует `flash_attn_varlen_func` безусловно — xformers это не закрывает. Wheel → rebuild.
-> Место в плане: `memory-bank/roadmap.md` Ф2 приоритет 2, `netParkProgram.md` шаг 2.
-> Pixal3D как quality закрыт 2026-08-21 — это **другой класс** (sparse SDF 1024³), не ещё один TRELLIS.2.
+> **Статус:** 🔴 **закрыт как quality 2026-08-21.** Первый честный 1024 (`f039fb2c`, `10fb5d7`) — 3.36M verts / 6.71M faces / 115 MB clay. Глаза: **другой персонаж**, не наш рыцарь (рога→ушки, львы→шипы). Эндпоинт idle (`workersMax=0`). Не крутить 512 / seed.
+> Место в плане: `memory-bank/roadmap.md` Ф2, `netParkProgram.md` шаг 2.
+> Next: **Step1X-3D** (`scripts/step1x3d_n4_spike.md`) — геометрия+текстура, Apache-2.0.
 
-## Зачем
+## Вердикт
 
-Hi3DGen сидит на extract 256³. T2/Pixal3D — та же линейка sparse latent, не воксельный SDF. У Direct3D-S2 есть явный рычаг **`sdf_resolution=1024`** (~24 GB → 4090), и их же абляция публикует: 256³ = limited details, 1024³ = sharper edges. Это дырка продукта (львы).
+| | |
+|--|--|
+| Джоб | `f039fb2c-54c8-4ed7-94e2-94fd34da49d8-e2`, image `direct3ds2-sha-10fb5d7` |
+| Вход | `ref_gold_armor_cutout.png`, `sdf_resolution=1024`, remesh off |
+| Числа | load 32 с (кэш), infer 69 с, 3.36M v / 6.71M f, 115 MB |
+| Глаза | идентичность потеряна: клюв вместо шлема с рогами, нет льва на груди / зверей на палдах |
+| Vs Pixal3D | хуже: Pixal3D хотя бы читался как наш рыцарь (мыло). Здесь архетип «фэнтези-воин» |
+| Vs T2 Realistic | не конкурент даже как clay |
 
-## Стек — отдельный образ, общий том
+Плотность сетки ≠ совпадение с картинкой. Абляция «1024³ = sharper edges» на **этом** CGI-рефе не сработала: сеть перерисовала форму.
 
-| Что | Direct3D-S2 | Наш T2 / Pixal3D |
-|-----|-------------|------------------|
-| torch | **2.5.1 cu121** | 2.6.0 cu124 |
-| python | **3.10** | 3.11 |
-| transformers | **==4.40.2** | >=4.45 |
-| triton | **==3.1.0** | >=3.2.0 |
-| sparse conv | **torchsparse** | flex_gemm |
+**Условие возврата:** новый чекпойнт не v-1-1 **или** непроверенный класс входа (реальное фото / плотный орнамент без персонажа). Не «ещё раз 512» и не seed-sweep.
 
-Общий Docker-слой невозможен. Веса (~7.9 GB, `gated=False`, `wushuang98/Direct3D-S2` / `direct3d-s2-v-1-1`) **влезают на том T2** `netu72a8j2` (~29 GiB свободно после Pixal3D). Свой volume не заводим, пока не упрёмся в место. HF-кэш раздельный по repo id.
+**Не делать:** 512 как честный прогон; держать воркер always-on; переоткрывать ради львов.
 
-Апстрим-Dockerfile глотает падение torchsparse (`|| echo failed`). Мы **нет**: без него сеть не сеть. Архитектуры только `8.6;8.9` (4090 / A6000 / A40 / L40S). Тег `v2.1.0` у mit-han-lab **не существует** (последний релиз `v2.0.0`) — клонируем `main`, как авторы.
-
-`SPARSE_ATTN_BACKEND=xformers` покрывает только TRELLIS-style sparse attn. **SSA** (`spatial_sparse_attention.py`) делает `from flash_attn import flash_attn_varlen_func` без fallback — ставим официальный wheel `flash_attn 2.7.4.post1` (torch2.5 cu12 cp310). Не компилируем из исходников.
-
-BiRefNet — уже `ZhengPeng7/BiRefNet` (не gated RMBG). Наш cutout рыцаря RGBA → rembg пропускается.
-
-## API (три строки апстрима)
-
-```python
-pipeline = Direct3DS2Pipeline.from_pretrained(
-    "wushuang98/Direct3D-S2", subfolder="direct3d-s2-v-1-1"
-).to("cuda:0")
-mesh = pipeline(image, sdf_resolution=1024, remove_interior=True, remesh=False)["mesh"]
-mesh.export("out.glb")
-```
-
-Текстур нет — сравниваем **форму** (львы, кромки) с T2 Realistic, не PBR.
-
-## Файлы
-
-| Файл | Роль |
-|------|------|
-| `Dockerfile.direct3ds2` | cuda 12.1 devel + py3.10 + torch 2.5.1 cu121 + torchsparse + voxelize (`udf_ext`) |
-| `worker_direct3ds2.py` | image_url → pipeline(sdf=1024) → GLB volume + R2 |
-| `docker/smoke_direct3ds2_imports.py` | torchsparse `.so`, `udf_ext`, класс пайплайна |
-| `.github/workflows/build-direct3ds2.yml` | `ghcr.io/satanexist/paradox_worker:direct3ds2-sha-*` |
-| `test_req_direct3ds2.py` | async submit + poll |
-| `scripts/direct3ds2_create_endpoint.py` | template + endpoint, `workersMin=0` |
-
-## Ops-чеклист
-
-1. ⏳ CI #1 (`17253e4`) собрала torchsparse за 16 мин и voxelize, но смоук упал: `import torchsparse` зовёт `torch.cuda.get_device_capability()` без драйвера на раннере. Смоук теперь проверяет `.so` без импорта.
-2. ⏳ `scripts/direct3ds2_create_endpoint.py --apply` после зелёного тега
-3. ⏳ A/B рыцарь `ref_gold_armor_cutout.png`, **сразу 1024**, без ручек. Не даунгрейдить в 512 «чтобы влезло»
-4. Глаза: лев на груди / палды vs `armor_t2_v17_realistic.png.glb`
-
-## Гейт
-
-Same-input, до любых knobs. Два прогона same/worse T2 → закрываем. Условие возврата пишем тогда.
-
-**Не делать:** 512 как «честный» прогон; seed-sweep; ждать 48 GB; общий образ с T2.
+Образ `direct3ds2-sha-10fb5d7`, endpoint idle. GLB оставлен в Review для архива: `n3_direct3ds2_knight_1024.glb`.

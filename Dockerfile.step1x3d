@@ -1,0 +1,94 @@
+# Step1X-3D geometry only (N4). Texture baker (pytorch3d/kaolin/Hunyuan rasterizer)
+# stays out of this image until the identity gate PASSes.
+# Tags: ghcr.io/satanexist/paradox_worker:step1x3d-sha-<short>
+#
+# Weights stay on the network volume (HF_HOME), not in the image.
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
+    MAX_JOBS=2 \
+    PYOPENGL_PLATFORM=egl \
+    PYTHONPATH=/app:/app/Step1X-3D \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    HF_HOME=/runpod-volume/huggingface_cache \
+    TORCH_HOME=/runpod-volume/torch_hub \
+    STEP1X3D_REPO=/app/Step1X-3D \
+    STEP1X3D_OUTPUT_DIR=/runpod-volume/outputs
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    curl \
+    ca-certificates \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-setuptools \
+    ninja-build \
+    cmake \
+    pkg-config \
+    build-essential \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libegl1 \
+    libgles2 \
+    libglvnd0 \
+    libxrender1 \
+    libsm6 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel ninja
+
+# Match upstream geometry inference: torch 2.5.1 + cu124.
+RUN pip install --no-cache-dir \
+      torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
+      --index-url https://download.pytorch.org/whl/cu124
+
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/torch/lib:${LD_LIBRARY_PATH}
+
+# Inference-only. Do not install pytorch3d, kaolin, nvdiffrast, sageattention,
+# deepspeed, wandb, or the Hunyuan texture baker.
+RUN pip install --no-cache-dir \
+      runpod Pillow requests python-dotenv boto3 \
+      "huggingface_hub==0.26.2" \
+      "transformers==4.48.0" "diffusers==0.32.2" \
+      "accelerate==1.5.2" "peft==0.15.1" "safetensors==0.4.3" \
+      "tokenizers==0.21.0" "sentencepiece==0.2.0" \
+      "einops==0.8.0" "omegaconf==2.3.0" "jaxtyping==0.2.28" \
+      "numpy==1.26.4" "scipy==1.13.0" "tqdm==4.66.2" \
+      "timm==0.9.16" "opencv-python-headless==4.10.0.84" \
+      "trimesh==4.3.2" "PyMCubes==0.1.4" "pymeshlab==2023.12.post3" \
+      "pytorch-lightning==2.2.4" "lightning-utilities==0.11.2" \
+      "rembg==2.0.65" "onnxruntime==1.21.0" \
+      "easydict==1.13" "kornia==0.8.0" "scikit-image==0.23.2" \
+      "imageio==2.34.1"
+
+# diffusers / transformers can pull huggingface_hub 1.x back in.
+RUN pip install --no-cache-dir "huggingface_hub>=0.26.2,<1.0"
+
+ARG STEP1X3D_REF=main
+RUN git clone --depth 1 --branch ${STEP1X3D_REF} \
+      https://github.com/stepfun-ai/Step1X-3D.git /app/Step1X-3D
+
+COPY docker/smoke_step1x3d_imports.py /tmp/smoke_step1x3d_imports.py
+ARG SMOKE_FATAL=1
+RUN python /tmp/smoke_step1x3d_imports.py || [ "${SMOKE_FATAL}" = "0" ]
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=step1x3d
+
+COPY worker_step1x3d.py /app/worker_step1x3d.py
+COPY runpod_billing.py /app/runpod_billing.py
+
+CMD ["python", "-u", "/app/worker_step1x3d.py"]

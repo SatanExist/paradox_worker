@@ -76,4 +76,4 @@ Same-input A/B на рыцаре `ref_gold_armor.png` и сундуке прот
 
 **Не делать:** крутить seed / FOV / texture_size; держать воркер always-on; ждать 48 GB в EU-RO-1.
 
-Образ `pixal3d-sha-7d6e18e`, endpoint `1k4hyr6cs9nxr0`. Дальше парк: Direct3D-S2 (`sdf_resolution=1024`), отдельный образ — стек конфликтует с T2.
+Образ `pixal3d-sha-7d6e18e`, endpoint `1k4hyr6cs9nxr0`. Direct3D-S2 тоже 🔴 закрыт 2026-08-21. Дальше парк: **Step1X-3D** (`scripts/step1x3d_n4_spike.md`).

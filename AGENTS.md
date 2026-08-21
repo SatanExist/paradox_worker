@@ -4,7 +4,8 @@ RunPod Serverless worker: **картинка → TRELLIS → 3D (GLB base64)**.
 Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.py`. 
 H0 geometry: **Hi3DGen** — `Dockerfile.hi3dgen` / `worker_hi3dgen.py` (отдельный endpoint). 
 N2 Pixal3D: 🔴 закрыт как quality 2026-08-21 — `Dockerfile.pixal3d` / `worker_pixal3d.py` (idle). 
-N3 Direct3D-S2: sparse SDF 1024³ — `Dockerfile.direct3ds2` / `worker_direct3ds2.py`. 
+N3 Direct3D-S2: 🔴 закрыт как quality 2026-08-21 — `Dockerfile.direct3ds2` / `worker_direct3ds2.py` (idle). 
+N4 Step1X-3D: geometry-only — `Dockerfile.step1x3d` / `worker_step1x3d.py`. 
 Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`. 
 Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.py`.
 
@@ -14,7 +15,7 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
 1a. **`@memory-bank/netParkProgram.md`** — парк 3D-сетей, гейт приёмки новой сети, условия возврата закрытых
 1a2. **`@memory-bank/netParkResearch2026.md`** — **числа под план:** 3D Arena Elo, лицензии, доступность весов, ловушки
-1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0 Hi3DGen 🔴 закрыт 2026-08-20; MCP last
+1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0/Pixal3D/Direct3D-S2 🔴 quality closed; MCP last
 2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
 3. **`@memory-bank/t2InternetAudit.md`** — **как правильно T2** (официалы vs обзоры vs наш рыцарь; стоп кругам)
 4. **`@memory-bank/t2FinishPlan.md`** — **дожим T2** (prod recipe, side/back pass, tex; Hi3DGen после)
@@ -56,6 +57,8 @@ docker build -f Dockerfile.pixal3d -t paradox-pixal3d . # Pixal3D pixel-aligned 
 python test_req_pixal3d.py --image-url "<img>" --resolution 1024 --save preview_textures/f2_pixal3d_knight.glb
 docker build -f Dockerfile.direct3ds2 -t paradox-direct3ds2 . # Direct3D-S2 SDF (CI → :direct3ds2-sha-*)
 python test_req_direct3ds2.py --image-url "<img>" --sdf-resolution 1024 --save preview_textures/n3_direct3ds2_knight_1024.glb
+docker build -f Dockerfile.step1x3d -t paradox-step1x3d .  # Step1X-3D geometry (CI → :step1x3d-sha-*)
+python test_req_step1x3d.py --image-url "<img>" --save preview_textures/n4_step1x3d_knight.glb
 python scripts/f2_recon_space.py --net triposr --subject knight # Ф2 разведка через HF Spaces
 python scripts/f2_space_status.py # живы ли демо кандидатов и на каком железе
 python scripts/f2_check_weights.py # доступ к весам + размеры репозиториев
@@ -73,9 +76,12 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/netParkProgram.md` | **Парк 3D-сетей:** инвентарь, гейт приёмки, план шаги 1–6, условия возврата закрытых сетей |
 | `memory-bank/netParkResearch2026.md` | **Исследование 2026-08-20:** 3D Arena Elo, откуда миф «Hi3DGen лучший», Direct3D-S2 (MIT, веса, 1024³), ловушка Sparc3D, лицензия Hunyuan |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
-| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0 Hi3DGen 🔴 закрыт → остаток трека ▲ (RVG / MVPainter); MCP last |
+| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0/Pixal3D/Direct3D-S2 🔴 quality closed; next Step1X-3D; MCP last |
 | `scripts/pixal3d_n2_spike.md` | **N2 Pixal3D:** 🔴 закрыт 2026-08-21 как quality |
-| `scripts/direct3ds2_n3_spike.md` | **N3 Direct3D-S2:** sparse SDF 1024³, отдельный стек, гейт vs T2 |
+| `scripts/direct3ds2_n3_spike.md` | **N3 Direct3D-S2:** 🔴 закрыт 2026-08-21 как quality (другой персонаж) |
+| `scripts/step1x3d_n4_spike.md` | **N4 Step1X-3D:** geometry-only, Apache-2.0, гейт vs T2 |
+| `Dockerfile.step1x3d` | Step1X-3D geometry: torch 2.5.1 cu124, без texture baker |
+| `worker_step1x3d.py` | RunPod handler: image → watertight clay GLB |
 | `Dockerfile.direct3ds2` | Direct3D-S2 image: torch 2.5.1 cu121 + torchsparse + voxelize |
 | `worker_direct3ds2.py` | RunPod handler: image → sdf_resolution=1024 → clay GLB |
 | `Dockerfile.pixal3d` | Pixal3D image: T2-стек + их форк + MoGe + NATTEN |

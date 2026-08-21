@@ -5,17 +5,17 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-21** — **N2 Pixal3D закрыт как quality** (глаза: «ниже среднего»). 1024 и 1536 на том же рыцаре слабее T2 Realistic: мыло львов, дыра на спине, пластик. Это TRELLIS.2 + proj, не новый класс геометрии. Ультра-персонаж остаётся T2 `1536_cascade`.  
-**Наш next:** **Direct3D-S2** (`sdf_resolution=1024`, MIT, отдельный образ — torch/transformers/torchsparse конфликтуют с T2). Hi3DGen — только быстрый тир. Sparc3D — ловушка, Hunyuan — EU вне лицензии.
+Последнее обновление: **2026-08-21** — **N3 Direct3D-S2 закрыт как quality** (глаза: другой персонаж, не наш рыцарь). 1024 clay 3.36M verts — плотность есть, идентичности нет. Pixal3D тоже закрыт. Ультра-персонаж остаётся T2 Realistic.  
+**Наш next:** **Step1X-3D** (Apache-2.0, геометрия+текстура; первый образ = только geometry). Hi3DGen — только быстрый тир. Sparc3D — ловушка, Hunyuan — EU вне лицензии.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
 | **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | H0 и Pixal3D как quality закрыты. Next = Direct3D-S2. T2 v21 не трогать |
-| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D — не переоткрывать как quality** |
-| **Наш next** | **Direct3D-S2** (`netParkProgram.md` шаг 2): отдельный образ, `sdf_resolution=1024`, same-input A/B vs T2 ultra |
+| **Мы / paradox_worker** | H0, Pixal3D, Direct3D-S2 как quality закрыты. Next = Step1X-3D geometry. T2 v21 не трогать |
+| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D / Direct3D-S2 — не переоткрывать как quality** |
+| **Наш next** | **Step1X-3D** (`roadmap.md` Ф2 prio 3): geometry-only образ, same-input A/B vs T2 Realistic **до** texture bake |
 
 ---
 
@@ -43,7 +43,7 @@
 | 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
 | — | Studio UI | **сейчас у товарища** | сайт; мы не верстаем |
 | 2 | **Draco** | **skip** | не в worker; вернёмся только если сайт реально тормозит |
-| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | H0 + Pixal3D как quality закрыты → next Direct3D-S2; RVG ждёт реальные фото |
+| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | H0 + Pixal3D + Direct3D-S2 как quality закрыты → next Step1X-3D; RVG ждёт реальные фото |
 | ▼ | **MCP / Blender / Unreal** | **низший приоритет** | тот же `studio_api`; не начинать, пока живы сети/tex |
 | 4 | **MVPainter** | внутри ▲ | только если W3a polish мало |
 | * | RVG | внутри ▲, P4.0 | только реальные 2–4 фото |
@@ -999,6 +999,7 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-08-21** веч | Pedrokita | **N3 Direct3D-S2 🔴 закрыт как quality.** Джоб `f039fb2c` (`10fb5d7`): 1024, 3.36M v / 6.71M f / 115 MB. Глаза: **другой персонаж** (рога→ушки, львы→шипы), хуже Pixal3D. Эндпоинт `1mrato3n6qoywv` idle `workersMax=0`. Не 512, не seed. **N4 Step1X-3D scaffold:** geometry-only (`Dockerfile.step1x3d`, без pytorch3d/kaolin). Текстуру не класть, пока идентичность не PASS | **commit+push** → CI Step1X → endpoint `workersMin=0` → A/B рыцарь vs T2 |
 | **2026-08-21** | Pedrokita | **N3 Direct3D-S2 scaffold.** Отдельный образ (`Dockerfile.direct3ds2`: torch 2.5.1 cu121, transformers 4.40.2, torchsparse с `main`, voxelize/`udf_ext`, xformers вместо flash-attn). Воркер сразу `sdf_resolution=1024`, remesh off. Том T2 переиспользуем (~7.9 GB влезет). CI workflow `build-direct3ds2.yml` | **commit+push** → CI (запас 2–3 итерации на torchsparse) → endpoint `workersMin=0` → A/B рыцарь vs T2 |
 | **2026-08-21** | Pedrokita | **N2 Pixal3D 🔴 закрыт как quality.** 1024 (`1f87f4c1`) слабый; 1536 на 48 GB отменён (EU-RO-1 = None); 1536+LOW_VRAM на 4090 (`2008e6a6`, 863k verts, `n2_pixal3d_knight_1536.glb`) — глаза «ниже среднего»: львы мыло, дыра на спине, пластик. Не апгрейд над T2. Эндпоинт idle | **Direct3D-S2** — отдельный образ, `sdf_resolution=1024` |
 | **2026-08-20** веч | Pedrokita | **N2 Pixal3D: эндпоинт живой, два прогона, две мины.** Образ `376f791` зелёный → endpoint `1k4hyr6cs9nxr0` / template `pwcli28kc9` на томе T2. Прогон 1: веса 22.4 GB легли (том 28→50 GiB), упал на gated `briaai/RMBG-2.0`. Прогон 2 (`60ecb7c`, подмена RMBG+DINOv3): упал на `natten` — это NAF (`valeoai/NAF`) для `proj_in_channels=2048`, без него чекпойнт не тот. Колеса 0.21 под наш `cp311+torch2.6+cu124` нет → собираем `natten==0.21.0` из исходников (`NATTEN_CUDA_ARCH=8.6;8.9`) | CI сборка natten → релиз образа → прогон 3 рыцаря |
