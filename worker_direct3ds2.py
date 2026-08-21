@@ -80,9 +80,11 @@ def _load_pipeline():
         os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
 
     print(f"Loading Direct3D-S2 {MODEL_ID}/{MODEL_SUBFOLDER}...")
+    # Upstream .to() mutates in place and returns None — do not chain.
     pipeline = Direct3DS2Pipeline.from_pretrained(
         MODEL_ID, subfolder=MODEL_SUBFOLDER
-    ).to("cuda:0")
+    )
+    pipeline.to("cuda:0")
     pipeline.dtype = torch.float16
     print("Direct3D-S2 pipeline ready.")
     _PIPELINE = pipeline
@@ -173,7 +175,10 @@ def handler(job):
 
     except Exception as exc:
         traceback.print_exc()
-        return {"error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc()[-2500:],
+        }
     finally:
         if image_path and os.path.exists(image_path):
             os.remove(image_path)
