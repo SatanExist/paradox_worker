@@ -41,9 +41,9 @@ def _dist_version(dist_name: str) -> str:
 
 
 def verify_built_package(dist_name: str, import_name: str) -> None:
-    """Prove the extension is on disk. Do not import torchsparse: its
-    backends.init() calls torch.cuda.get_device_capability() and dies on a
-    GPU-less CI runner (same class of landmine as Pixal3D + triton).
+    """Prove the extension is on disk. Do not import CUDA extensions here:
+    torchsparse.backends.init() needs a GPU driver, and udf_ext needs
+    libc10.so on LD_LIBRARY_PATH (set in the Dockerfile after torch install).
     """
     version = _dist_version(dist_name)
     root = _package_root(import_name)
@@ -52,7 +52,7 @@ def verify_built_package(dist_name: str, import_name: str) -> None:
         raise RuntimeError(f"{import_name}: no compiled .so under {root}")
     print(f"{import_name}=={version} ({len(shared_objects)} .so): OK")
 
-    if import_name == "torchsparse":
+    if import_name in ("torchsparse", "udf_ext"):
         return
     __import__(import_name)
 

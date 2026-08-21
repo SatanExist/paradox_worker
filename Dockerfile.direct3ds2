@@ -61,6 +61,9 @@ RUN pip install --no-cache-dir \
       torch==2.5.1 torchvision==0.20.1 xformers \
       --index-url https://download.pytorch.org/whl/cu121
 
+# voxelize (`udf_ext`) links against libc10.so inside the torch wheel.
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/torch/lib:${LD_LIBRARY_PATH}
+
 # huggingface_hub 1.x breaks transformers 4.40. Pin below 1.0 and again last.
 RUN pip install --no-cache-dir \
       runpod Pillow requests python-dotenv boto3 \
