@@ -30,7 +30,7 @@
 | `worker_direct3ds2.py` | Direct3D-S2: 🔴 idle; image → sparse SDF 1024 → clay GLB |
 | `Dockerfile.direct3ds2` | Direct3D-S2: cuda 12.1 + torch 2.5.1 cu121 + torchsparse + voxelize |
 | `test_req_direct3ds2.py` | Smoke Direct3D-S2 (`RUNPOD_ENDPOINT_ID_DIRECT3DS2`) |
-| `worker_step1x3d.py` | Step1X-3D geometry: image → watertight clay GLB |
+| `worker_step1x3d.py` | Step1X-3D: 🔴 idle; image → watertight clay GLB |
 | `Dockerfile.step1x3d` | Step1X-3D: cuda 12.4 + torch 2.5.1 cu124, без pytorch3d/kaolin |
 | `test_req_step1x3d.py` | Smoke Step1X-3D (`RUNPOD_ENDPOINT_ID_STEP1X3D`) |
 | `Dockerfile.mvadapter` | MV-Adapter image (torch 2.4.1+cu124, diffusers 0.31, nvdiffrast, cvcuda) |
@@ -43,7 +43,12 @@
 | `scripts/diagnose_t2_queue.py` | Live probe: health + short submit watch |
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
-| `scripts/studio_api.py` | POC HTTP + lab UI: jobs, product-copy, `studio_lab.html` |
+| `scripts/studio_api.py` | POC HTTP + lab UI: jobs, engines, credits, geo Hunyuan, `studio_lab.html` |
+| `studio_bridge/gateway.py` | T2 / Hi3DGen / FAL job create+poll |
+| `studio_bridge/fal_client.py` | FAL Queue REST (`Authorization: Key $FAL_KEY`) |
+| `studio_bridge/engines.py` | витрина движков + официальные input-поля FAL |
+| `studio_bridge/geo.py` | Hunyuan EU/UK/KR fail-closed |
+| `studio_bridge/credits.py` | T2 draft/quality/cold + FAL ≥2.5× |
 | `studio_bridge/product_multi_ux.py` | P1: slot order, Studio copy, normalize viewSlots |
 | `scripts/reconviagen_infer.py` | Headless RVG infer (pod smoke / local with GPU) |
 | `scripts/reconviagen_hf_smoke.py` | HF Space API smoke (eyes only; не prod) |
@@ -60,6 +65,7 @@
 ## Настройка RunPod
 
 - **API key**: `RUNPOD_API_KEY` в `.env` (не коммитить!)
+- **FAL (чужие сети):** `FAL_KEY` в `.env` — только бэкенд `studio_bridge/fal_client.py`. Формат заголовка `Authorization: Key $FAL_KEY`. Не в браузер. Hunyuan ещё требует страну (не EU/UK/KR).
 - **Endpoints** (defaults в `test_req.py` / `.env`):
 
 | Роль | ID | Регион | Volume |
@@ -424,8 +430,10 @@ pip install requests python-dotenv
 
 # .env (не в git):
 # RUNPOD_API_KEY=your_key_here
+# FAL_KEY=fal_...          (сервер; Meshy/Hunyuan/Hitem3D/Rodin/Tripo)
 # RUNPOD_ENDPOINT_ID_PRIMARY=...
 # RUNPOD_ENDPOINT_ID_SECONDARY=...  (опционально)
+# RUNPOD_ENDPOINT_ID_HI3DGEN=...     (draft engine)
 
 python test_req.py
 ```

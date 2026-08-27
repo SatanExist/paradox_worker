@@ -95,9 +95,11 @@ def main() -> None:
     assert bundle["aiSheetNotSupported"] is True
     assert "front" in bundle["slotOrder"]
     assert bundle["defaultQualityPreset"] == "medium"
+    assert bundle["defaultEngine"] == "trellis2"
     ids = [p["id"] for p in bundle["qualityPresets"]]
     assert ids == ["low", "medium", "high", "realistic"]
     assert bundle["qualityPresets"][3]["textureSize"] == 4096
+    assert any(e["id"] == "meshy" for e in bundle["engines"])
 
     reduced = normalize_job_payload(
         {

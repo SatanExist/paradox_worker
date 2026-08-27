@@ -325,9 +325,17 @@
           <button type="button" disabled title="Text to 3D — не в этом спринте">T</button>
         </div>
         <div class="label">Модель</div>
-        <select class="select" id="engine" disabled>
-          <option>TRELLIS.2 — native PBR</option>
-        </select>
+        <select class="select" id="engine"></select>
+        <label class="slot">Страна (гео Hunyuan)
+          <select class="select" id="country">
+            <option value="">auto / неизвестно → Hunyuan скрыт</option>
+            <option value="RU">RU — Hunyuan виден</option>
+            <option value="US">US — Hunyuan виден</option>
+            <option value="DE">DE — EU, Hunyuan скрыт</option>
+            <option value="GB">GB — Hunyuan скрыт</option>
+            <option value="KR">KR — Hunyuan скрыт</option>
+          </select>
+        </label>
         <p class="model-line" id="underFront">3D с одной картинки. Перед ближе к фото; бок и зад модель достраивает сама.</p>
 
         <div class="dropzone" id="dropzone">
@@ -359,12 +367,12 @@
           </label>
         </div>
 
-        <div class="label">Качество</div>
+        <div class="label" id="qualityLabel">Качество</div>
         <div class="presets" id="presets"></div>
         <label class="slot">Seed <input id="seed" type="number" min="0" value="1" /></label>
       </div>
       <div class="panel-foot">
-        <div class="eta"><span id="genEta">warm ~4 мин</span><span>живой GPU</span></div>
+        <div class="eta"><span id="genEta">warm ~4 мин</span><span id="creditsLine">—</span></div>
         <button type="button" id="generate">Generate</button>
         <p id="jobLine"></p>
       </div>
@@ -392,6 +400,8 @@
         <input id="pickImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
         <button type="button" id="openGlb">Open GLB</button>
         <button type="button" id="demo">Демо: рыцарь</button>
+        <button type="button" id="demoHigh">High</button>
+        <button type="button" id="demoDraco">High Draco</button>
       </div>
       <div id="stageWrap">
         <div id="stage"></div>
@@ -458,6 +468,7 @@
     let shelfModels = [];
     let sessionCards = [];
     let copy = null;
+    let engines = [];
     let pollTimer = null;
     let uploadTarget = "front";
     const thumbCache = new Map();
@@ -491,10 +502,53 @@
       return `${(v / (1024 * 1024)).toFixed(1)} MB`;
     }
 
-    function updateEta() {
+    function selectedEngine() {
+      const el = document.getElementById("engine");
+      return (el && el.value) || "trellis2";
+    }
+
+    function selectedCountry() {
+      const el = document.getElementById("country");
+      return (el && el.value) || "";
+    }
+
+    function currentEngine() {
+      return engines.find((e) => e.id === selectedEngine()) || engines[0] || null;
+    }
+
+    function updateGenerateMeta() {
+      const eng = currentEngine();
       const el = presetsEl.querySelector("input[name=tier]:checked");
-      const warm = Number(el && el.dataset.warm) || 240;
-      document.getElementById("genEta").textContent = `warm ~${Math.max(1, Math.round(warm / 60))} мин`;
+      const warm = Number((eng && eng.qualityPresets && el && el.dataset.warm) || (eng && eng.etaSeconds) || 240);
+      document.getElementById("genEta").textContent = `~${Math.max(1, Math.round(warm / 60))} мин`;
+      const credits = eng ? (eng.credits || "—") : "—";
+      const extra = eng && eng.creditsColdSurcharge ? ` (+${eng.creditsColdSurcharge} cold)` : "";
+      document.getElementById("creditsLine").textContent = `${credits} cr${extra}`;
+      const presetsWrap = document.getElementById("presets");
+      const qualityLabel = document.getElementById("qualityLabel");
+      const showPresets = !eng || eng.qualityPresets;
+      presetsWrap.hidden = !showPresets;
+      qualityLabel.hidden = !showPresets;
+      if (eng) {
+        document.getElementById("underFront").textContent = eng.blurb || (copy && copy.underFront) || "";
+      }
+    }
+
+    function renderEngines(list) {
+      engines = (list || []).filter((e) => e.visible !== false);
+      const sel = document.getElementById("engine");
+      const prev = sel.value;
+      sel.innerHTML = "";
+      for (const e of engines) {
+        const opt = document.createElement("option");
+        opt.value = e.id;
+        opt.textContent = e.label;
+        if (e.default) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      if (prev && engines.some((e) => e.id === prev)) sel.value = prev;
+      sel.onchange = updateGenerateMeta;
+      updateGenerateMeta();
     }
 
     function renderPresets(list) {
@@ -506,8 +560,8 @@
           <b>${p.label}</b><small>${p.blurb || ""}</small>`;
         presetsEl.appendChild(wrap);
       }
-      presetsEl.onchange = updateEta;
-      updateEta();
+      presetsEl.onchange = updateGenerateMeta;
+      updateGenerateMeta();
     }
 
     function renderRefs(refs) {
@@ -709,16 +763,22 @@
 
     async function loadCopy() {
       try {
-        const res = await fetch(`${apiBase}/api/product-copy`);
+        const country = selectedCountry();
+        const q = country ? `?country=${encodeURIComponent(country)}` : "";
+        const res = await fetch(`${apiBase}/api/product-copy${q}`);
         if (!res.ok) throw new Error(String(res.status));
         copy = await res.json();
         document.getElementById("underFront").textContent = copy.underFront;
         document.getElementById("underExtra").textContent = copy.underExtraViews;
         renderPresets(copy.qualityPresets);
+        renderEngines(copy.engines);
         document.getElementById("apiDot").classList.add("on");
         apiHint.textContent = "bridge ok";
       } catch {
         renderPresets(FALLBACK_PRESETS);
+        renderEngines([
+          { id: "trellis2", label: "TRELLIS.2 — native PBR", default: true, visible: true, qualityPresets: true, credits: 10, etaSeconds: 240 },
+        ]);
         apiHint.textContent = "bridge down · studio_lab.ps1";
       }
     }
@@ -792,11 +852,22 @@
     async function pollJob(jobId, tier) {
       jobLine.textContent = `Job ${jobId}…`;
       const tick = async () => {
-        const res = await fetch(`${apiBase}/api/jobs/${encodeURIComponent(jobId)}?tier=${encodeURIComponent(tier)}`);
+        const country = selectedCountry();
+        const q = new URLSearchParams();
+        if (tier) q.set("tier", tier);
+        if (country) q.set("country", country);
+        const res = await fetch(`${apiBase}/api/jobs/${encodeURIComponent(jobId)}?${q}`);
         const data = await res.json();
+        if (!res.ok) {
+          jobLine.textContent = (data && data.detail) || res.statusText;
+          return;
+        }
         jobLine.textContent = jobMeta(data);
+        if (data.creditsRefunded) {
+          jobLine.textContent = `${jobMeta(data)} · кредиты возвращены`;
+        }
         if (data.status === "ready" && data.modelUrl) {
-          await openModel(data.modelUrl, `${tier} · ${(data.jobId || "").slice(0, 8)}`);
+          await openModel(data.modelUrl, `${data.engine || tier} · ${(data.jobId || "").slice(0, 8)}`);
           rememberJobCard(data, tier);
           loadWorkspace();
           return;
@@ -815,18 +886,24 @@
       try { slots = slotPayload(); }
       catch (err) { jobLine.textContent = err.message; return; }
       const tier = selectedTier();
-      if (!confirm(`Отправить ${tier} job на GPU? Это минуты и деньги.`)) return;
+      const engine = selectedEngine();
+      const country = selectedCountry();
+      const eng = currentEngine();
+      const cr = eng ? eng.credits : "?";
+      if (!confirm(`Отправить ${engine} (${cr} cr)? Это минуты и деньги.`)) return;
       document.getElementById("generate").disabled = true;
       try {
         const seed = Number(document.getElementById("seed").value) || 1;
+        const body = { mode: "image", engine, tier, viewSlots: slots, seed };
+        if (country) body.country = country;
         const res = await fetch(`${apiBase}/api/jobs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "image", tier, viewSlots: slots, seed }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : res.statusText);
-        jobLine.textContent = `${data.statusLine || ""} · ETA warm ~${data.etaSecondsWarm}s`;
+        jobLine.textContent = `${data.statusLine || ""} · ${data.creditsQuoted || cr} cr · ETA ~${data.etaSecondsWarm}s`;
         if (pollTimer) clearTimeout(pollTimer);
         pollJob(data.jobId, data.tier || tier);
       } catch (err) {
@@ -899,6 +976,12 @@
         openModel("../preview_textures/armor_t2_ultra_native_pbr_delight.glb", "Knight polish");
       });
     };
+    document.getElementById("demoHigh").onclick = () => {
+      openModel("/preview_textures/preset_high_armor.png.glb", "High 47 MB");
+    };
+    document.getElementById("demoDraco").onclick = () => {
+      openModel("/preview_textures/draco_spike/preset_high_armor.draco.glb", "High Draco 23 MB");
+    };
     document.getElementById("generate").onclick = runGenerate;
 
     window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
@@ -920,6 +1003,8 @@
         uploadImageFile(f, "front").catch((err) => { jobLine.textContent = err.message; });
       }
     });
+
+    document.getElementById("country").onchange = () => loadCopy();
 
     loadCopy();
     loadWorkspace();

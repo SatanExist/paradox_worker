@@ -38,7 +38,7 @@ def _api_key() -> str:
     return key
 
 
-def _resolve_source_urls(
+def resolve_source_urls(
     *,
     mode: JobMode,
     image_url: str | None,
@@ -90,7 +90,7 @@ def create_job(
     tier_cfg = get_tier(tier)
     api_key = _api_key()
 
-    urls, text_prompt, suggested_mode = _resolve_source_urls(
+    urls, text_prompt, suggested_mode = resolve_source_urls(
         mode=mode,
         image_url=image_url,
         image_urls=image_urls,
@@ -153,7 +153,7 @@ def create_job_and_wait(
     api_key = _api_key()
 
     try:
-        urls, text_prompt, suggested_mode = _resolve_source_urls(
+        urls, text_prompt, suggested_mode = resolve_source_urls(
             mode=mode,
             image_url=image_url,
             image_urls=image_urls,

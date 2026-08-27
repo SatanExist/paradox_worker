@@ -97,8 +97,9 @@
 | только Front | `imageUrl` **или** `viewSlots: { front }` → single |
 | Front + 1–3 доп. | `viewSlots: { front, side?, back?, extra? }` → `imageUrls` 2–4, `multiImageMode: "stochastic"` |
 | legacy | `imageUrls` 2–4 без ролей — всё ещё ок |
-| copy для UI | `GET /api/product-copy` (`qualityPresets`, слоты, честный потолок) |
+| copy для UI | `GET /api/product-copy` (`qualityPresets`, `engines`, `credits`, слоты) |
 | quality preset | `low` \| `medium` \| `high` \| `realistic` (default **medium**). Legacy: `preview`→low, `quality`→medium, `ultra`→high |
+| engine | default `trellis2`. FAL: `meshy`, `hunyuan` (не EU/UK/KR), `hitem3d`, `rodin`, `tripo`. См. `aiMeshFalContract.md` |
 
 Worker допускает до 8 URL; **продукт Studio = max 4** (не расширять без причины).
 

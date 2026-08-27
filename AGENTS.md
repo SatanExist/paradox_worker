@@ -5,7 +5,8 @@ Quality tier (POC): **TRELLIS.2** — `Dockerfile.trellis2` / `worker_trellis2.p
 H0 geometry: **Hi3DGen** — `Dockerfile.hi3dgen` / `worker_hi3dgen.py` (отдельный endpoint). 
 N2 Pixal3D: 🔴 закрыт как quality 2026-08-21 — `Dockerfile.pixal3d` / `worker_pixal3d.py` (idle). 
 N3 Direct3D-S2: 🔴 закрыт как quality 2026-08-21 — `Dockerfile.direct3ds2` / `worker_direct3ds2.py` (idle). 
-N4 Step1X-3D: geometry-only — `Dockerfile.step1x3d` / `worker_step1x3d.py`. 
+N4 Step1X-3D: 🔴 закрыт как quality 2026-08-22 — `Dockerfile.step1x3d` / `worker_step1x3d.py` (idle). 
+N5 TripoSG: next — `scripts/triposg_n5_spike.md`. 
 Texture v1 (scaffold): **mesh paint** — `Dockerfile.texture` / `worker_texture.py`. 
 Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.py`.
 
@@ -15,7 +16,7 @@ Texture v2 (wow): **MV-Adapter** — `Dockerfile.mvadapter` / `worker_mvadapter.
 1. `@memory-bank/activeContext.md` — текущие задачи и статус
 1a. **`@memory-bank/netParkProgram.md`** — парк 3D-сетей, гейт приёмки новой сети, условия возврата закрытых
 1a2. **`@memory-bank/netParkResearch2026.md`** — **числа под план:** 3D Arena Elo, лицензии, доступность весов, ловушки
-1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0/Pixal3D/Direct3D-S2 🔴 quality closed; MCP last
+1b. **`@memory-bank/netsTexToolsPlan.md`** — **наш фокус:** сети/tex/инструменты; H0/Pixal3D/Direct3D-S2/Step1X 🔴 quality closed; MCP last
 2. **`@memory-bank/midPropHolesGate.md`** — mid-prop holes (🟢 closed via soft_input; archive + ops)
 3. **`@memory-bank/t2InternetAudit.md`** — **как правильно T2** (официалы vs обзоры vs наш рыцарь; стоп кругам)
 4. **`@memory-bank/t2FinishPlan.md`** — **дожим T2** (prod recipe, side/back pass, tex; Hi3DGen после)
@@ -42,6 +43,9 @@ python test_req_texture.py --mesh-url "<glb>" --image-url "<img>"  # Texture v1 
 python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v2 MV-Adapter (needs ENDPOINT)
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier medium --dry-run
+python scripts/check_product_multi_ux.py
+python scripts/check_fal_hub.py           # geo + credits 2.5x + FAL field names
+python scripts/fal_knight_ab.py           # dry-run payloads; --live spends FAL
 # Local Studio lab (generate + review): .\scripts\studio_lab.ps1
 #   http://127.0.0.1:8787/  →  /scripts/studio_lab.html
 #   полка GLB, файл→R2, рефы рыцарь/сундук; Generate = живой GPU
@@ -76,10 +80,11 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `memory-bank/netParkProgram.md` | **Парк 3D-сетей:** инвентарь, гейт приёмки, план шаги 1–6, условия возврата закрытых сетей |
 | `memory-bank/netParkResearch2026.md` | **Исследование 2026-08-20:** 3D Arena Elo, откуда миф «Hi3DGen лучший», Direct3D-S2 (MIT, веса, 1024³), ловушка Sparc3D, лицензия Hunyuan |
 | `memory-bank/midPropHolesGate.md` | mid-prop holes gate (🟢 closed; soft_input) |
-| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0/Pixal3D/Direct3D-S2 🔴 quality closed; next Step1X-3D; MCP last |
+| `memory-bank/netsTexToolsPlan.md` | **Фокус generation:** H0/Pixal3D/Direct3D-S2/Step1X 🔴 quality closed; next TripoSG; MCP last |
 | `scripts/pixal3d_n2_spike.md` | **N2 Pixal3D:** 🔴 закрыт 2026-08-21 как quality |
 | `scripts/direct3ds2_n3_spike.md` | **N3 Direct3D-S2:** 🔴 закрыт 2026-08-21 как quality (другой персонаж) |
-| `scripts/step1x3d_n4_spike.md` | **N4 Step1X-3D:** geometry-only, Apache-2.0, гейт vs T2 |
+| `scripts/step1x3d_n4_spike.md` | **N4 Step1X-3D:** 🔴 закрыт 2026-08-22 как quality (мыло) |
+| `scripts/triposg_n5_spike.md` | **N5 TripoSG:** MIT, >8 GB, гейт vs T2 |
 | `Dockerfile.step1x3d` | Step1X-3D geometry: torch 2.5.1 cu124, без texture baker |
 | `worker_step1x3d.py` | RunPod handler: image → watertight clay GLB |
 | `Dockerfile.direct3ds2` | Direct3D-S2 image: torch 2.5.1 cu121 + torchsparse + voxelize |
@@ -101,6 +106,9 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `scripts/mvpainter_w3_spike.md` | **W3** delight/PBR на native T2 669k (не 80k) |
 | `Dockerfile.mvadapter` | MV-Adapter texture worker image |
 | `worker_mvadapter.py` | RunPod handler: mesh+image → MV-Adapter textured GLB |
+| `memory-bank/falHubPlan.md` | **План v1:** свой T2 + витрина FAL (Meshy, Hunyuan гео-сплит, Hitem3D, Rodin, Tripo) |
+| `memory-bank/aiMeshFalContract.md` | Контракт AI_MESH: `/api/engines`, кредиты, гео Hunyuan, job id `fal:…` |
+| `memory-bank/tz50CtoReview.md` | **CTO-разбор ТЗ 5.0:** кабинет да; FAL wrap да; веса Hunyuan / greenfield монорепо нет |
 | `memory-bank/techContext.md` | Стек, API, секреты |
 | `memory-bank/systemPatterns.md` | Pipeline, решения |
 | `memory-bank/activeContext.md` | **Обновлять каждую сессию + push** |

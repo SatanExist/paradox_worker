@@ -5,17 +5,17 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-21** — **N3 Direct3D-S2 закрыт как quality** (глаза: другой персонаж, не наш рыцарь). 1024 clay 3.36M verts — плотность есть, идентичности нет. Pixal3D тоже закрыт. Ультра-персонаж остаётся T2 Realistic.  
-**Наш next:** **Step1X-3D** (Apache-2.0, геометрия+текстура; первый образ = только geometry). Hi3DGen — только быстрый тир. Sparc3D — ловушка, Hunyuan — EU вне лицензии.
+Последнее обновление: **2026-08-27** — шлюз FAL в `studio_bridge/` (Meshy + Hunyuan гео-сплит). ТЗ 5.0 greenfield не пилить.  
+Парк: N4 Step1X закрыт. **Next generation:** TripoSG. Hi3DGen — только черновик. Hunyuan веса — EU стоп; Hunyuan **на FAL** — не EU/UK/KR.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
-| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` |
-| **Мы / paradox_worker** | H0, Pixal3D, Direct3D-S2 как quality закрыты. Next = Step1X-3D geometry. T2 v21 не трогать |
-| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D / Direct3D-S2 — не переоткрывать как quality** |
-| **Наш next** | **Step1X-3D** (`roadmap.md` Ф2 prio 3): geometry-only образ, same-input A/B vs T2 Realistic **до** texture bake |
+| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` + `aiMeshFalContract.md` |
+| **Мы / paradox_worker** | H0, Pixal3D, Direct3D-S2, Step1X-3D как quality закрыты. Next = TripoSG. T2 v21 не трогать. FAL-шлюз: `gateway.py` |
+| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D / Direct3D-S2 / Step1X — не переоткрывать как quality** |
+| **Наш next** | **TripoSG** (`roadmap.md` Ф2 prio 4): same-input A/B vs T2 Realistic **до** ручек. FAL слоты: рыцарь `fal_knight_ab.py` пока pending |
 
 ---
 
@@ -43,7 +43,7 @@
 | 1 | **lab API + viewer** | **сделано** | `.venv-studio` + `studio_lab.ps1`; полка JPEG; лоадер в большом окне |
 | — | Studio UI | **сейчас у товарища** | сайт; мы не верстаем |
 | 2 | **Draco** | **skip** | не в worker; вернёмся только если сайт реально тормозит |
-| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | H0 + Pixal3D + Direct3D-S2 как quality закрыты → next Step1X-3D; RVG ждёт реальные фото |
+| ▲ | **Сети / tex / инструменты юзера** | **наш фокус** | H0 + Pixal3D + Direct3D-S2 + Step1X как quality закрыты → next TripoSG; RVG ждёт реальные фото |
 | ▼ | **MCP / Blender / Unreal** | **низший приоритет** | тот же `studio_api`; не начинать, пока живы сети/tex |
 | 4 | **MVPainter** | внутри ▲ | только если W3a polish мало |
 | * | RVG | внутри ▲, P4.0 | только реальные 2–4 фото |
@@ -499,6 +499,10 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-08-27 | **Агрегаторы 3D:** второго FAL дешевле Meshy/Rodin нет. WaveSpeed = те же $, ToS против SaaS. PoYo/Atlas — серые $0.30/$0.02. Выгода = sales вендора, не витрина. |
+| 2026-08-27 | **Цены FAL vs первоисточник:** playground глазами. Hitem3D/Tripo = 0% наценка; Meshy +33%; Rodin +38% к Business; T2 на FAL ×4–15. `falHubPlan.md`. |
+| 2026-08-26 | **План FAL-хаб:** `falHubPlan.md` — T2 default + Hitem3D/Rodin/Tripo v2.5 через FAL; не Hunyuan/Meshy v1. |
+| 2026-08-26 | **ТЗ 5.0 CTO review** (без кода): `tz50CtoReview.md`. Не greenfield hub; не Hunyuan/Tripo в Generate. Credits → AI_MESH. |
 | 2026-08-13 | **D4.1 CI GREEN** `a48c0e3` → `ghcr.io/...:reconviagen-sha-a48c0e3`. Next = pod smoke F+B на image. |
 | 2026-08-12 | **D4 план в memory:** отдельный endpoint; CI gate → smoke A/B → tier; P1 UX параллельно; scaffold Dockerfile+worker+CI |
 | 2026-08-11 | **D3 ABORT** pod terminate; правило Dockerfile; next D4 image. HF eyes всё ещё GO. |
@@ -999,6 +1003,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-08-27** | Pedrokita | **FAL-хаб v1 в worker:** `fal_client` / `engines` / `gateway` / `geo` / `credits`. Meshy+Hunyuan через официальные Queue-туторы FAL (`image_url` vs `input_image_url` vs `input_image_urls`). Hunyuan 403 для EU/UK/KR. Lab: селектор движка + кредиты. Контракт `aiMeshFalContract.md` (AI_MESH на этом ПК нет). Рыцарь A/B dry-run `fal_knight_ab.py`, `knightGate=pending` | Товарищ: Studio бьёт `/api/engines` + `engine` в POST `/api/jobs`. `FAL_KEY` в `.env`. Глаза на рыцаре до прода слота |
+| **2026-08-22** | Pedrokita | **N4 Step1X-3D 🔴 закрыт как quality.** Джоб `1c234d4e` (`a521e1e`): octree 384, 113k v / 200k f / 4.8 MB. Глаза: «кошмарный» — мыло, рваный силуэт, львы нет. Texture не открываем. Эндпоинт `tqut3hnptiuck1` idle `workersMax=0`. Spike N5 TripoSG | scaffold TripoSG → CI → A/B рыцарь |
 | **2026-08-21** веч | Pedrokita | **N3 Direct3D-S2 🔴 закрыт как quality.** Джоб `f039fb2c` (`10fb5d7`): 1024, 3.36M v / 6.71M f / 115 MB. Глаза: **другой персонаж** (рога→ушки, львы→шипы), хуже Pixal3D. Эндпоинт `1mrato3n6qoywv` idle `workersMax=0`. Не 512, не seed. **N4 Step1X-3D scaffold:** geometry-only (`Dockerfile.step1x3d`, без pytorch3d/kaolin). Текстуру не класть, пока идентичность не PASS | **commit+push** → CI Step1X → endpoint `workersMin=0` → A/B рыцарь vs T2 |
 | **2026-08-21** | Pedrokita | **N3 Direct3D-S2 scaffold.** Отдельный образ (`Dockerfile.direct3ds2`: torch 2.5.1 cu121, transformers 4.40.2, torchsparse с `main`, voxelize/`udf_ext`, xformers вместо flash-attn). Воркер сразу `sdf_resolution=1024`, remesh off. Том T2 переиспользуем (~7.9 GB влезет). CI workflow `build-direct3ds2.yml` | **commit+push** → CI (запас 2–3 итерации на torchsparse) → endpoint `workersMin=0` → A/B рыцарь vs T2 |
 | **2026-08-21** | Pedrokita | **N2 Pixal3D 🔴 закрыт как quality.** 1024 (`1f87f4c1`) слабый; 1536 на 48 GB отменён (EU-RO-1 = None); 1536+LOW_VRAM на 4090 (`2008e6a6`, 863k verts, `n2_pixal3d_knight_1536.glb`) — глаза «ниже среднего»: львы мыло, дыра на спине, пластик. Не апгрейд над T2. Эндпоинт idle | **Direct3D-S2** — отдельный образ, `sdf_resolution=1024` |

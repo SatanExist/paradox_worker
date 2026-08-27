@@ -246,3 +246,14 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 
 Клиенты Blender, Unreal, Cursor — **тот же** `studio_api`, не RunPod напрямую.  
 **Не начинать**, пока живы сети, текстуры и инструменты юзера. Ключ GPU только на бэке.
+
+## Хаб / ТЗ 5.0 (решение 2026-08-26, шлюз 2026-08-27)
+
+Внешний blueprint «Multi-Model Hub + C++ remesh» **не внедрять как написано**.
+
+- Кабинет и кошелёк — продукт **AI_MESH**; контракт: `memory-bank/aiMeshFalContract.md`.
+- Default генерация — **T2**; draft — Hi3DGen; чужие сети — **FAL Queue** (`studio_bridge/fal_client.py`), ключ `FAL_KEY` только на сервере.
+- Meshy / Hunyuan / Hitem3D / Rodin / Tripo — Partner FAL. Hunyuan: гео-гейт EU/UK/KR (`studio_bridge/geo.py`), не веса на RunPod.
+- Consumer-ключи meshy.ai / Tripo Studio — стоп.
+- C++ remesh — не обязательный шлюз после GLB; позже как платная доводка.
+- Разбор: `memory-bank/tz50CtoReview.md`. План витрины: `memory-bank/falHubPlan.md`.

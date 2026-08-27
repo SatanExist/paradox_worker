@@ -1,4 +1,4 @@
-"""Minimal HTTP API for AI_MESH Studio integration (image/text → T2 RunPod)."""
+"""HTTP API for AI_MESH Studio (T2 / Hi3DGen / FAL Partner engines)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Literal
 
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,9 +34,17 @@ from studio_bridge.lab_workspace import (  # noqa: E402
     save_lab_thumbnail,
     workspace_payload,
 )
+from studio_bridge.credits import credit_catalog  # noqa: E402
+from studio_bridge.engines import DEFAULT_ENGINE, engine_catalog  # noqa: E402
+from studio_bridge.fal_client import FalHttpError, FalNotConfiguredError  # noqa: E402
+from studio_bridge.gateway import (  # noqa: E402
+    EngineNotConfiguredError,
+    create_studio_job,
+    get_studio_job,
+)
+from studio_bridge.geo import HunyuanGeoBlocked, country_from_headers  # noqa: E402
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
 from studio_bridge.r2_public import R2NotConfiguredError, upload_public_file  # noqa: E402
-from studio_bridge.service import create_job, get_job  # noqa: E402
 from studio_bridge.text2image import Text2ImageNotConfiguredError  # noqa: E402
 from studio_bridge.tiers import (  # noqa: E402
     DEFAULT_MULTI_IMAGE_MODE,
@@ -47,7 +56,7 @@ from studio_bridge.tiers import (  # noqa: E402
     TierName,
 )
 
-app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.6.0")
+app = FastAPI(title="AI_MESH Studio Bridge (POC)", version="0.7.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,6 +65,10 @@ app.add_middleware(
         "http://localhost:8787",
         "http://127.0.0.1:8765",
         "http://localhost:8765",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,6 +112,14 @@ class CreateJobRequest(BaseModel):
     )
     prompt: str | None = None
     seed: int = Field(default=1, ge=0)
+    engine: str = Field(
+        default=DEFAULT_ENGINE,
+        description="trellis2 (default), hi3dgen, meshy, hunyuan, hunyuan_pro, hitem3d, rodin, tripo…",
+    )
+    country: str | None = Field(
+        default=None,
+        description="ISO 3166-1 alpha-2. Required for Hunyuan; else CF-IPCountry.",
+    )
 
     @model_validator(mode="after")
     def _require_image_or_urls(self) -> CreateJobRequest:
@@ -121,7 +142,7 @@ PROXY_GLB_TIMEOUT_SEC = 8
 
 
 def _fetch_glb_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "paradox-studio-lab"})
+    request = UrlRequest(url, headers={"User-Agent": "paradox-studio-lab"})
     with urlopen(request, timeout=PROXY_GLB_TIMEOUT_SEC) as upstream:
         return upstream.read()
 
@@ -148,10 +169,29 @@ async def proxy_glb(url: str) -> Response:
     )
 
 
+def _country_from(request: Request, explicit: str | None = None) -> str | None:
+    return country_from_headers(request.headers, explicit=explicit)
+
+
 @app.get("/api/product-copy")
-def product_copy() -> dict:
-    """Studio copy + slot contract (productMultiUx path A)."""
-    return studio_copy_bundle()
+def product_copy(request: Request, country: str | None = None) -> dict:
+    """Studio copy + slot contract (productMultiUx path A) + engine/credit catalog."""
+    return studio_copy_bundle(country=_country_from(request, country))
+
+
+@app.get("/api/engines")
+def list_engines(request: Request, country: str | None = None) -> dict:
+    resolved = _country_from(request, country)
+    return {
+        "country": resolved,
+        "defaultEngine": DEFAULT_ENGINE,
+        "engines": engine_catalog(country=resolved),
+    }
+
+
+@app.get("/api/credits")
+def list_credits() -> dict:
+    return credit_catalog()
 
 
 @app.get("/api/lab/workspace")
@@ -216,11 +256,13 @@ def lab_save_thumbnail(body: ThumbBody) -> dict:
 
 
 @app.post("/api/jobs")
-def post_job(body: CreateJobRequest) -> dict:
+def post_job(body: CreateJobRequest, request: Request) -> dict:
     slots = body.viewSlots.model_dump() if body.viewSlots else None
+    country = _country_from(request, body.country)
     try:
-        return create_job(
+        return create_studio_job(
             mode=body.mode,
+            engine=body.engine,
             tier=body.tier,
             image_url=body.imageUrl,
             image_urls=body.imageUrls,
@@ -231,9 +273,16 @@ def post_job(body: CreateJobRequest) -> dict:
             texture_mode=body.textureMode,
             prompt=body.prompt,
             seed=body.seed,
+            country=country,
         )
+    except HunyuanGeoBlocked as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Text2ImageNotConfiguredError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except (FalNotConfiguredError, EngineNotConfiguredError) as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except FalHttpError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -241,9 +290,26 @@ def post_job(body: CreateJobRequest) -> dict:
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job_status(job_id: str, tier: TierName = DEFAULT_PRESET) -> dict:
+def get_job_status(
+    job_id: str,
+    request: Request,
+    tier: TierName = DEFAULT_PRESET,
+    country: str | None = None,
+) -> dict:
     try:
-        return get_job(job_id, tier=tier)
+        return get_studio_job(
+            job_id,
+            tier=tier,
+            country=_country_from(request, country),
+        )
+    except HunyuanGeoBlocked as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (FalNotConfiguredError, EngineNotConfiguredError) as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except FalHttpError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

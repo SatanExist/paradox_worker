@@ -54,8 +54,11 @@ COPY_VIEWER = (
 )
 
 
-def studio_copy_bundle() -> dict[str, Any]:
+def studio_copy_bundle(*, country: str | None = None) -> dict[str, Any]:
     """JSON-serializable copy for Studio / help pages."""
+    from studio_bridge.credits import credit_catalog
+    from studio_bridge.engines import DEFAULT_ENGINE, engine_catalog
+
     return {
         "underFront": COPY_UNDER_FRONT,
         "underExtraViews": COPY_UNDER_EXTRA_VIEWS,
@@ -71,6 +74,14 @@ def studio_copy_bundle() -> dict[str, Any]:
         "viewerIblHint": COPY_VIEWER,
         "defaultQualityPreset": DEFAULT_PRESET,
         "qualityPresets": quality_preset_catalog(),
+        "defaultEngine": DEFAULT_ENGINE,
+        "engines": engine_catalog(country=country),
+        "credits": credit_catalog(),
+        "hunyuanGeo": {
+            "blockedRegions": ["EU", "GB", "KR"],
+            "header": "CF-IPCountry",
+            "failClosed": True,
+        },
     }
 
 
