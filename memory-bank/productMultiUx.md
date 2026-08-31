@@ -99,7 +99,7 @@
 | legacy | `imageUrls` 2–4 без ролей — всё ещё ок |
 | copy для UI | `GET /api/product-copy` (`qualityPresets`, `engines`, `credits`, слоты) |
 | quality preset | `low` \| `medium` \| `high` \| `realistic` (default **medium**). Legacy: `preview`→low, `quality`→medium, `ultra`→high |
-| engine | default `trellis2`. FAL: `meshy`, `hunyuan` (не EU/UK/KR), `hitem3d`, `rodin`, `tripo`. См. `aiMeshFalContract.md` |
+| engine | default `trellis2`. Витрина: Meshy (FAL), Hitem, Tripo, Rodin. Hunyuan **нет**. См. `aiMeshFalContract.md` + `workspaceFrontend.md` |
 
 Worker допускает до 8 URL; **продукт Studio = max 4** (не расширять без причины).
 
@@ -122,7 +122,7 @@ Worker допускает до 8 URL; **продукт Studio = max 4** (не р
 |-----|-----|--------|
 | 1. Эта спека | `paradox_worker` memory | ✅ |
 | 1b. Bridge `viewSlots` + `/api/product-copy` | `studio_bridge` | ✅ 2026-08-13; **2026-08-16:** пресеты low/medium/high/realistic + native PBR |
-| 2. Слоты + copy в Studio UI | **AI_MESH** | ⏳ пакет §11 **ещё не слали**. Прототип: `studio_lab.html` |
+| 2. Слоты + copy в Studio UI | **AI_MESH** | ⏳ 2026-08-31: пакет обновлён (`workspaceFrontend.md`). Прототип lab: карточки движков |
 | 3. Smoke: 3–4 **реальных** фото → multi vs single глазами | paradox worker / R2 | ⏳ когда есть съёмка |
 | 4. Help-статья на сайте | AI_MESH | ⏳ вместе с UI |
 
@@ -141,13 +141,17 @@ A UX: locked. Bridge + presets + qualityReduced ✅. Lab прототип ✅.
 
 > Репо сайта = **AI_MESH**. Этот репо = API + прототип + контракт. GPU не трогать.
 > Ветка worker: `feat/trellis2-poc`. Сначала `git pull`.
+> Актуальный бриф Workspace: **`workspaceFrontend.md`** (промпт + каталог движков).
 
 ### Промпт в новый чат Cursor (AI_MESH)
+
+Короткий актуальный — в `workspaceFrontend.md`. Ниже старый каркас слотов/пресетов (всё ещё верно).
 
 ```
 Работай в AI_MESH (сайт). GPU/RunPod не трогай — это paradox_worker.
 
-Контракт (можно открыть соседним окном paradox_worker):
+Контракт (соседнее окно paradox_worker, ветка feat/trellis2-poc, git pull):
+@memory-bank/workspaceFrontend.md
 @memory-bank/productMultiUx.md
 Смотри §11 и GET /api/product-copy.
 

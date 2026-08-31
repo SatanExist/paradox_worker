@@ -1,10 +1,14 @@
-"""Studio job gateway: RunPod T2/Hi3DGen + FAL Partner engines.
+"""Studio job gateway: RunPod T2/Hi3DGen + FAL Meshy + Hitem/Tripo/Rodin direct.
 
-FAL_KEY and RUNPOD_API_KEY stay on the server. Job ids:
+FAL_KEY, HITEM_CLIENT_*, TRIPO_API_KEY, RODIN_API_KEY/HYPER3D_API_KEY, RUNPOD_API_KEY
+stay on the server. Job ids:
 
   <runpod-uuid>              TRELLIS.2 (backward compatible)
   rp:hi3dgen:<runpod-uuid>   Hi3DGen
-  fal:<engine>:<request_id>  FAL queue
+  fal:<engine>:<request_id>  FAL queue (live shelf = Meshy only)
+  hitem:<engine>:<task_id>   Hitem Open Platform
+  tripo:<engine>:<task_id>   Tripo Developers
+  rodin:<engine>:<uuid>|<subscription_key>  Rodin / Hyper3D
 """
 
 from __future__ import annotations
@@ -15,10 +19,12 @@ from typing import Any
 from studio_bridge.credits import quote_engine, refund_payload
 from studio_bridge.engines import (
     DEFAULT_ENGINE,
+    FAL_SHELF_IDS,
     build_fal_arguments,
     extract_glb_url,
     get_engine,
     is_hunyuan_engine,
+    on_fal_shelf,
 )
 from studio_bridge.fal_client import (
     FalHttpError,
@@ -28,6 +34,30 @@ from studio_bridge.fal_client import (
     submit,
 )
 from studio_bridge.geo import HunyuanGeoBlocked, assert_hunyuan_allowed
+from studio_bridge.hitem_client import (
+    HitemHttpError,
+    HitemNotConfiguredError,
+    map_hitem_state,
+    query_task as query_hitem_task,
+    submit_image_to_3d as submit_hitem,
+)
+from studio_bridge.rodin_client import (
+    RodinHttpError,
+    RodinNotConfiguredError,
+    download_urls as download_rodin,
+    map_rodin_jobs,
+    pick_glb as pick_rodin_glb,
+    query_status as query_rodin_status,
+    submit_image_to_3d as submit_rodin,
+)
+from studio_bridge.tripo_client import (
+    TripoHttpError,
+    TripoNotConfiguredError,
+    map_tripo_status,
+    pick_glb as pick_tripo_glb,
+    query_task as query_tripo_task,
+    submit_image_to_3d as submit_tripo,
+)
 from studio_bridge.normalize import map_runpod_status, normalize_job_payload
 from studio_bridge.product_multi_ux import status_line
 from studio_bridge.service import (
@@ -41,6 +71,9 @@ from studio_bridge.tiers import DEFAULT_PRESET, TextureMode, TierName
 
 HI3DGEN_PREFIX = "rp:hi3dgen:"
 FAL_PREFIX = "fal:"
+HITEM_PREFIX = "hitem:"
+TRIPO_PREFIX = "tripo:"
+RODIN_PREFIX = "rodin:"
 
 
 class EngineNotConfiguredError(RuntimeError):
@@ -60,6 +93,54 @@ def parse_fal_job_id(job_id: str) -> tuple[str, str] | None:
     if not sep or not engine_id or not request_id:
         raise ValueError("malformed FAL job id")
     return engine_id, request_id
+
+
+def encode_hitem_job_id(engine_id: str, task_id: str) -> str:
+    return f"{HITEM_PREFIX}{engine_id}:{task_id}"
+
+
+def parse_hitem_job_id(job_id: str) -> tuple[str, str] | None:
+    raw = (job_id or "").strip()
+    if not raw.startswith(HITEM_PREFIX):
+        return None
+    rest = raw[len(HITEM_PREFIX) :]
+    engine_id, sep, task_id = rest.partition(":")
+    if not sep or not engine_id or not task_id:
+        raise ValueError("malformed Hitem job id")
+    return engine_id, task_id
+
+
+def encode_tripo_job_id(engine_id: str, task_id: str) -> str:
+    return f"{TRIPO_PREFIX}{engine_id}:{task_id}"
+
+
+def parse_tripo_job_id(job_id: str) -> tuple[str, str] | None:
+    raw = (job_id or "").strip()
+    if not raw.startswith(TRIPO_PREFIX):
+        return None
+    rest = raw[len(TRIPO_PREFIX) :]
+    engine_id, sep, task_id = rest.partition(":")
+    if not sep or not engine_id or not task_id:
+        raise ValueError("malformed Tripo job id")
+    return engine_id, task_id
+
+
+def encode_rodin_job_id(engine_id: str, task_uuid: str, subscription_key: str) -> str:
+    return f"{RODIN_PREFIX}{engine_id}:{task_uuid}|{subscription_key}"
+
+
+def parse_rodin_job_id(job_id: str) -> tuple[str, str, str] | None:
+    raw = (job_id or "").strip()
+    if not raw.startswith(RODIN_PREFIX):
+        return None
+    rest = raw[len(RODIN_PREFIX) :]
+    engine_id, sep, tail = rest.partition(":")
+    if not sep or not engine_id or not tail:
+        raise ValueError("malformed Rodin job id")
+    task_uuid, bar, subscription_key = tail.partition("|")
+    if not bar or not task_uuid or not subscription_key:
+        raise ValueError("malformed Rodin job id")
+    return engine_id, task_uuid, subscription_key
 
 
 def encode_hi3dgen_job_id(runpod_id: str) -> str:
@@ -119,6 +200,11 @@ def create_studio_job(
     country: str | None = None,
 ) -> dict[str, Any]:
     spec = get_engine(engine)
+    if spec.provider == "fal" and not on_fal_shelf(spec.id):
+        raise EngineNotConfiguredError(
+            f"{spec.id} is off the FAL shelf ({sorted(FAL_SHELF_IDS)}). "
+            "Use the vendor API; Hunyuan waits on Tencent."
+        )
     if is_hunyuan_engine(spec.id):
         assert_hunyuan_allowed(country)
 
@@ -180,6 +266,84 @@ def create_studio_job(
             **quote_bits,
         }
 
+    if spec.provider == "hitem":
+        queued = submit_hitem(
+            spec.id,
+            image_urls=urls,
+            view_slots=view_slots,
+        )
+        task_id = str(queued.get("task_id") or "").strip()
+        if not task_id:
+            raise HitemHttpError(502, f"Hitem submit missing task_id: {queued}")
+        return {
+            "jobId": encode_hitem_job_id(spec.id, task_id),
+            "hitemTaskId": task_id,
+            "hitemModel": queued.get("model"),
+            "hitemResolution": queued.get("resolution"),
+            "mode": mode,
+            "engine": spec.id,
+            "provider": "hitem",
+            "vendor": spec.vendor,
+            "imageUrl": primary,
+            "imageUrls": urls,
+            "viewCount": len(urls),
+            "statusLine": status_line(len(urls)),
+            "prompt": text_prompt,
+            "etaSecondsCold": spec.eta_sec,
+            "etaSecondsWarm": spec.eta_sec,
+            "status": "queued",
+            **quote_bits,
+        }
+
+    if spec.provider == "tripo":
+        queued = submit_tripo(spec.id, image_urls=urls, seed=seed)
+        task_id = str(queued.get("task_id") or "").strip()
+        if not task_id:
+            raise TripoHttpError(502, f"Tripo submit missing task_id: {queued}")
+        return {
+            "jobId": encode_tripo_job_id(spec.id, task_id),
+            "tripoTaskId": task_id,
+            "tripoModel": queued.get("model"),
+            "mode": mode,
+            "engine": spec.id,
+            "provider": "tripo",
+            "vendor": spec.vendor,
+            "imageUrl": primary,
+            "imageUrls": urls,
+            "viewCount": len(urls),
+            "statusLine": status_line(len(urls)),
+            "prompt": text_prompt,
+            "etaSecondsCold": spec.eta_sec,
+            "etaSecondsWarm": spec.eta_sec,
+            "status": "queued",
+            **quote_bits,
+        }
+
+    if spec.provider == "rodin":
+        queued = submit_rodin(spec.id, image_urls=urls, view_slots=view_slots)
+        task_uuid = str(queued.get("uuid") or "").strip()
+        subscription_key = str(queued.get("subscription_key") or "").strip()
+        if not task_uuid or not subscription_key:
+            raise RodinHttpError(502, f"Rodin submit missing uuid/key: {queued}")
+        return {
+            "jobId": encode_rodin_job_id(spec.id, task_uuid, subscription_key),
+            "rodinUuid": task_uuid,
+            "rodinTier": queued.get("tier"),
+            "mode": mode,
+            "engine": spec.id,
+            "provider": "rodin",
+            "vendor": spec.vendor,
+            "imageUrl": primary,
+            "imageUrls": urls,
+            "viewCount": len(urls),
+            "statusLine": status_line(len(urls)),
+            "prompt": text_prompt,
+            "etaSecondsCold": spec.eta_sec,
+            "etaSecondsWarm": spec.eta_sec,
+            "status": "queued",
+            **quote_bits,
+        }
+
     arguments = build_fal_arguments(
         spec.id,
         image_urls=urls,
@@ -229,6 +393,18 @@ def get_studio_job(
     fal_parsed = parse_fal_job_id(job_id)
     if fal_parsed:
         return _get_fal_job(job_id, fal_parsed[0], fal_parsed[1], country=country)
+
+    hitem_parsed = parse_hitem_job_id(job_id)
+    if hitem_parsed:
+        return _get_hitem_job(job_id, hitem_parsed[0], hitem_parsed[1])
+
+    tripo_parsed = parse_tripo_job_id(job_id)
+    if tripo_parsed:
+        return _get_tripo_job(job_id, tripo_parsed[0], tripo_parsed[1])
+
+    rodin_parsed = parse_rodin_job_id(job_id)
+    if rodin_parsed:
+        return _get_rodin_job(job_id, rodin_parsed[0], rodin_parsed[1], rodin_parsed[2])
 
     hi3d = parse_hi3dgen_job_id(job_id)
     if hi3d:
@@ -333,13 +509,134 @@ def _get_fal_job(
     return payload
 
 
+def _get_hitem_job(job_id: str, engine_id: str, task_id: str) -> dict[str, Any]:
+    spec = get_engine(engine_id)
+    quote = quote_engine(spec.id)
+    data = query_hitem_task(task_id)
+    raw_state = str(data.get("state") or "")
+    mapped = map_hitem_state(raw_state)
+    glb = data.get("url") if isinstance(data.get("url"), str) else None
+    poster = data.get("cover_url") if isinstance(data.get("cover_url"), str) else None
+    payload: dict[str, Any] = {
+        "jobId": job_id,
+        "engine": spec.id,
+        "provider": "hitem",
+        "vendor": spec.vendor,
+        "hitemTaskId": task_id,
+        "status": mapped,
+        "hitemState": raw_state,
+        "modelUrl": glb if mapped == "ready" else None,
+        "posterUrl": poster,
+        "error": None if mapped != "failed" else (data.get("msg") or raw_state or "job_failed"),
+        "etaSecondsWarm": spec.eta_sec,
+        "etaSecondsCold": spec.eta_sec,
+        **_credit_fields(spec.id, tier="medium"),
+    }
+    if mapped == "ready" and (not glb or not str(glb).lower().endswith(".glb")):
+        payload["status"] = "failed"
+        payload.update(
+            refund_payload(quote, error="Hitem completed without a GLB (Studio needs GLB)")
+        )
+        return payload
+    if mapped == "ready":
+        payload["delivery"] = "hitem"
+    if mapped == "failed":
+        payload.update(refund_payload(quote, error=str(payload.get("error") or "job_failed")))
+    return payload
+
+
+def _get_tripo_job(job_id: str, engine_id: str, task_id: str) -> dict[str, Any]:
+    spec = get_engine(engine_id)
+    quote = quote_engine(spec.id)
+    data = query_tripo_task(task_id)
+    raw_state = str(data.get("status") or "")
+    mapped = map_tripo_status(raw_state)
+    glb, poster = pick_tripo_glb(data)
+    err = data.get("error_message") or data.get("message")
+    payload: dict[str, Any] = {
+        "jobId": job_id,
+        "engine": spec.id,
+        "provider": "tripo",
+        "vendor": spec.vendor,
+        "tripoTaskId": task_id,
+        "status": mapped,
+        "tripoStatus": raw_state,
+        "modelUrl": glb if mapped == "ready" else None,
+        "posterUrl": poster,
+        "error": None if mapped != "failed" else (err or raw_state or "job_failed"),
+        "etaSecondsWarm": spec.eta_sec,
+        "etaSecondsCold": spec.eta_sec,
+        **_credit_fields(spec.id, tier="medium"),
+    }
+    if mapped == "ready" and (not glb or not str(glb).lower().endswith(".glb")):
+        payload["status"] = "failed"
+        payload.update(
+            refund_payload(quote, error="Tripo completed without a GLB (Studio needs GLB)")
+        )
+        return payload
+    if mapped == "ready":
+        payload["delivery"] = "tripo"
+    if mapped == "failed":
+        payload.update(refund_payload(quote, error=str(payload.get("error") or "job_failed")))
+    return payload
+
+
+def _get_rodin_job(
+    job_id: str, engine_id: str, task_uuid: str, subscription_key: str
+) -> dict[str, Any]:
+    spec = get_engine(engine_id)
+    quote = quote_engine(spec.id)
+    status_body = query_rodin_status(subscription_key)
+    mapped = map_rodin_jobs(status_body)
+    payload: dict[str, Any] = {
+        "jobId": job_id,
+        "engine": spec.id,
+        "provider": "rodin",
+        "vendor": spec.vendor,
+        "rodinUuid": task_uuid,
+        "status": mapped,
+        "modelUrl": None,
+        "posterUrl": None,
+        "error": None if mapped != "failed" else "job_failed",
+        "etaSecondsWarm": spec.eta_sec,
+        "etaSecondsCold": spec.eta_sec,
+        **_credit_fields(spec.id, tier="medium"),
+    }
+    if mapped != "ready":
+        if mapped == "failed":
+            payload.update(refund_payload(quote, error="job_failed"))
+        return payload
+    glb = pick_rodin_glb(download_rodin(task_uuid))
+    if not glb or not str(glb).lower().endswith(".glb"):
+        payload["status"] = "failed"
+        payload.update(
+            refund_payload(quote, error="Rodin completed without a GLB (Studio needs GLB)")
+        )
+        return payload
+    payload["modelUrl"] = glb
+    payload["delivery"] = "rodin"
+    return payload
+
+
 # Re-export for tests
 __all__ = [
     "EngineNotConfiguredError",
     "FalNotConfiguredError",
+    "HitemHttpError",
+    "HitemNotConfiguredError",
     "HunyuanGeoBlocked",
+    "RodinHttpError",
+    "RodinNotConfiguredError",
+    "TripoHttpError",
+    "TripoNotConfiguredError",
     "create_studio_job",
     "encode_fal_job_id",
+    "encode_hitem_job_id",
+    "encode_rodin_job_id",
+    "encode_tripo_job_id",
     "get_studio_job",
     "parse_fal_job_id",
+    "parse_hitem_job_id",
+    "parse_rodin_job_id",
+    "parse_tripo_job_id",
 ]

@@ -1,6 +1,7 @@
 # CTO-разбор ТЗ 5.0 (без кода)
 
 > **Статус:** разбор 2026-08-26; шлюз FAL внедрён 2026-08-27 (`studio_bridge/gateway.py`). Код по ТЗ 5.0 greenfield **не** писать.  
+> **ТЗ 6.0 (Gemini 2026-08-28):** тот же хаб, выкинуть FAL + Delaware ради Meshy — разбор `tz60CtoReview.md`. Тоже **не** писать.  
 > **Вход:** «Game-Ready 3D AI Multi-Model Hub» v5.0 Production Blueprint.  
 > **Это не юрконсультация.** ToS — публичные страницы; COGS T2 — наши замеры в `systemPatterns.md` / `activeContext.md`.
 
@@ -11,7 +12,7 @@
 ## Вердикт одной фразой
 
 Кабинет + кредиты + опциональная доводка сетки — **да**.  
-Meshy и Hunyuan **на FAL** (ключ на бэкенде) — **да**; веса Hunyuan и consumer-ключи meshy.ai — **нет**.  
+Meshy и Hunyuan **на FAL** (ключ на бэкенде) — **да на момент разбора**; **2026-08-31:** FAL живой слот = **только Meshy**, Hunyuan ждёт Tencent, Tripo/Rodin/Hitem — прямой API. Веса Hunyuan и consumer-ключи meshy.ai — **нет**.  
 Новый монорепо `/backend` `/frontend` `/worker_cpp` в **paradox_worker** — **нет**: фронт = AI_MESH, GPU уже здесь.
 
 Документ полезен как черновик кабинета и кредитной модели. Как production blueprint — нет: цифры не сходятся с замерами, часть провайдеров запрещена правилами, стек дублирует живой, C++-ремеш не «ров».
@@ -39,7 +40,7 @@ Meshy и Hunyuan **на FAL** (ключ на бэкенде) — **да**; ве�
 | Hunyuan3D веса на RunPod | Community license: EU / UK / Korea **вне Territory, включая Output**. У нас стоп. Tencent Cloud HY 3D — другой продукт и договор, не «скачать веса». |
 | Tripo P1 «B2B» по ~$0.08 | Публичный Developer API есть. Сайт-ToS: нельзя отдавать foundation-сервис **end users** без письменного согласия. Без письма это не B2B. |
 | fal.ai Rodin ~$0.40 | FAL **разрешает** юзеров через ваш бэкенд (ключ не в браузер). Легальнее Tripo/Meshy «с улицы». Не default quality вместо T2. Проверить Partner-флаг и маржу с ретраями. |
-| Meshy выкинут | **Устарело 2026-08-27:** Meshy **на FAL** (`fal-ai/meshy/v6/image-to-3d`) можно wrap. Ключ meshy.ai — по-прежнему нет. |
+| Meshy выкинут | Wrap **на FAL** — да. Ключ meshy.ai consumer — нет. **Enterprise РФ 🔴 2026-08-28** (не support Russia). Не равнять 35/40 cr 3DAI. |
 
 **Не упомянуто в ТЗ, но легальнее Tripo без письма:** Hitem3D API. ToS §3.4(a) прямо: API-юзер может встроить сервис и пускать End Users. Для печати ближе к брифу AI_MESH.
 

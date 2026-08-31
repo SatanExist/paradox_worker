@@ -44,7 +44,10 @@ python test_req_mvadapter.py --mesh-url "<glb>" --image-url "<img>"  # Texture v
 python scripts/batch_seeds.py --image-url "<url>" --seeds 1 7 42 --out-prefix model
 python scripts/studio_smoke.py --mode image --tier medium --dry-run
 python scripts/check_product_multi_ux.py
-python scripts/check_fal_hub.py           # geo + credits 2.5x + FAL field names
+python scripts/check_fal_hub.py           # geo + credits 2.5x + catalog (Meshy/Hitem/Tripo/Rodin)
+python scripts/test_req_hitem.py          # dry-run Hitem Open Platform payload
+python scripts/test_req_tripo.py          # dry-run Tripo payload; --auth = balance
+python scripts/test_req_rodin.py          # dry-run Rodin payload; --auth = key present
 python scripts/fal_knight_ab.py           # dry-run payloads; --live spends FAL
 # Local Studio lab (generate + review): .\scripts\studio_lab.ps1
 #   http://127.0.0.1:8787/  →  /scripts/studio_lab.html
@@ -106,8 +109,9 @@ docker build -f Dockerfile.mvadapter -t paradox-mvadapter .  # MV-Adapter wow te
 | `scripts/mvpainter_w3_spike.md` | **W3** delight/PBR на native T2 669k (не 80k) |
 | `Dockerfile.mvadapter` | MV-Adapter texture worker image |
 | `worker_mvadapter.py` | RunPod handler: mesh+image → MV-Adapter textured GLB |
-| `memory-bank/falHubPlan.md` | **План v1:** свой T2 + витрина FAL (Meshy, Hunyuan гео-сплит, Hitem3D, Rodin, Tripo) |
-| `memory-bank/aiMeshFalContract.md` | Контракт AI_MESH: `/api/engines`, кредиты, гео Hunyuan, job id `fal:…` |
+| `memory-bank/falHubPlan.md` | **План v1:** свой T2 + Meshy на FAL + прямые Hitem/Tripo/Rodin |
+| `memory-bank/aiMeshFalContract.md` | Контракт AI_MESH: `/api/engines`, кредиты, job id `fal:` / `hitem:` / `tripo:` / `rodin:` |
+| `memory-bank/workspaceFrontend.md` | **Бриф Cursor на фронте:** карточки движков, `configured`, Hunyuan парк |
 | `memory-bank/tz50CtoReview.md` | **CTO-разбор ТЗ 5.0:** кабинет да; FAL wrap да; веса Hunyuan / greenfield монорепо нет |
 | `memory-bank/techContext.md` | Стек, API, секреты |
 | `memory-bank/systemPatterns.md` | Pipeline, решения |

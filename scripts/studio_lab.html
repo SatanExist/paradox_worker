@@ -87,6 +87,23 @@
       width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
       background: var(--elev); color: var(--text); font-size: 13px;
     }
+    .engine-groups { display: flex; flex-direction: column; gap: 10px; }
+    .engine-group h4 {
+      margin: 0 0 5px; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .engine-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .engine-card {
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px;
+      background: var(--elev); color: var(--text); cursor: pointer; text-align: left;
+      font: inherit;
+    }
+    .engine-card b { display: block; font-size: 11px; font-weight: 600; line-height: 1.25; }
+    .engine-card small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .engine-card.on { border-color: var(--accent-2); background: #1a2610; }
+    .engine-card.on small { color: var(--accent); }
+    .engine-card.need-key { opacity: .48; }
+    .engine-card.need-key small::after { content: " · нет ключа"; }
     .model-line { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
     .dropzone {
       margin-top: 10px; border: 1px dashed #3a3a42; border-radius: 12px;
@@ -325,7 +342,9 @@
           <button type="button" disabled title="Text to 3D — не в этом спринте">T</button>
         </div>
         <div class="label">Модель</div>
-        <select class="select" id="engine"></select>
+        <select class="select" id="engine" hidden></select>
+        <div id="engineGroups" class="engine-groups"></div>
+        <div id="geoRow" hidden>
         <label class="slot">Страна (гео Hunyuan)
           <select class="select" id="country">
             <option value="">auto / неизвестно → Hunyuan скрыт</option>
@@ -336,6 +355,7 @@
             <option value="KR">KR — Hunyuan скрыт</option>
           </select>
         </label>
+        </div>
         <p class="model-line" id="underFront">3D с одной картинки. Перед ближе к фото; бок и зад модель достраивает сама.</p>
 
         <div class="dropzone" id="dropzone">
@@ -507,6 +527,23 @@
       return (el && el.value) || "trellis2";
     }
 
+    const ENGINE_GROUPS = [
+      { id: "runpod", title: "Свои GPU" },
+      { id: "fal", title: "Meshy · FAL" },
+      { id: "hitem", title: "Hitem" },
+      { id: "tripo", title: "Tripo" },
+      { id: "rodin", title: "Rodin" },
+    ];
+
+    function selectEngine(id) {
+      const sel = document.getElementById("engine");
+      if (sel) sel.value = id;
+      document.querySelectorAll(".engine-card").forEach((btn) => {
+        btn.classList.toggle("on", btn.dataset.id === id);
+      });
+      updateGenerateMeta();
+    }
+
     function selectedCountry() {
       const el = document.getElementById("country");
       return (el && el.value) || "";
@@ -523,12 +560,20 @@
       document.getElementById("genEta").textContent = `~${Math.max(1, Math.round(warm / 60))} мин`;
       const credits = eng ? (eng.credits || "—") : "—";
       const extra = eng && eng.creditsColdSurcharge ? ` (+${eng.creditsColdSurcharge} cold)` : "";
-      document.getElementById("creditsLine").textContent = `${credits} cr${extra}`;
+      const missing = !!(eng && eng.configured === false);
+      document.getElementById("creditsLine").textContent = missing
+        ? `${credits} cr · нет ключа`
+        : `${credits} cr${extra}`;
       const presetsWrap = document.getElementById("presets");
       const qualityLabel = document.getElementById("qualityLabel");
       const showPresets = !eng || eng.qualityPresets;
       presetsWrap.hidden = !showPresets;
       qualityLabel.hidden = !showPresets;
+      const gen = document.getElementById("generate");
+      gen.disabled = missing;
+      gen.title = missing
+        ? "Ключ API не задан в .env — слот можно выбрать, generate позже"
+        : "";
       if (eng) {
         document.getElementById("underFront").textContent = eng.blurb || (copy && copy.underFront) || "";
       }
@@ -547,8 +592,36 @@
         sel.appendChild(opt);
       }
       if (prev && engines.some((e) => e.id === prev)) sel.value = prev;
-      sel.onchange = updateGenerateMeta;
-      updateGenerateMeta();
+      const wrap = document.getElementById("engineGroups");
+      wrap.innerHTML = "";
+      for (const group of ENGINE_GROUPS) {
+        const rows = engines.filter((e) => e.provider === group.id);
+        if (!rows.length) continue;
+        const box = document.createElement("div");
+        box.className = "engine-group";
+        const h = document.createElement("h4");
+        h.textContent = group.title;
+        box.appendChild(h);
+        const grid = document.createElement("div");
+        grid.className = "engine-grid";
+        for (const e of rows) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "engine-card";
+          if (e.configured === false) btn.classList.add("need-key");
+          btn.dataset.id = e.id;
+          btn.title = e.configured === false
+            ? `${e.blurb || e.label} · ключ не задан`
+            : (e.blurb || e.label);
+          const cr = e.credits != null ? `${e.credits} cr` : "";
+          btn.innerHTML = `<b>${e.label}</b><small>${cr}</small>`;
+          btn.onclick = () => selectEngine(e.id);
+          grid.appendChild(btn);
+        }
+        box.appendChild(grid);
+        wrap.appendChild(box);
+      }
+      selectEngine(sel.value || "trellis2");
     }
 
     function renderPresets(list) {
@@ -890,6 +963,10 @@
       const country = selectedCountry();
       const eng = currentEngine();
       const cr = eng ? eng.credits : "?";
+      if (eng && eng.configured === false) {
+        jobLine.textContent = `${engine}: ключ не задан в .env — generate позже`;
+        return;
+      }
       if (!confirm(`Отправить ${engine} (${cr} cr)? Это минуты и деньги.`)) return;
       document.getElementById("generate").disabled = true;
       try {
@@ -909,7 +986,7 @@
       } catch (err) {
         jobLine.textContent = err.message;
       } finally {
-        document.getElementById("generate").disabled = false;
+        updateGenerateMeta();
       }
     }
 

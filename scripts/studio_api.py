@@ -1,4 +1,4 @@
-"""HTTP API for AI_MESH Studio (T2 / Hi3DGen / FAL Partner engines)."""
+"""HTTP API for AI_MESH Studio (T2 / Hi3DGen / FAL Meshy / Hitem / Tripo / Rodin)."""
 
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ from studio_bridge.gateway import (  # noqa: E402
     create_studio_job,
     get_studio_job,
 )
+from studio_bridge.hitem_client import HitemHttpError, HitemNotConfiguredError  # noqa: E402
+from studio_bridge.rodin_client import RodinHttpError, RodinNotConfiguredError  # noqa: E402
+from studio_bridge.tripo_client import TripoHttpError, TripoNotConfiguredError  # noqa: E402
 from studio_bridge.geo import HunyuanGeoBlocked, country_from_headers  # noqa: E402
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
 from studio_bridge.r2_public import R2NotConfiguredError, upload_public_file  # noqa: E402
@@ -114,7 +117,7 @@ class CreateJobRequest(BaseModel):
     seed: int = Field(default=1, ge=0)
     engine: str = Field(
         default=DEFAULT_ENGINE,
-        description="trellis2 (default), hi3dgen, meshy, hunyuan, hunyuan_pro, hitem3d, rodin, tripo…",
+        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, rodin, rodin_extreme.",
     )
     country: str | None = Field(
         default=None,
@@ -279,9 +282,15 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Text2ImageNotConfiguredError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except (FalNotConfiguredError, EngineNotConfiguredError) as exc:
+    except (
+        FalNotConfiguredError,
+        EngineNotConfiguredError,
+        HitemNotConfiguredError,
+        TripoNotConfiguredError,
+        RodinNotConfiguredError,
+    ) as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except FalHttpError as exc:
+    except (FalHttpError, HitemHttpError, TripoHttpError, RodinHttpError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -304,9 +313,15 @@ def get_job_status(
         )
     except HunyuanGeoBlocked as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except (FalNotConfiguredError, EngineNotConfiguredError) as exc:
+    except (
+        FalNotConfiguredError,
+        EngineNotConfiguredError,
+        HitemNotConfiguredError,
+        TripoNotConfiguredError,
+        RodinNotConfiguredError,
+    ) as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except FalHttpError as exc:
+    except (FalHttpError, HitemHttpError, TripoHttpError, RodinHttpError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

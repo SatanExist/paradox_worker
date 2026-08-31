@@ -1,24 +1,31 @@
-# План: свой T2 + набор через FAL
+# План: свой T2 + Meshy на FAL + прямые API заводов
 
-> **Дата:** 2026-08-26  
+> **Дата:** 2026-08-26; **касса 2026-08-31:** FAL = **только Meshy**.  
 > **Зачем:** что реально можно продавать без своего фундамента и без consumer-ключей Meshy.  
-> **Связь:** `tz50CtoReview.md` (что выкинуть из ТЗ 5.0), FAL API Services (юзеры через наш бэкенд, ключ FAL не в браузер).
+> **Связь:** `tz50CtoReview.md`, FAL API Services (ключ FAL не в браузер).
 
-Не юрконсультация. Цены FAL — playground 2026-08-27 (глазами). COGS T2 — наши замеры. Сверка с вендорами: раздел ниже.
+Не юрконсультация. Цены FAL — playground 2026-08-27 (глазами). COGS T2 — наши замеры.
 
 ---
 
-## Что мы можем (мнение)
+## Решение кассы (2026-08-31)
 
-1. **Сайт-кабинет** (AI_MESH): кредиты, полка GLB, Generate, пресеты отраслей, слоты реальных фото. Это и есть товар.
-2. **Своя генерация** (этот репо): TRELLIS.2 = качество по умолчанию; Hi3DGen = быстрый черновик. Самохост дешевле FAL Trellis 2.
-3. **Набор чужих сетей через FAL**, не через личные кабинеты Meshy/Tripo: ключ FAL на бэкенде, в UI честно написано чья сеть.
-4. **Платная доводка** (позже): упростить сетку / STL / LOD на готовом файле. Не мясорубка после каждой генерации.
-5. **Не делаем:** Hunyuan-**веса** у себя (EU/UK/KR вне лицензии, включая Output). Ключ с meshy.ai / tripo3d.ai в Generate. Цифра 98% маржи на T2 quality.
+**На FAL оставляем только Meshy** (завод для РФ закрыт, другого белого склада нет).
 
-**Письма на meshy.ai / tripo3d.ai / Tencent не нужны**, чтобы крутить то, что уже на FAL как Partner + commercial use. Договор тогда с FAL. Письмо — только если нужен опт дешевле FAL или Hunyuan для ЕС через Tencent Cloud Europe.
+Остальное **не через FAL**:
 
-FAL — касса чужих сетей. Не замена T2.
+| Слот | Чем крутим | Статус |
+|------|------------|--------|
+| T2 / Hi3DGen | наш RunPod | живой |
+| Meshy | FAL Partner | живой каталог |
+| Tripo | `openapi.tripo3d.ai` | wrap YES (Lorna); **адаптер live** `tripo_client.py` (H3.1 / P1). Generate — позже |
+| Rodin | `api.hyper3d.com` | wrap YES (David); conc=1; **адаптер live** `rodin_client.py` (High / Extreme). Generate — позже |
+| Hitem | `api.hitem3d.ai` | **живой адаптер** `hitem_client.py`. Селфсервис: ключ в `.env`. Sales только conc>30 |
+| Hunyuan | Tencent Cloud **позже** | снят с FAL; веса на RunPod нет |
+
+FAL Trellis-2 / FAL Rodin / FAL Tripo / FAL Hitem / FAL Hunyuan — не витрина. Билдеры в коде спрятаны (`show_in_catalog=False`), create на них → 501.
+
+FAL — не замена T2. Default = T2.
 
 ---
 
@@ -28,15 +35,23 @@ FAL — касса чужих сетей. Не замена T2.
 |-----------|------------|---------------|-----------------|-------|
 | Черновик | наш Hi3DGen | дёшево | низкий тариф | секунды, не обещать рыцаря |
 | Качество (default) | наш T2 | warm ~$0.02–0.08, realistic/cold выше | средний/высокий тариф, отдельно cold | единственный прошедший наш рыцарь |
-| Meshy 6 | FAL `fal-ai/meshy/v6/image-to-3d` | ~$0.80 | ≥2.5× (~80 cr) | **в v1** через FAL, не ключ meshy.ai; не default |
-| Hunyuan Rapid/Pro | FAL `fal-ai/hunyuan-3d/v3.1/{rapid,pro}/image-to-3d` | $0.225 / $0.375 | ≥2.5× | **гео-сплит:** EU/UK/KR скрыт+403; иначе слот, не default |
-| Печать / деталь | FAL `hitem3d/hi3d/image-to-3d` | ~$0.50 fast / ~$0.90 pro | ≥2.5× | ToS Hitem3D разрешает End Users |
-| Органика / hero | FAL `fal-ai/hyper3d/rodin/v2` | $0.40 (HighPack ×3) | ~2.5× | Partner FAL, не default |
-| Быстрый чужой | FAL `tripo3d/tripo/v2.5/image-to-3d` | $0.20–0.40 | ~2.5× | Partner FAL; не путать с письмом в Tripo Studio |
-| Запас T2 | FAL `fal-ai/trellis-2` | $0.25 / $0.30 / $0.35 (512/1024/1536) | только если наш GPU лёг | **дороже своего T2** — не витрина |
+| Meshy 7 | **FAL** `meshy/v7/image-to-3d` (в коде ещё v6) | глина **$0.80**, tex **$1.20** | ≥2.5× (80 / 120 cr) | **единственный слот FAL.** Не default. 3DAI 35/40 cr не копировать. Enterprise РФ 🔴. |
+| Tripo | прямой API (H3.1 / P1) | H tex ~$0.30; P1 ~$0.50 | ≥2.5× от PAYG | wrap YES; не FAL v2.5 |
+| Rodin | прямой API Gen-2.5 | High $0.30; Extreme-High $0.60 | ≥2.5× | wrap YES; **1 concurrent** |
+| Hitem | прямой API `hitem3d` / `_pro` / `_v3` / `_portrait` | fast $0.50 / pro $0.90 / v3 $2.10 | ≥2.5× | селфсервис, ключ в `.env` |
+| Hunyuan | Tencent **позже** | — | — | не FAL. Веса на RunPod нет. |
+| Запас T2 на FAL | не кладём | $0.25–0.35 | — | дороже своего T2 |
 
-**Meshy на FAL** (`fal-ai/meshy/v6/image-to-3d`, ~$0.80, Partner): **в v1**. Письмо на meshy.ai не нужно. Не default из-за цены.  
-**Hunyuan на FAL:** Tencent через FAL, не наши веса. **Глобальный гео-сплит:** слот только вне EU/UK/KR; сервер 403 + UI hide. Веса Hunyuan на RunPod — нет.
+**Meshy на FAL** (`fal-ai/meshy/v6` в шлюзе; playground v7 $0.80/$1.20): не default, не демпинг «как 3DAI за 35 cr». Ключ meshy.ai consumer — нет. **Enterprise Meshy для РФ закрыт 2026-08-28** (compliance). Опт завода нет.  
+**Hunyuan:** не на витрине, пока не разберём Tencent Cloud. Гео-гейт EU/UK/KR в коде остаётся на потом. Веса Hunyuan на RunPod — нет.
+
+### Meshy 7 vs 3DAI (глаза 2026-08-27)
+
+Воркспейс 3DAI точнее карточки: Ultra/tex/PBR off → **35 cr**, 5–10 мин; tex+PBR on → **40 cr**. Basic $19/1000 cr = $0.019/cr → $0.67 / $0.76. Завод Meshy API: 20 / 30 cr × $0.02 (Pro) = $0.40 / $0.60. Склады: FAL $0.80/$1.20; Pixazo как FAL; WaveSpeed $0.88/$1.32 (ToS против SaaS). Дешёвая цена 3DAI — не агрегатор.
+
+Правила витрины с этого SKU: default T2; Meshy — именной слот с ETA 5–10 мин; тумблер текстуры прыгает в кредитах, не +5 cr; пакет не копировать $19=1000 под их Meshy.
+
+**РФ (практика, не юрсовет):** селфсервис RunPod/FAL с Visa у нас уже проходит — это не «всё запрещено». Enterprise KYC (страна компании, счёт) жёстче кабинета. На созвоне Meshy не играть чужую страну. Приём денег от юзеров (Stripe из РФ) — отдельный слой, не путать с оплатой FAL.
 
 ---
 
@@ -89,7 +104,7 @@ FAL — касса чужих сетей. Не замена T2.
 | **3D AI Studio API** | их кредиты | конкурент | Строить хаб на их API = копировать Dashboard |
 | **Kie.ai** | 3D-партнёров нет | реселлер видео/картинок | Не наш стек |
 
-Где искать выгоду по Meshy/Rodin: **не агрегатор**, а Meshy sales (volume) и Hyper3D Business/Enterprise ($120 пол, ~$0.29/модель **если** их API ToS пускает End Users). Иначе FAL.
+Где искать выгоду по Meshy: только FAL (завод РФ закрыт). Rodin/Tripo/Hitem — прямой API, не FAL.
 
 Hitem3D можно и напрямую (цена = FAL, ToS End Users). Tripo Developer PAYG = FAL. Hunyuan EU — Tencent Cloud Europe, не дешёвые витрины.
 
@@ -101,12 +116,14 @@ Hitem3D можно и напрямую (цена = FAL, ToS End Users). Tripo De
 AI_MESH Studio  →  кошелёк кредитов
         →  studio_api / бэкенд AI_MESH
               ├── RunPod T2 / Hi3DGen
-              └── FAL (один ключ, не в браузер)
+              ├── FAL — только Meshy (ключ не в браузер)
+              ├── Hitem Open Platform (HITEM_CLIENT_*)
+              └── прямые API: Tripo, Rodin (адаптеры next)
         →  GLB на R2  →  кабинет
-        →  позже: кнопка remesh/LOD на готовом файле
+        →  позже: Hunyuan через Tencent; кнопка remesh/LOD
 ```
 
-Ключ FAL и ключ RunPod только на сервере. Юзер видит «Rodin (Hyper3D)» / «Hitem3D», не «наша секретная SOTA».
+Ключи FAL / RunPod / Tripo / Rodin только на сервере. Юзер видит «Rodin (Hyper3D)» / «Tripo», не «наша секретная SOTA».
 
 ---
 
@@ -115,17 +132,86 @@ AI_MESH Studio  →  кошелёк кредитов
 **Фаза 0 — кабинет (AI_MESH, сейчас)**  
 Кредиты, джобы, полка, пресеты, слоты Front/Side/Back. Generate = T2. Draft = Hi3DGen.
 
-**Фаза 1 — шлюз FAL (этот репо + AI_MESH)**  
-Код: `studio_bridge/fal_client.py`, `engines.py`, `gateway.py`, `geo.py`, `credits.py`. Lab: селектор в `studio_lab.html`. Контракт для сайта: `aiMeshFalContract.md`.  
-Слоты: Meshy, Hunyuan (гео-сплит), Hitem3D, Rodin, Tripo v2.5. Рыцарь A/B: `scripts/fal_knight_ab.py` (dry-run; `--live` жжёт FAL). Пока `knightGate=pending`.
+**Фаза 1 — шлюз (этот репо + AI_MESH)**  
+Код: `studio_bridge/fal_client.py`, `engines.py`, `gateway.py`, `geo.py`, `credits.py`.  
+Живой FAL-слот: **Meshy**. Рыцарь A/B: `scripts/fal_knight_ab.py` (по умолчанию только meshy). `knightGate=pending`.  
+Next: адаптеры Tripo / Rodin. Hitem уже в шлюзе. Hunyuan — Tencent, не сейчас.
 
 **Фаза 2 — доводка**  
 Python remesh/STL на GLB с R2, платная кнопка. Не C++ в спринте 1.
 
-**Фаза 3 — письма (не блокер)**  
-Только ради оптовой цены или Hunyuan-для-ЕС через Tencent Cloud Europe. Витрина FAL от писем не зависит.
+**Фаза 3 — Tencent / FAL invoice**  
+Hunyuan для витрины — когда откроется Tencent Cloud. FAL Enterprise — инвойс/conc по Meshy, не скидка на чужие Partner-сети.
 
 **Не фаза:** свой фундамент; img2mv; Pixal3D/Step1X как quality; монорепо frontend в paradox_worker.
+
+## Сетки по заводам (2026-08-31)
+
+Цена ниже = **API COGS** за генерацию, не розница (у нас ×2.5). Канвас: `enterprise-nets.canvas.tsx`.
+
+### Polylab — свой GPU (RunPod)
+
+| Сетка | Для чего | Параметры | Сильные | Цена API | Слот |
+|-------|----------|-----------|---------|----------|------|
+| TRELLIS.2 Realistic | Качество default, 1 фото | Пресеты Low–Realistic, native PBR. Рыцарь PASS | Дешевле чужих, свой пайплайн | Warm ~$0.02–0.08; cold отдельно | `trellis2` |
+| Hi3DGen | Черновик объёма | ~256³, clay, секунды | Дёшево и быстро | Копейки GPU / 4 cr | `hi3dgen` |
+
+Concurrent = `workersMax`. Cold start воркера ≠ очередь чужого API.
+
+### Meshy — только FAL
+
+Завод РФ 🔴. Consumer Pro нельзя. Concurrent = FAL (2…~40).
+
+| Сетка | Для чего | Параметры | Сильные | Цена API | Слот |
+|-------|----------|-----------|---------|----------|------|
+| Meshy 6/7 | Именной слот, не default | FAL v6 (playground v7), глина или tex+PBR, часто 5–10 мин | Бренд, персонажный look | Глина **$0.80** / tex **$1.20** / ultra $1.40 | `meshy` |
+
+### Hitem / Hi3D — прямой Open Platform
+
+Кабинет: пакет → **Create Key** (не hi3d.ai Pro). 1 cr = $0.02. Concurrent FAQ **30**. Адаптер живой.
+
+| Сетка | Для чего | Параметры | Сильные | Цена API | Слот |
+|-------|----------|-----------|---------|----------|------|
+| hitem3dv2.1 fast | Печать / hard-surface | 1536fast, ~2M faces, PBR, GLB, 1–4 вида | Дешевле Meshy, 30 сразу, ToS End Users | **$0.50** (25 cr) | `hitem3d` |
+| hitem3dv2.1 pro | То же, выше деталь | 1536pro, PBR, GLB | Как fast, pro-рез | **$0.90** (45 cr) | `hitem3d_pro` |
+| hi3dv3.0 quality | Максимум без master | 2048quality, PBR, GLB | Больше вокселей | **$2.10** (105 cr) | `hitem3d_v3` |
+| portrait v2.1 fast | Портрет / bust | scene-portraitv2.1, 1536profast | Заточен под лицо | **$0.50** | `hitem3d_portrait` |
+
+Не на полке: v1.5, v2.0, 2048master **$9.10**, relief/split/depth.
+
+### Tripo — VAST (адаптер next)
+
+Wrap YES. 1 cr = $0.01. Concurrent **H 10 / P 5**.
+
+| Сетка | Для чего | Параметры | Сильные | Цена API | Слот |
+|-------|----------|-----------|---------|----------|------|
+| H3.1 | Быстрый чужой | 20 / 30 / 40 cr | Дёшево, много параллели | $0.20 / $0.30 / $0.40 | next |
+| P1 | Выше качество Tripo | 40 / 50 / 60 cr; snapshot P1-20260311 | Их pro-линейка | $0.40 / $0.50 / $0.60 | next |
+
+### Rodin — Deemos (адаптер next)
+
+Wrap YES. Concurrent **1**. 120–240 = RPM.
+
+| Сетка | Для чего | Параметры | Сильные | Цена API | Слот |
+|-------|----------|-----------|---------|----------|------|
+| Gen-2.5 High | Органика / hero | GLB PBR; tex/BANG отдельно | Визуал витрины | **$0.30**; tex +$0.30 | next |
+| Extreme-High | Жирный тир | Тот же API | Максимум Rodin | **$0.60**; +tex → $0.90 | не default |
+
+### Tencent Hunyuan — пауза
+
+Не FAL, не веса на RunPod. Express ≈ **$0.23**, Pro ≈ **$0.38** prepaid. Concurrent 1 / 3.
+
+Очередь ≠ cold start. RPM ≠ параллельные генерации.
+
+## Следующий Enterprise (не сегодняшняя пачка)
+
+| Куда | Зачем | Когда |
+|------|--------|--------|
+| [Tencent HY 3D Global](https://www.tencentcloud.com/products/ai3d) Contact sales | Hunyuan на витрину (сейчас слот снят) | **позже**, не эта неделя |
+| [fal.ai/enterprise](https://fal.ai/enterprise) | Инвойс, concurrency >40, не скидка на Partner Meshy/Rodin | Когда объём FAL, не вместо заводов |
+| CSM / Luma / Stability | US, слабый смысл vs T2+Tripo | Не слать в этой волне |
+
+Stripe Atlas — потом (приём денег), не ключ к Meshy.
 
 ---
 

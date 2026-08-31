@@ -39,7 +39,9 @@ KNIGHT_URL = os.getenv(
     "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png",
 )
 
-FAL_ENGINES = ("meshy", "hunyuan", "hunyuan_pro", "hitem3d", "rodin", "tripo")
+FAL_ENGINES = ("meshy",)
+# Off-shelf FAL builders still exist; do not --live them as product slots.
+FAL_OFFSHELF = ("hunyuan", "hunyuan_pro", "hitem3d", "rodin", "tripo")
 
 GATE_CHECKLIST = (
     "Same knight cutout URL as T2 Realistic baseline",
@@ -53,7 +55,7 @@ GATE_CHECKLIST = (
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image-url", default=KNIGHT_URL)
-    ap.add_argument("--engine", action="append", dest="engines", help="Repeatable. Default: all FAL vitrine")
+    ap.add_argument("--engine", action="append", dest="engines", help="Repeatable. Default: meshy only")
     ap.add_argument("--live", action="store_true", help="Actually POST queue.fal.run (costs money)")
     ap.add_argument("--country", default="RU", help="ISO country for Hunyuan note")
     args = ap.parse_args()
@@ -61,6 +63,8 @@ def main() -> int:
 
     print("knight URL:", args.image_url)
     print("gate status in catalog:", KNIGHT_GATE_STATUS)
+    print("FAL shelf:", ", ".join(FAL_ENGINES))
+    print("off-shelf (do not --live as product):", ", ".join(FAL_OFFSHELF))
     print("checklist:")
     for line in GATE_CHECKLIST:
         print(" -", line)

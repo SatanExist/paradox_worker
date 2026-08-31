@@ -5,17 +5,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-27** — шлюз FAL в `studio_bridge/` (Meshy + Hunyuan гео-сплит). ТЗ 5.0 greenfield не пилить.  
-Парк: N4 Step1X закрыт. **Next generation:** TripoSG. Hi3DGen — только черновик. Hunyuan веса — EU стоп; Hunyuan **на FAL** — не EU/UK/KR.
+Последнее обновление: **2026-08-31 веч** — хаб в git (`feat/trellis2-poc`): T2 + Meshy FAL + Hitem/Tripo/Rodin прямые API; lab-карточки. Hunyuan **не витрина** (рега Tencent с РФ: SMS не приходит). Бриф фронта: `workspaceFrontend.md`.
 
 ### Сейчас (split)
 
 | | |
 |--|--|
-| **Товарищ / AI_MESH** | Studio UI. Контракт: `productMultiUx.md` §11 + `posterCards.md` + `aiMeshFalContract.md` |
-| **Мы / paradox_worker** | H0, Pixal3D, Direct3D-S2, Step1X-3D как quality закрыты. Next = TripoSG. T2 v21 не трогать. FAL-шлюз: `gateway.py` |
+| **Товарищ / AI_MESH** | **сейчас:** Workspace UI. Бриф: `workspaceFrontend.md` + §11 `productMultiUx.md` + `posterCards.md` + `aiMeshFalContract.md` |
+| **Мы / paradox_worker** | Шлюз хаба в git. T2 v21 не трогать. Hunyuan парк. Next generation: TripoSG |
 | **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D / Direct3D-S2 / Step1X — не переоткрывать как quality** |
-| **Наш next** | **TripoSG** (`roadmap.md` Ф2 prio 4): same-input A/B vs T2 Realistic **до** ручек. FAL слоты: рыцарь `fal_knight_ab.py` пока pending |
+| **Наш next** | Товарищ верстает Workspace. Мы: `--auth` Tripo/Rodin когда ключи; Hitem pack; generate позже. Default T2. `knightGate=pending` |
 
 ---
 
@@ -499,6 +498,9 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-08-28 | **ТЗ 6.0 Gemini:** выкинуть FAL, T2 $0.006, Tripo $0.08, Rodin $0.22, C++ ров, Delaware+партнёр 24г ради Meshy. Разбор `tz60CtoReview.md`. Код/ARCHITECTURE.md не писать. |
+| 2026-08-28 | **Meshy Enterprise NO:** Marko — unable to support customers in Russia (compliance). Повтор / consumer Pro — нет. Слот Meshy = FAL ×2.5 или без слота. |
+| 2026-08-27 веч | **Meshy 7 vs 3DAI (воркспейс, не карточка):** глина 35 cr, +tex+PBR 40 cr, ETA 5–10 мин и на глине. Basic $19/1000 → $0.67 / $0.76. FAL v7: глина $0.80, tex $1.20, ultra $1.40. Дешёвая розница 3DAI **не с агрегатора** — у завода Meshy Pro глина ~$0.40 (20 API cr). Белые склады (FAL/Pixazo/WaveSpeed) дороже 3DAI. PoYo $0.30 (только v6) — серый, не брать. Стратегия: не равнять 35/40 cr; полка FAL ×2.5; текстура не +5 cr. **Заявка Meshy Enterprise отправлена** (AI_MESH = хаб как 3DAI, T2 на аренде RunPod, ключ только бэкенд). **Ждём ответ.** Письма Tripo `business@tripo3d.ai` / Rodin `hello@deemos.com` / Hitem `apicontact@hi3d.ai` — черновики готовы, слать после Meshy. РФ: селфсервис Visa на RunPod/FAL уже работает; Enterprise KYC ≠ кабинет; не играть страну в форме. Не юрконсультация. |
 | 2026-08-27 | **Агрегаторы 3D:** второго FAL дешевле Meshy/Rodin нет. WaveSpeed = те же $, ToS против SaaS. PoYo/Atlas — серые $0.30/$0.02. Выгода = sales вендора, не витрина. |
 | 2026-08-27 | **Цены FAL vs первоисточник:** playground глазами. Hitem3D/Tripo = 0% наценка; Meshy +33%; Rodin +38% к Business; T2 на FAL ×4–15. `falHubPlan.md`. |
 | 2026-08-26 | **План FAL-хаб:** `falHubPlan.md` — T2 default + Hitem3D/Rodin/Tripo v2.5 через FAL; не Hunyuan/Meshy v1. |
@@ -1003,6 +1005,12 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-08-31** веч | Pedrokita | Push хаба: Hitem/Tripo/Rodin + lab-карточки + `workspaceFrontend.md` для Cursor товарища. Hunyuan парк (SMS Tencent) | Товарищ: Workspace в AI_MESH. Мы: ключи Tripo/Rodin, не generate рыцаря |
+| **2026-08-31** | Pedrokita | Tripo + Rodin в шлюзе (не FAL). Catalog + 2.5×. Lab: карточки Свои/Meshy/Hitem/Tripo/Rodin | `--auth` потом generate; не рыцарь |
+| **2026-08-31** | Pedrokita | Hitem Open Platform в шлюзе: 4 Image-to-3D SKU, не FAL. Каталог + credits 2.5× | `.env` HITEM_CLIENT_*; рыцарь; не v3 master |
+| **2026-08-28** | Pedrokita | Письмо Tripo `business@tripo3d.ai` (опт, concurrency, wrap end users, страна как есть) | Ждём Tripo |
+| **2026-08-28** | Pedrokita | Meshy sales: **нет для Russia** (Marko → Polylab). Опт завода закрыт | Не слать повтор Meshy. Слот через FAL ×2.5 или без Meshy |
+| **2026-08-27** веч | Pedrokita | Юнит-экон Meshy 7 (35/40 cr vs FAL). Форма Enterprise отправлена | *(закрыто 28-го: отказ)* |
 | **2026-08-27** | Pedrokita | **FAL-хаб v1 в worker:** `fal_client` / `engines` / `gateway` / `geo` / `credits`. Meshy+Hunyuan через официальные Queue-туторы FAL (`image_url` vs `input_image_url` vs `input_image_urls`). Hunyuan 403 для EU/UK/KR. Lab: селектор движка + кредиты. Контракт `aiMeshFalContract.md` (AI_MESH на этом ПК нет). Рыцарь A/B dry-run `fal_knight_ab.py`, `knightGate=pending` | Товарищ: Studio бьёт `/api/engines` + `engine` в POST `/api/jobs`. `FAL_KEY` в `.env`. Глаза на рыцаре до прода слота |
 | **2026-08-22** | Pedrokita | **N4 Step1X-3D 🔴 закрыт как quality.** Джоб `1c234d4e` (`a521e1e`): octree 384, 113k v / 200k f / 4.8 MB. Глаза: «кошмарный» — мыло, рваный силуэт, львы нет. Texture не открываем. Эндпоинт `tqut3hnptiuck1` idle `workersMax=0`. Spike N5 TripoSG | scaffold TripoSG → CI → A/B рыцарь |
 | **2026-08-21** веч | Pedrokita | **N3 Direct3D-S2 🔴 закрыт как quality.** Джоб `f039fb2c` (`10fb5d7`): 1024, 3.36M v / 6.71M f / 115 MB. Глаза: **другой персонаж** (рога→ушки, львы→шипы), хуже Pixal3D. Эндпоинт `1mrato3n6qoywv` idle `workersMax=0`. Не 512, не seed. **N4 Step1X-3D scaffold:** geometry-only (`Dockerfile.step1x3d`, без pytorch3d/kaolin). Текстуру не класть, пока идентичность не PASS | **commit+push** → CI Step1X → endpoint `workersMin=0` → A/B рыцарь vs T2 |

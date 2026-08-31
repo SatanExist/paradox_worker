@@ -1,7 +1,7 @@
 """Studio credit quotes. Wallet lives in AI_MESH; this repo only quotes and refunds.
 
 T2: draft / quality / cold as separate rows (not the TZ 5.0 98% fantasy).
-FAL: user price >= 2.5x public list. Fail → refund signal (creditsRefunded).
+FAL: user price >= 2.5x public list (live shelf = Meshy). Fail → refund signal (creditsRefunded).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Literal
 CREDIT_USD = 0.025  # $25 / 1000 credits
 FAL_MARKUP = 2.5
 
-TariffKind = Literal["t2", "fal"]
+TariffKind = Literal["t2", "fal", "hitem", "tripo", "rodin"]
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class CreditQuote:
             "kind": self.kind,
             "label": self.label,
             "creditUsd": CREDIT_USD,
-            "falMarkup": FAL_MARKUP if self.kind == "fal" else None,
+            "falMarkup": FAL_MARKUP if self.kind != "t2" else None,
         }
 
 
@@ -75,10 +75,6 @@ _FAL_LIST_USD: dict[str, float] = {
     "meshy": 0.80,
     "hunyuan": 0.225,
     "hunyuan_pro": 0.375,
-    "hitem3d": 0.50,
-    "hitem3d_pro": 0.90,
-    "rodin": 0.40,
-    "tripo": 0.20,
     "trellis2_fal": 0.30,
 }
 
@@ -86,10 +82,6 @@ _FAL_LABELS: dict[str, str] = {
     "meshy": "Meshy 6 (FAL)",
     "hunyuan": "Hunyuan Rapid (FAL)",
     "hunyuan_pro": "Hunyuan Pro (FAL)",
-    "hitem3d": "Hitem3D fast (FAL)",
-    "hitem3d_pro": "Hitem3D pro (FAL)",
-    "rodin": "Rodin v2 (FAL)",
-    "tripo": "Tripo v2.5 (FAL)",
     "trellis2_fal": "TRELLIS.2 backup (FAL, not vitrine)",
 }
 
@@ -143,9 +135,35 @@ def quote_engine(engine_id: str, *, tier: str = "medium") -> CreditQuote:
         return t2_quote_for_preset(tier)
     if eid == "hi3dgen":
         return _T2_QUOTES["hi3dgen"]
+    from studio_bridge.hitem_client import HITEM_PRESETS
+    from studio_bridge.rodin_client import RODIN_PRESETS
+    from studio_bridge.tripo_client import TRIPO_PRESETS
+
+    hitem = HITEM_PRESETS.get(eid)
+    if hitem is not None:
+        return _direct_quote(eid, hitem.list_usd, "hitem", f"{hitem.label} (direct)")
+    tripo = TRIPO_PRESETS.get(eid)
+    if tripo is not None:
+        return _direct_quote(eid, tripo.list_usd, "tripo", f"{tripo.label} (direct)")
+    rodin = RODIN_PRESETS.get(eid)
+    if rodin is not None:
+        return _direct_quote(eid, rodin.list_usd, "rodin", f"{rodin.label} (direct)")
     if eid in _FAL_LIST_USD:
         return _fal_quote(eid)
     raise ValueError(f"unknown engine {engine_id!r}")
+
+
+def _direct_quote(engine_id: str, list_usd: float, kind: TariffKind, label: str) -> CreditQuote:
+    credits = fal_user_credits(list_usd)
+    return CreditQuote(
+        engine_id=engine_id,
+        credits=credits,
+        credits_cold_surcharge=0,
+        usd_user=credits * CREDIT_USD,
+        usd_cogs=list_usd,
+        kind=kind,
+        label=label,
+    )
 
 
 def credit_catalog() -> dict:
@@ -155,17 +173,14 @@ def credit_catalog() -> dict:
         t2_quote_for_preset("high").as_dict(),
         _T2_QUOTES["hi3dgen"].as_dict(),
     ]
-    for eid in (
-        "meshy",
-        "hunyuan",
-        "hunyuan_pro",
-        "hitem3d",
-        "hitem3d_pro",
-        "rodin",
-        "tripo",
-        "trellis2_fal",
-    ):
+    for eid in ("meshy",):
         rows.append(_fal_quote(eid).as_dict())
+    from studio_bridge.hitem_client import HITEM_PRESETS
+    from studio_bridge.rodin_client import RODIN_PRESETS
+    from studio_bridge.tripo_client import TRIPO_PRESETS
+
+    for eid in (*HITEM_PRESETS, *TRIPO_PRESETS, *RODIN_PRESETS):
+        rows.append(quote_engine(eid).as_dict())
     return {
         "creditUsd": CREDIT_USD,
         "falMarkup": FAL_MARKUP,

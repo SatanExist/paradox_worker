@@ -44,11 +44,14 @@
 | `scripts/convert_dinov3_meta_to_hf.py` | Meta `.pth` → HF-папка DINOv3 для volume |
 | `scripts/warm_timing_t2.py` | 5× back-to-back clay timing + $ estimate |
 | `scripts/studio_api.py` | POC HTTP + lab UI: jobs, engines, credits, geo Hunyuan, `studio_lab.html` |
-| `studio_bridge/gateway.py` | T2 / Hi3DGen / FAL job create+poll |
+| `studio_bridge/gateway.py` | T2 / Hi3DGen / FAL Meshy / Hitem / Tripo / Rodin |
 | `studio_bridge/fal_client.py` | FAL Queue REST (`Authorization: Key $FAL_KEY`) |
-| `studio_bridge/engines.py` | витрина движков + официальные input-поля FAL |
+| `studio_bridge/hitem_client.py` | Hitem Open Platform: token + submit-task + query-task |
+| `studio_bridge/tripo_client.py` | Tripo Developers v3: image-to-model + task poll |
+| `studio_bridge/rodin_client.py` | Rodin / Hyper3D v2: multipart /rodin + status + download |
+| `studio_bridge/engines.py` | витрина: T2 + Hi3DGen + Meshy (FAL) + Hitem + Tripo + Rodin |
 | `studio_bridge/geo.py` | Hunyuan EU/UK/KR fail-closed |
-| `studio_bridge/credits.py` | T2 draft/quality/cold + FAL ≥2.5× |
+| `studio_bridge/credits.py` | T2 draft/quality/cold + Meshy/Hitem/Tripo/Rodin ≥2.5× |
 | `studio_bridge/product_multi_ux.py` | P1: slot order, Studio copy, normalize viewSlots |
 | `scripts/reconviagen_infer.py` | Headless RVG infer (pod smoke / local with GPU) |
 | `scripts/reconviagen_hf_smoke.py` | HF Space API smoke (eyes only; не prod) |
@@ -65,7 +68,10 @@
 ## Настройка RunPod
 
 - **API key**: `RUNPOD_API_KEY` в `.env` (не коммитить!)
-- **FAL (чужие сети):** `FAL_KEY` в `.env` — только бэкенд `studio_bridge/fal_client.py`. Формат заголовка `Authorization: Key $FAL_KEY`. Не в браузер. Hunyuan ещё требует страну (не EU/UK/KR).
+- **FAL (чужие сети):** `FAL_KEY` в `.env` — только бэкенд, **живой слот = Meshy**. Формат `Authorization: Key $FAL_KEY`. Не в браузер.
+- **Hitem Open Platform:** `HITEM_CLIENT_ID` + `HITEM_CLIENT_SECRET` в `.env` (AK/SK из [platform.hi3d.ai](https://platform.hi3d.ai/), не Pro на hi3d.ai). Токен: Basic `id:secret` → Bearer. Не в браузер и не в чат.
+- **Tripo Developers:** `TRIPO_API_KEY` в `.env` (Bearer). Не в браузер.
+- **Rodin / Hyper3D:** `RODIN_API_KEY` или `HYPER3D_API_KEY` в `.env`. Concurrent = 1. Не в браузер.
 - **Endpoints** (defaults в `test_req.py` / `.env`):
 
 | Роль | ID | Регион | Volume |
@@ -430,7 +436,11 @@ pip install requests python-dotenv
 
 # .env (не в git):
 # RUNPOD_API_KEY=your_key_here
-# FAL_KEY=fal_...          (сервер; Meshy/Hunyuan/Hitem3D/Rodin/Tripo)
+# FAL_KEY=fal_...                 (сервер; только Meshy)
+# HITEM_CLIENT_ID=...             (Open Platform AK, не hi3d.ai Pro)
+# HITEM_CLIENT_SECRET=...
+# TRIPO_API_KEY=...               (Bearer, Developers API)
+# RODIN_API_KEY=...               (или HYPER3D_API_KEY)
 # RUNPOD_ENDPOINT_ID_PRIMARY=...
 # RUNPOD_ENDPOINT_ID_SECONDARY=...  (опционально)
 # RUNPOD_ENDPOINT_ID_HI3DGEN=...     (draft engine)

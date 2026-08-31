@@ -1,28 +1,28 @@
 """Engine catalog + FAL input builders from official model API tabs (2026-08-27).
 
-Docs:
-  Meshy     https://fal.ai/models/fal-ai/meshy/v6/image-to-3d/api
-  Hunyuan R https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d/api
-  Hunyuan P https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/pro/image-to-3d/api
-  Hitem3D   https://fal.ai/models/hitem3d/hi3d/image-to-3d/api
-  Rodin v2  https://fal.ai/models/fal-ai/hyper3d/rodin/v2/api
-  Tripo     https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api
+FAL live shelf: Meshy only. Hitem / Tripo / Rodin = direct vendor APIs.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from studio_bridge.credits import quote_engine
 from studio_bridge.geo import hunyuan_allowed
+from studio_bridge.hitem_client import HITEM_PRESETS
+from studio_bridge.rodin_client import RODIN_PRESETS
+from studio_bridge.tripo_client import TRIPO_PRESETS
 
 SLOT_ORDER: tuple[str, ...] = ("front", "side", "back", "extra")
 
-Provider = Literal["runpod", "fal"]
+Provider = Literal["runpod", "fal", "hitem", "tripo", "rodin"]
 
 DEFAULT_ENGINE = "trellis2"
 KNIGHT_GATE_STATUS = "pending"  # eyes before prod; see scripts/fal_knight_ab.py
+# Partner FAL we actually sell. Everything else is vendor API or parked.
+FAL_SHELF_IDS: frozenset[str] = frozenset({"meshy"})
 
 
 @dataclass(frozen=True)
@@ -90,10 +90,10 @@ _ENGINES: tuple[EngineSpec, ...] = (
         vendor="Tencent",
         provider="fal",
         role="other",
-        blurb="Tencent через FAL, не наши веса. Скрыт в EU/UK/KR. Не default.",
+        blurb="Снят с FAL. Tencent позже. Не default.",
         fal_model="fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d",
         geo_gated=True,
-        show_in_catalog=True,
+        show_in_catalog=False,
         quality_presets=False,
         docs_url="https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d/api",
         eta_sec=180,
@@ -104,69 +104,125 @@ _ENGINES: tuple[EngineSpec, ...] = (
         vendor="Tencent",
         provider="fal",
         role="other",
-        blurb="Tencent через FAL. Скрыт в EU/UK/KR. Не default.",
+        blurb="Снят с FAL. Tencent позже. Не default.",
         fal_model="fal-ai/hunyuan-3d/v3.1/pro/image-to-3d",
         geo_gated=True,
-        show_in_catalog=True,
+        show_in_catalog=False,
         quality_presets=False,
         docs_url="https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/pro/image-to-3d/api",
         eta_sec=300,
     ),
     EngineSpec(
         id="hitem3d",
-        label="Hitem3D fast",
+        label=HITEM_PRESETS["hitem3d"].label,
         vendor="Hitem3D",
-        provider="fal",
-        role="print",
-        blurb="Печать / деталь. Partner FAL, ToS пускает End Users.",
-        fal_model="hitem3d/hi3d/image-to-3d",
+        provider="hitem",
+        role=HITEM_PRESETS["hitem3d"].role,
+        blurb=HITEM_PRESETS["hitem3d"].blurb,
+        fal_model=None,
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/hitem3d/hi3d/image-to-3d/api",
-        eta_sec=240,
+        docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
+        eta_sec=HITEM_PRESETS["hitem3d"].eta_sec,
     ),
     EngineSpec(
         id="hitem3d_pro",
-        label="Hitem3D pro",
+        label=HITEM_PRESETS["hitem3d_pro"].label,
         vendor="Hitem3D",
-        provider="fal",
-        role="print",
-        blurb="Hitem3D 1536pro. Не default.",
-        fal_model="hitem3d/hi3d/image-to-3d",
+        provider="hitem",
+        role=HITEM_PRESETS["hitem3d_pro"].role,
+        blurb=HITEM_PRESETS["hitem3d_pro"].blurb,
+        fal_model=None,
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/hitem3d/hi3d/image-to-3d/api",
-        eta_sec=360,
+        docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
+        eta_sec=HITEM_PRESETS["hitem3d_pro"].eta_sec,
+    ),
+    EngineSpec(
+        id="hitem3d_v3",
+        label=HITEM_PRESETS["hitem3d_v3"].label,
+        vendor="Hitem3D",
+        provider="hitem",
+        role=HITEM_PRESETS["hitem3d_v3"].role,
+        blurb=HITEM_PRESETS["hitem3d_v3"].blurb,
+        fal_model=None,
+        geo_gated=False,
+        show_in_catalog=True,
+        quality_presets=False,
+        docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
+        eta_sec=HITEM_PRESETS["hitem3d_v3"].eta_sec,
+    ),
+    EngineSpec(
+        id="hitem3d_portrait",
+        label=HITEM_PRESETS["hitem3d_portrait"].label,
+        vendor="Hitem3D",
+        provider="hitem",
+        role=HITEM_PRESETS["hitem3d_portrait"].role,
+        blurb=HITEM_PRESETS["hitem3d_portrait"].blurb,
+        fal_model=None,
+        geo_gated=False,
+        show_in_catalog=True,
+        quality_presets=False,
+        docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
+        eta_sec=HITEM_PRESETS["hitem3d_portrait"].eta_sec,
     ),
     EngineSpec(
         id="rodin",
-        label="Rodin v2 (Hyper3D)",
-        vendor="Hyper3D",
-        provider="fal",
+        label=RODIN_PRESETS["rodin"].label,
+        vendor="Hyper3D / Deemos",
+        provider="rodin",
         role="organic",
-        blurb="Органика / hero. Partner FAL. Не default.",
-        fal_model="fal-ai/hyper3d/rodin/v2",
+        blurb=RODIN_PRESETS["rodin"].blurb,
+        fal_model=None,
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/fal-ai/hyper3d/rodin/v2/api",
-        eta_sec=240,
+        docs_url="https://developer.hyper3d.ai/",
+        eta_sec=RODIN_PRESETS["rodin"].eta_sec,
+    ),
+    EngineSpec(
+        id="rodin_extreme",
+        label=RODIN_PRESETS["rodin_extreme"].label,
+        vendor="Hyper3D / Deemos",
+        provider="rodin",
+        role="organic",
+        blurb=RODIN_PRESETS["rodin_extreme"].blurb,
+        fal_model=None,
+        geo_gated=False,
+        show_in_catalog=True,
+        quality_presets=False,
+        docs_url="https://developer.hyper3d.ai/",
+        eta_sec=RODIN_PRESETS["rodin_extreme"].eta_sec,
     ),
     EngineSpec(
         id="tripo",
-        label="Tripo v2.5",
-        vendor="Tripo",
-        provider="fal",
+        label=TRIPO_PRESETS["tripo"].label,
+        vendor="Tripo / VAST",
+        provider="tripo",
         role="fast_other",
-        blurb="Partner FAL, не consumer-ключ Tripo Studio.",
-        fal_model="tripo3d/tripo/v2.5/image-to-3d",
+        blurb=TRIPO_PRESETS["tripo"].blurb,
+        fal_model=None,
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api",
-        eta_sec=180,
+        docs_url="https://developers.tripo3d.ai/en/docs/generation-image-to-model",
+        eta_sec=TRIPO_PRESETS["tripo"].eta_sec,
+    ),
+    EngineSpec(
+        id="tripo_p1",
+        label=TRIPO_PRESETS["tripo_p1"].label,
+        vendor="Tripo / VAST",
+        provider="tripo",
+        role="fast_other",
+        blurb=TRIPO_PRESETS["tripo_p1"].blurb,
+        fal_model=None,
+        geo_gated=False,
+        show_in_catalog=True,
+        quality_presets=False,
+        docs_url="https://developers.tripo3d.ai/en/docs/generation-image-to-model",
+        eta_sec=TRIPO_PRESETS["tripo_p1"].eta_sec,
     ),
     EngineSpec(
         id="trellis2_fal",
@@ -200,6 +256,35 @@ def is_hunyuan_engine(engine_id: str | None) -> bool:
     return get_engine(engine_id).geo_gated
 
 
+def on_fal_shelf(engine_id: str | None) -> bool:
+    return get_engine(engine_id).id in FAL_SHELF_IDS
+
+
+def engine_keys_configured(spec: EngineSpec) -> bool:
+    if spec.provider == "runpod":
+        if spec.id == "hi3dgen":
+            return bool(
+                os.getenv("RUNPOD_API_KEY", "").strip()
+                and os.getenv("RUNPOD_ENDPOINT_ID_HI3DGEN", "").strip()
+            )
+        return bool(os.getenv("RUNPOD_API_KEY", "").strip())
+    if spec.provider == "fal":
+        return bool(os.getenv("FAL_KEY", "").strip())
+    if spec.provider == "hitem":
+        return bool(
+            os.getenv("HITEM_CLIENT_ID", "").strip()
+            and os.getenv("HITEM_CLIENT_SECRET", "").strip()
+        )
+    if spec.provider == "tripo":
+        return bool(os.getenv("TRIPO_API_KEY", "").strip())
+    if spec.provider == "rodin":
+        return bool(
+            os.getenv("RODIN_API_KEY", "").strip()
+            or os.getenv("HYPER3D_API_KEY", "").strip()
+        )
+    return False
+
+
 def engine_catalog(*, country: str | None = None, include_hidden: bool = False) -> list[dict]:
     out: list[dict] = []
     for spec in _ENGINES:
@@ -222,6 +307,13 @@ def engine_catalog(*, country: str | None = None, include_hidden: bool = False) 
                 "visible": visible,
                 "qualityPresets": spec.quality_presets,
                 "falModel": spec.fal_model,
+                "hitemModel": (HITEM_PRESETS[spec.id].model if spec.provider == "hitem" else None),
+                "hitemResolution": (
+                    HITEM_PRESETS[spec.id].resolution if spec.provider == "hitem" else None
+                ),
+                "tripoModel": (TRIPO_PRESETS[spec.id].model if spec.provider == "tripo" else None),
+                "rodinTier": (RODIN_PRESETS[spec.id].tier if spec.provider == "rodin" else None),
+                "configured": engine_keys_configured(spec),
                 "docsUrl": spec.docs_url,
                 "etaSeconds": spec.eta_sec,
                 "credits": quote.credits,
@@ -290,41 +382,6 @@ def build_fal_arguments(
         if slots.get("side"):
             body["left_image_url"] = slots["side"]
         return body
-    if eid == "hitem3d":
-        return {
-            "image_url": primary,
-            "model": "hitem3dv2.1",
-            "resolution": "1536fast",
-            "enable_texture": True,
-            "enable_pbr": True,
-            "export_format": "glb",
-            "enable_safety_checker": True,
-        }
-    if eid == "hitem3d_pro":
-        return {
-            "image_url": primary,
-            "model": "hitem3dv2.1",
-            "resolution": "1536pro",
-            "enable_texture": True,
-            "enable_pbr": True,
-            "export_format": "glb",
-            "enable_safety_checker": True,
-        }
-    if eid == "rodin":
-        urls = [slots[k] for k in SLOT_ORDER if slots.get(k)] or [primary]
-        return {
-            "input_image_urls": urls[:5],
-            "geometry_file_format": "glb",
-            "material": "PBR",
-            "quality_mesh_option": "500K Triangle",
-        }
-    if eid == "tripo":
-        return {
-            "image_url": primary,
-            "pbr": True,
-            "texture": "standard",
-            "seed": int(seed),
-        }
     if eid == "trellis2_fal":
         return {"image_url": primary}
     raise ValueError(f"no FAL builder for {eid}")

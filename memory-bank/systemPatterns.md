@@ -252,8 +252,9 @@ Backend AI_MESH роутит по `task_type` + `model_tier` → `RUNPOD_ENDPOIN
 Внешний blueprint «Multi-Model Hub + C++ remesh» **не внедрять как написано**.
 
 - Кабинет и кошелёк — продукт **AI_MESH**; контракт: `memory-bank/aiMeshFalContract.md`.
-- Default генерация — **T2**; draft — Hi3DGen; чужие сети — **FAL Queue** (`studio_bridge/fal_client.py`), ключ `FAL_KEY` только на сервере.
-- Meshy / Hunyuan / Hitem3D / Rodin / Tripo — Partner FAL. Hunyuan: гео-гейт EU/UK/KR (`studio_bridge/geo.py`), не веса на RunPod.
-- Consumer-ключи meshy.ai / Tripo Studio — стоп.
+- Default генерация — **T2**; draft — Hi3DGen; **FAL = только Meshy** (`studio_bridge/fal_client.py`), ключ `FAL_KEY` только на сервере.
+- Tripo / Rodin — прямые API (`tripo_client.py`, `rodin_client.py`). **Hitem** — `hitem_client.py`. Hunyuan — Tencent **позже**, не FAL. Веса Hunyuan на RunPod нет.
+- Consumer-ключи meshy.ai / Tripo Studio — стоп. **Meshy Enterprise для РФ закрыт 2026-08-28** (Marko, compliance). Слот Meshy = FAL ×2.5.
+- 3DAI Meshy 7: 35 cr глина / 40 cr tex+PBR. Не копировать их стикер через публичный FAL ($0.80/$1.20).
 - C++ remesh — не обязательный шлюз после GLB; позже как платная доводка.
 - Разбор: `memory-bank/tz50CtoReview.md`. План витрины: `memory-bank/falHubPlan.md`.
