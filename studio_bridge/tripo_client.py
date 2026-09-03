@@ -40,6 +40,8 @@ class TripoPreset:
     label: str
     blurb: str
     texture_quality: str = "standard"
+    # P2-20260801 only — native quad mesh (API docs).
+    quad: bool = False
 
 
 TRIPO_PRESETS: dict[str, TripoPreset] = {
@@ -48,7 +50,7 @@ TRIPO_PRESETS: dict[str, TripoPreset] = {
         list_usd=0.30,
         eta_sec=180,
         label="Tripo H3.1",
-        blurb="Быстрый чужой image→3D. PBR. Не default.",
+        blurb="Fast image→3D (H-series). PBR. Not the default.",
         texture_quality="standard",
     ),
     "tripo_p1": TripoPreset(
@@ -56,8 +58,17 @@ TRIPO_PRESETS: dict[str, TripoPreset] = {
         list_usd=0.50,
         eta_sec=240,
         label="Tripo P1",
-        blurb="Выше качество Tripo (P1). Не путать с H3.1.",
+        blurb="P-series low-poly / game mesh. Do not confuse with H3.1.",
         texture_quality="detailed",
+    ),
+    "tripo_p2": TripoPreset(
+        model="P2-20260801",
+        list_usd=0.70,
+        eta_sec=150,
+        label="Tripo P2",
+        blurb="P2 Preview — game-ready mesh with native quad topology.",
+        texture_quality="detailed",
+        quad=True,
     ),
 }
 
@@ -114,20 +125,105 @@ def submit_image_to_3d(
     *,
     image_urls: list[str],
     seed: int = 1,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     preset = TRIPO_PRESETS.get(engine_id)
     if preset is None:
         raise ValueError(f"{engine_id} is not a Tripo engine")
     if not image_urls:
         raise ValueError("image URL required")
-    body = {
+
+    opts = options or {}
+    material = str(opts.get("material") or "PBR").strip()
+    if material not in {"PBR", "Shaded", "None"}:
+        material = "PBR"
+    texture = material != "None"
+    pbr = material == "PBR"
+
+    topology = str(opts.get("topology") or ("quads" if preset.quad else "triangles")).strip().lower()
+    use_quad = preset.quad and topology in {"quads", "quad", "true", "1"}
+
+    tq = str(
+        opts.get("textureQuality") or opts.get("texture_quality") or preset.texture_quality
+    ).strip().lower()
+    if tq not in {"standard", "detailed"}:
+        tq = preset.texture_quality
+
+    body: dict[str, Any] = {
         "input": image_urls[0],
         "model": preset.model,
-        "texture": True,
-        "pbr": True,
-        "texture_quality": preset.texture_quality,
+        "texture": texture,
+        "pbr": pbr if texture else False,
+        "texture_quality": tq,
         "model_seed": int(seed),
     }
+
+    raw_seed = opts.get("seed")
+    if raw_seed is not None and str(raw_seed).strip() != "":
+        try:
+            body["model_seed"] = int(str(raw_seed).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid Tripo seed {raw_seed!r}") from exc
+
+    if preset.quad:
+        body["quad"] = bool(use_quad)
+
+    face_limits_by_engine: dict[str, dict[str, tuple[int, int] | int]] = {
+        "tripo_p2": {
+            "low": (5_000, 8_000),
+            "medium": (12_000, 20_000),
+            "high": (25_000, 50_000),
+        },
+        "tripo_p1": {
+            "low": 5_000,
+            "medium": 12_000,
+            "high": 20_000,
+        },
+        "tripo": {
+            "low": 50_000,
+            "medium": 100_000,
+            "high": 500_000,
+        },
+    }
+    face_limits = face_limits_by_engine.get(engine_id, face_limits_by_engine["tripo_p2"])
+
+    face_preset = str(opts.get("facePreset") or opts.get("face_preset") or "auto").strip().lower()
+    if face_preset in face_limits:
+        limit = face_limits[face_preset]
+        if isinstance(limit, tuple):
+            quad_n, tri_n = limit
+            body["face_limit"] = quad_n if body.get("quad") else tri_n
+        else:
+            body["face_limit"] = int(limit)
+    override = opts.get("faceLimit") or opts.get("face_limit")
+    if override is not None and str(override).strip():
+        try:
+            body["face_limit"] = int(str(override).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid face_limit {override!r}") from exc
+
+    align = str(
+        opts.get("textureAlign") or opts.get("texture_alignment") or "original_image"
+    ).strip()
+    if align in {"original_image", "geometry"}:
+        body["texture_alignment"] = align
+
+    orient = str(opts.get("orientation") or "default").strip()
+    if orient in {"default", "align_image"}:
+        body["orientation"] = orient
+
+    if bool(opts.get("autofix") if "autofix" in opts else opts.get("enable_image_autofix")):
+        body["enable_image_autofix"] = True
+
+    if engine_id == "tripo":
+        gq = str(
+            opts.get("geometryQuality") or opts.get("geometry_quality") or "standard"
+        ).strip().lower()
+        if gq in {"standard", "detailed"}:
+            body["geometry_quality"] = gq
+        if bool(opts.get("smartLowPoly") or opts.get("smart_low_poly")):
+            body["smart_low_poly"] = True
+
     data = _unwrap(
         _request("POST", f"{API_BASE}/generation/image-to-model", payload=body),
         "image-to-model",
@@ -135,7 +231,7 @@ def submit_image_to_3d(
     task_id = str(data.get("task_id") or "").strip()
     if not task_id:
         raise TripoHttpError(502, f"missing task_id: {data}")
-    return {"task_id": task_id, "model": preset.model}
+    return {"task_id": task_id, "model": preset.model, "options": body}
 
 
 def query_task(task_id: str) -> dict[str, Any]:
@@ -150,6 +246,10 @@ def query_balance() -> dict[str, Any]:
 
 
 def pick_glb(task: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Pick a downloadable model URL + poster.
+
+    Prefers GLB; falls back to FBX if P2 quad (or convert) returns FBX only.
+    """
     output = task.get("output") if isinstance(task.get("output"), dict) else {}
     poster = None
     for key in ("rendered_image_url", "rendered_image", "preview"):
@@ -163,6 +263,7 @@ def pick_glb(task: dict[str, Any]) -> tuple[str | None, str | None]:
                 poster = url
                 break
     glb = None
+    fbx = None
     for key in ("pbr_model", "model_url", "model", "base_model"):
         val = output.get(key)
         url = None
@@ -174,10 +275,14 @@ def pick_glb(task: dict[str, Any]) -> tuple[str | None, str | None]:
                 url = maybe
         if not url or not url.startswith("https://"):
             continue
+        lower = url.lower()
+        if lower.endswith(".fbx"):
+            fbx = fbx or url
+            continue
         glb = url
-        if url.lower().endswith(".glb") or key in {"pbr_model", "model_url"}:
+        if lower.endswith(".glb") or key in {"pbr_model", "model_url"}:
             break
-    return glb, poster
+    return glb or fbx, poster
 
 
 def map_tripo_status(raw: str | None) -> str:

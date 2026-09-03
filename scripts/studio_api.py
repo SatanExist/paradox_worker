@@ -121,11 +121,34 @@ class CreateJobRequest(BaseModel):
     seed: int = Field(default=1, ge=0)
     engine: str = Field(
         default=DEFAULT_ENGINE,
-        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, rodin.",
+        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, tripo_p2, rodin.",
     )
     rodinQualityTier: str | None = Field(
         default=None,
         description="Rodin Gen-2.5 UI tier: lowest | low | medium | high | ultra.",
+    )
+    rodinOptions: dict | None = Field(
+        default=None,
+        description=(
+            "Rodin Gen-2.5 knobs: material, textureMode, geometryMode, meshMode, "
+            "facePreset, highPack, hdTexture, seed."
+        ),
+    )
+    tripoOptions: dict | None = Field(
+        default=None,
+        description=(
+            "Tripo knobs: topology (P2), material, textureQuality, geometryQuality "
+            "(H3), smartLowPoly (H3 clay), facePreset, textureAlign, orientation, "
+            "autofix, seed."
+        ),
+    )
+    hitemOptions: dict | None = Field(
+        default=None,
+        description="Hitem knobs: pbr, facePreset / face, shading (0.0–1.0).",
+    )
+    hi3dgenOptions: dict | None = Field(
+        default=None,
+        description="Hi3DGen RunPod knobs: detail, ssSteps, slatSteps, normalModel, seed.",
     )
     country: str | None = Field(
         default=None,
@@ -287,6 +310,10 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
             seed=body.seed,
             country=country,
             rodin_quality_tier=body.rodinQualityTier,
+            rodin_options=body.rodinOptions,
+            tripo_options=body.tripoOptions,
+            hitem_options=body.hitemOptions,
+            hi3dgen_options=body.hi3dgenOptions,
         )
     except HunyuanGeoBlocked as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

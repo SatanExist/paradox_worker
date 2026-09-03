@@ -103,6 +103,7 @@ def main() -> None:
         "hitem3d_portrait",
         "tripo",
         "tripo_p1",
+        "tripo_p2",
         "rodin",
     }
     assert "trellis2_fal" not in catalog_ids
@@ -110,6 +111,10 @@ def main() -> None:
     assert get_engine("tripo").provider == "tripo"
     assert get_engine("rodin").provider == "rodin"
     assert get_engine("tripo_p1").provider == "tripo"
+    assert get_engine("tripo_p2").provider == "tripo"
+    assert get_engine("tripo_p2").docs_url.endswith("/p")
+    assert TRIPO_PRESETS["tripo_p2"].model == "P2-20260801"
+    assert TRIPO_PRESETS["tripo_p2"].quad is True
     assert "configured" in engine_catalog()[0]
 
     meshy_in = build_fal_arguments("meshy", image_urls=["https://a.png"])
@@ -183,6 +188,7 @@ def main() -> None:
     assert quote_engine("tripo").kind == "tripo"
     assert quote_engine("tripo").credits == 30
     assert quote_engine("tripo_p1").credits == 50
+    assert quote_engine("tripo_p2").credits == 70
     assert quote_engine("rodin").kind == "rodin"
     assert quote_engine("rodin").credits == 25
     assert quote_engine("rodin", rodin_quality="high").credits == 30
@@ -194,7 +200,7 @@ def main() -> None:
         "hitem3d_v3",
         "hitem3d_portrait",
     }
-    assert set(TRIPO_PRESETS) == {"tripo", "tripo_p1"}
+    assert set(TRIPO_PRESETS) == {"tripo", "tripo_p1", "tripo_p2"}
     from studio_bridge.rodin_client import RODIN_QUALITY_TIERS
 
     assert set(RODIN_QUALITY_TIERS) == {"lowest", "low", "medium", "high", "ultra"}
@@ -208,6 +214,7 @@ def main() -> None:
     assert "hitem3d_v3" in tariffs
     assert "tripo" in tariffs
     assert "tripo_p1" in tariffs
+    assert "tripo_p2" in tariffs
     assert "rodin" in tariffs
     assert "rodin_extreme" not in tariffs
     rodin_tiers = {

@@ -208,6 +208,10 @@ def create_studio_job(
     preprocess_image: bool | None = None,
     country: str | None = None,
     rodin_quality_tier: str | None = None,
+    rodin_options: dict[str, Any] | None = None,
+    tripo_options: dict[str, Any] | None = None,
+    hitem_options: dict[str, Any] | None = None,
+    hi3dgen_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     spec = get_engine(engine)
     if spec.provider == "fal" and not on_fal_shelf(spec.id):
@@ -249,15 +253,23 @@ def create_studio_job(
     quote_bits = _credit_fields(spec.id, tier=str(tier))
 
     if spec.id == "hi3dgen":
+        opts = hi3dgen_options or {}
+        job_seed = seed
+        raw_seed = opts.get("seed")
+        if raw_seed is not None and str(raw_seed).strip() != "":
+            job_seed = int(raw_seed)
+        ss_steps = int(opts.get("ssSteps") or opts.get("ss_steps") or 50)
+        slat_steps = int(opts.get("slatSteps") or opts.get("slat_steps") or 6)
+        normal_model = str(opts.get("normalModel") or opts.get("normal_model") or "yoso")
         job_id = submit_job(
             _hi3dgen_endpoint(),
             _runpod_key(),
             {
                 "image_url": primary,
-                "seed": seed,
-                "ss_steps": 50,
-                "slat_steps": 6,
-                "normal_model": "yoso",
+                "seed": job_seed,
+                "ss_steps": max(1, min(50, ss_steps)),
+                "slat_steps": max(1, min(50, slat_steps)),
+                "normal_model": normal_model,
             },
         )
         return {
@@ -282,6 +294,7 @@ def create_studio_job(
             spec.id,
             image_urls=urls,
             view_slots=view_slots,
+            options=hitem_options,
         )
         task_id = str(queued.get("task_id") or "").strip()
         if not task_id:
@@ -307,7 +320,12 @@ def create_studio_job(
         }
 
     if spec.provider == "tripo":
-        queued = submit_tripo(spec.id, image_urls=urls, seed=seed)
+        queued = submit_tripo(
+            spec.id,
+            image_urls=urls,
+            seed=seed,
+            options=tripo_options,
+        )
         task_id = str(queued.get("task_id") or "").strip()
         if not task_id:
             raise TripoHttpError(502, f"Tripo submit missing task_id: {queued}")
@@ -339,6 +357,7 @@ def create_studio_job(
             image_urls=urls,
             view_slots=view_slots,
             quality_tier=effective_quality,
+            options=rodin_options,
         )
         task_uuid = str(queued.get("uuid") or "").strip()
         subscription_key = str(queued.get("subscription_key") or "").strip()

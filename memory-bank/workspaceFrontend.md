@@ -52,6 +52,7 @@ Lab-референс карточек: `scripts/studio_lab.html` (`.\scripts\stu
 | `hitem3d_portrait` | Hitem | hitem | 50 | портрет |
 | `tripo` | Tripo | tripo | 30 | H3.1 |
 | `tripo_p1` | Tripo | tripo | 50 | P1 |
+| `tripo_p2` | Tripo | tripo | 70 | **P2 Preview** `P2-20260801`, `quad=true` (image-only v1) |
 | `rodin` | Rodin | rodin | 15–60 по тиру | **Один** Rodin 2.5; Quality Tier Lowest→Ultra (default Medium≈25 cr). Ultra≈60 |
 
 Нет на витрине: `rodin_extreme` (legacy id, API → ultra), `hunyuan`, `hunyuan_pro`, FAL-T2. Hunyuan = Tencent Cloud, регистрация с РФ зависла (SMS). Не рисовать карточку.

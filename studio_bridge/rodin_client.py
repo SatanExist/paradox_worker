@@ -23,6 +23,20 @@ API_BASE = "https://api.hyper3d.com/api/v2"
 DEFAULT_TIMEOUT_SEC = 60
 DEFAULT_RODIN_QUALITY = "medium"
 RODIN_ENGINE_IDS = frozenset({"rodin", "rodin_extreme"})
+RODIN_MATERIALS = frozenset({"PBR", "Shaded", "None"})
+RODIN_TEXTURE_MODES = frozenset(
+    {"legacy", "extreme-low", "low", "medium", "high"}
+)
+RODIN_GEOMETRY_MODES = frozenset({"faithful", "creative"})
+RODIN_MESH_MODES = frozenset({"Raw", "Quad"})
+RODIN_FACE_PRESETS = frozenset({"auto", "extra-low", "low", "medium", "high"})
+RODIN_FACE_OVERRIDE = {
+    "extra-low": "20000",
+    "low": "60000",
+    "medium": "500000",
+    "high": "1000000",
+}
+CREATIVE_TIERS = frozenset({"medium", "high", "ultra"})
 
 
 class RodinNotConfiguredError(RuntimeError):
@@ -156,16 +170,111 @@ def _request(
     return parsed
 
 
+def _norm_choice(raw: str | None, allowed: frozenset[str], *, label: str, default: str) -> str:
+    if raw is None or not str(raw).strip():
+        return default
+    value = str(raw).strip()
+    if value in allowed:
+        return value
+    lowered = {a.lower(): a for a in allowed}
+    hit = lowered.get(value.lower())
+    if hit is not None:
+        return hit
+    raise ValueError(f"unknown Rodin {label} {raw!r}")
+
+
+def resolve_rodin_options(
+    quality_tier_id: str,
+    options: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize Studio / API knobs for multipart submit."""
+    opts = options or {}
+    material = _norm_choice(
+        opts.get("material"), RODIN_MATERIALS, label="material", default="PBR"
+    )
+
+    raw_tex = opts.get("textureMode")
+    if raw_tex is None:
+        raw_tex = opts.get("texture_mode")
+    texture_mode: str | None = None
+    if raw_tex is not None and str(raw_tex).strip():
+        texture_mode = _norm_choice(
+            str(raw_tex),
+            RODIN_TEXTURE_MODES,
+            label="texture_mode",
+            default="medium",
+        )
+
+    geometry_mode = _norm_choice(
+        opts.get("geometryMode") or opts.get("geometry_instruct_mode"),
+        RODIN_GEOMETRY_MODES,
+        label="geometry_instruct_mode",
+        default="faithful",
+    )
+    if geometry_mode == "creative" and quality_tier_id not in CREATIVE_TIERS:
+        raise ValueError("Rodin Creative geometry requires Medium, High, or Ultra tier")
+
+    mesh_mode = _norm_choice(
+        opts.get("meshMode") or opts.get("mesh_mode"),
+        RODIN_MESH_MODES,
+        label="mesh_mode",
+        default="Raw",
+    )
+
+    face_raw = opts.get("facePreset") or opts.get("face_preset") or "auto"
+    face_preset = _norm_choice(
+        str(face_raw), RODIN_FACE_PRESETS, label="face_preset", default="auto"
+    )
+    override = opts.get("qualityOverride") or opts.get("quality_override")
+    if override is not None and str(override).strip():
+        quality_override = str(override).strip()
+    elif face_preset != "auto":
+        quality_override = RODIN_FACE_OVERRIDE[face_preset]
+    else:
+        quality_override = None
+
+    high_pack = bool(
+        opts.get("highPack") if "highPack" in opts else opts.get("high_pack", False)
+    )
+    hd_texture = bool(
+        opts.get("hdTexture") if "hdTexture" in opts else opts.get("hd_texture", False)
+    )
+
+    seed_val: int | None = None
+    raw_seed = opts.get("seed")
+    if raw_seed is not None and str(raw_seed).strip() != "":
+        try:
+            seed_val = int(str(raw_seed).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid Rodin seed {raw_seed!r}") from exc
+        if seed_val < 0 or seed_val > 65535:
+            raise ValueError("Rodin seed must be 0–65535")
+
+    return {
+        "material": material,
+        "texture_mode": texture_mode,
+        "geometry_instruct_mode": geometry_mode,
+        "mesh_mode": mesh_mode,
+        "face_preset": face_preset,
+        "quality_override": quality_override,
+        "high_pack": high_pack,
+        "hd_texture": hd_texture,
+        "seed": seed_val,
+    }
+
+
 def submit_image_to_3d(
     engine_id: str,
     *,
     image_urls: list[str],
     view_slots: dict[str, str | None] | None = None,
     quality_tier: str | None = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not is_rodin_engine(engine_id):
         raise ValueError(f"{engine_id} is not a Rodin engine")
     tier = resolve_rodin_quality(engine_id, quality_tier)
+    knobs = resolve_rodin_options(tier.id, options)
     urls = list(image_urls)
     if view_slots:
         ordered = [
@@ -179,13 +288,22 @@ def submit_image_to_3d(
     for i, url in enumerate(urls[:5]):
         name, payload, mime = fetch_image(url)
         files.append(("images", f"{i}_{name}", payload, mime))
-    fields = {
+    quality_override = knobs["quality_override"] or tier.quality_override
+    fields: dict[str, str] = {
         "tier": tier.api_tier,
-        "mesh_mode": "Raw",
-        "quality_override": tier.quality_override,
-        "material": "PBR",
+        "mesh_mode": knobs["mesh_mode"],
+        "quality_override": str(quality_override),
+        "material": knobs["material"],
         "geometry_file_format": "glb",
+        "geometry_instruct_mode": knobs["geometry_instruct_mode"],
+        "hd_texture": "true" if knobs["hd_texture"] else "false",
     }
+    if knobs["texture_mode"]:
+        fields["texture_mode"] = knobs["texture_mode"]
+    if knobs["high_pack"]:
+        fields["addons"] = "HighPack"
+    if knobs["seed"] is not None:
+        fields["seed"] = str(knobs["seed"])
     body, content_type = _multipart(fields, files)
     parsed = _request(
         "POST",
@@ -212,6 +330,7 @@ def submit_image_to_3d(
         "subscription_key": sub,
         "tier": tier.api_tier,
         "qualityTier": tier.id,
+        "options": knobs,
     }
 
 

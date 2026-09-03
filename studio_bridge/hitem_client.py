@@ -63,8 +63,8 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         face=2_000_000,
         eta_sec=240,
         list_usd=0.50,
-        label="Hitem3D v2.1 fast",
-        blurb="Печать / деталь. Прямой API, не FAL. PBR on.",
+        label="Hitem Fast",
+        blurb="Печать / деталь. Прямой API, не FAL. PBR on. v2.1 · 1536fast.",
         role="print",
     ),
     "hitem3d_pro": HitemPreset(
@@ -73,8 +73,8 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         face=2_000_000,
         eta_sec=360,
         list_usd=0.90,
-        label="Hitem3D v2.1 pro",
-        blurb="Печать / деталь, 1536pro. Прямой API.",
+        label="Hitem Pro",
+        blurb="Та же v2.1, что Fast — 1536pro. Прямой API.",
         role="print",
     ),
     "hitem3d_v3": HitemPreset(
@@ -83,7 +83,7 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         face=2_000_000,
         eta_sec=480,
         list_usd=2.10,
-        label="Hitem3D v3.0 quality",
+        label="Hitem v3",
         blurb="2048³ quality. Дорого (~$2.10). Не default.",
         role="print",
     ),
@@ -93,7 +93,7 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         face=2_000_000,
         eta_sec=240,
         list_usd=0.50,
-        label="Hitem3D portrait fast",
+        label="Hitem Portrait",
         blurb="Сцена-портрет v2.1. Не персонаж-рыцарь по умолчанию.",
         role="portrait",
     ),
@@ -276,23 +276,53 @@ def submit_image_to_3d(
     *,
     image_urls: list[str],
     view_slots: dict[str, str | None] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     preset = HITEM_PRESETS.get(engine_id)
     if preset is None:
         raise ValueError(f"{engine_id} is not a Hitem Image-to-3D engine")
+    opts = options or {}
     bit, ordered = view_plan(image_urls=image_urls, view_slots=view_slots)
     files: list[tuple[str, str, bytes, str]] = []
     field = "images" if bit is None else "multi_images"
     for slot, url in ordered:
         name, payload, mime = fetch_image(url)
         files.append((field, f"{slot}_{name}", payload, mime))
+
+    pbr_on = opts.get("pbr") if "pbr" in opts else True
+    pbr_val = "1" if bool(pbr_on) else "0"
+
+    face_val = preset.face
+    face_map = {"light": 500_000, "standard": 1_000_000, "high": 2_000_000}
+    raw_preset = opts.get("facePreset") or opts.get("face_preset")
+    if isinstance(raw_preset, str) and raw_preset.strip().lower() in face_map:
+        face_val = face_map[raw_preset.strip().lower()]
+    raw_face = opts.get("face")
+    if raw_face is not None and str(raw_face).strip():
+        try:
+            face_val = int(str(raw_face).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid Hitem face {raw_face!r}") from exc
+    if not 100_000 <= face_val <= 5_000_000:
+        raise ValueError(f"Hitem face out of range: {face_val}")
+
+    shading_val = 0.5
+    raw_shading = opts.get("shading")
+    if raw_shading is not None and str(raw_shading).strip() != "":
+        try:
+            shading_val = float(str(raw_shading).strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid Hitem shading {raw_shading!r}") from exc
+        shading_val = max(0.0, min(1.0, shading_val))
+        shading_val = round(shading_val * 10) / 10
+
     fields = {
         "request_type": "3",
         "model": preset.model,
         "resolution": preset.resolution,
-        "face": str(preset.face),
-        "pbr": "1",
-        "shading": "0.5",
+        "face": str(face_val),
+        "pbr": pbr_val,
+        "shading": str(shading_val),
         "format": "2",
     }
     if bit is not None:
