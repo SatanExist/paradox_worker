@@ -42,6 +42,8 @@ from studio_bridge.hitem_client import (
     submit_image_to_3d as submit_hitem,
 )
 from studio_bridge.rodin_client import (
+    DEFAULT_RODIN_QUALITY,
+    RODIN_QUALITY_TIERS,
     RodinHttpError,
     RodinNotConfiguredError,
     download_urls as download_rodin,
@@ -171,8 +173,14 @@ def _runpod_key() -> str:
     return key
 
 
-def _credit_fields(engine_id: str, *, tier: str, charged: int | None = None) -> dict[str, Any]:
-    quote = quote_engine(engine_id, tier=tier)
+def _credit_fields(
+    engine_id: str,
+    *,
+    tier: str,
+    rodin_quality: str | None = None,
+    charged: int | None = None,
+) -> dict[str, Any]:
+    quote = quote_engine(engine_id, tier=tier, rodin_quality=rodin_quality)
     return {
         "engine": engine_id,
         "creditsQuoted": quote.credits,
@@ -197,7 +205,9 @@ def create_studio_job(
     soft_input: bool | None = None,
     soft_input_strength: float = 0.75,
     texture_mode: TextureMode | None = None,
+    preprocess_image: bool | None = None,
     country: str | None = None,
+    rodin_quality_tier: str | None = None,
 ) -> dict[str, Any]:
     spec = get_engine(engine)
     if spec.provider == "fal" and not on_fal_shelf(spec.id):
@@ -221,6 +231,7 @@ def create_studio_job(
             soft_input=soft_input,
             soft_input_strength=soft_input_strength,
             texture_mode=texture_mode,
+            preprocess_image=preprocess_image,
         )
         payload.update(_credit_fields("trellis2", tier=str(payload.get("tier") or tier)))
         payload["engine"] = "trellis2"
@@ -320,17 +331,33 @@ def create_studio_job(
         }
 
     if spec.provider == "rodin":
-        queued = submit_rodin(spec.id, image_urls=urls, view_slots=view_slots)
+        effective_quality = rodin_quality_tier or (
+            "ultra" if spec.id == "rodin_extreme" else DEFAULT_RODIN_QUALITY
+        )
+        queued = submit_rodin(
+            spec.id,
+            image_urls=urls,
+            view_slots=view_slots,
+            quality_tier=effective_quality,
+        )
         task_uuid = str(queued.get("uuid") or "").strip()
         subscription_key = str(queued.get("subscription_key") or "").strip()
         if not task_uuid or not subscription_key:
             raise RodinHttpError(502, f"Rodin submit missing uuid/key: {queued}")
+        quality_id = str(queued.get("qualityTier") or effective_quality)
+        quality_row = RODIN_QUALITY_TIERS.get(quality_id)
+        quote_bits = _credit_fields(
+            "rodin",
+            tier=str(tier),
+            rodin_quality=quality_id,
+        )
         return {
-            "jobId": encode_rodin_job_id(spec.id, task_uuid, subscription_key),
+            "jobId": encode_rodin_job_id("rodin", task_uuid, subscription_key),
             "rodinUuid": task_uuid,
             "rodinTier": queued.get("tier"),
+            "rodinQualityTier": quality_id,
             "mode": mode,
-            "engine": spec.id,
+            "engine": "rodin",
             "provider": "rodin",
             "vendor": spec.vendor,
             "imageUrl": primary,
@@ -338,8 +365,8 @@ def create_studio_job(
             "viewCount": len(urls),
             "statusLine": status_line(len(urls)),
             "prompt": text_prompt,
-            "etaSecondsCold": spec.eta_sec,
-            "etaSecondsWarm": spec.eta_sec,
+            "etaSecondsCold": quality_row.eta_sec if quality_row else spec.eta_sec,
+            "etaSecondsWarm": quality_row.eta_sec if quality_row else spec.eta_sec,
             "status": "queued",
             **quote_bits,
         }

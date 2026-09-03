@@ -113,11 +113,19 @@ class CreateJobRequest(BaseModel):
         default=None,
         description="Override. Product default is textured (official T2 PBR). clay = debug only.",
     )
+    preprocessImage: bool | None = Field(
+        default=None,
+        description="T2: maps to worker preprocess_image. Default follows tier preset.",
+    )
     prompt: str | None = None
     seed: int = Field(default=1, ge=0)
     engine: str = Field(
         default=DEFAULT_ENGINE,
-        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, rodin, rodin_extreme.",
+        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, rodin.",
+    )
+    rodinQualityTier: str | None = Field(
+        default=None,
+        description="Rodin Gen-2.5 UI tier: lowest | low | medium | high | ultra.",
     )
     country: str | None = Field(
         default=None,
@@ -274,9 +282,11 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
             soft_input=body.softInput,
             soft_input_strength=body.softInputStrength,
             texture_mode=body.textureMode,
+            preprocess_image=body.preprocessImage,
             prompt=body.prompt,
             seed=body.seed,
             country=country,
+            rodin_quality_tier=body.rodinQualityTier,
         )
     except HunyuanGeoBlocked as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

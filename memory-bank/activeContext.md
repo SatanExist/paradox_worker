@@ -5,16 +5,16 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-08-31 веч** — хаб в git (`feat/trellis2-poc`): T2 + Meshy FAL + Hitem/Tripo/Rodin прямые API; lab-карточки. Hunyuan **не витрина** (рега Tencent с РФ: SMS не приходит). Бриф фронта: `workspaceFrontend.md`.
+Последнее обновление: **2026-09-03** — Rodin 2.5 = **один** engine + Quality Tier (Lowest→Ultra), как 3D AI Studio; `rodin_extreme` скрыт из каталога (legacy → ultra).
 
 ### Сейчас (split)
 
 | | |
 |--|--|
-| **Товарищ / AI_MESH** | **сейчас:** Workspace UI. Бриф: `workspaceFrontend.md` + §11 `productMultiUx.md` + `posterCards.md` + `aiMeshFalContract.md` |
-| **Мы / paradox_worker** | Шлюз хаба в git. T2 v21 не трогать. Hunyuan парк. Next generation: TripoSG |
-| **Не трогать** | img2mv; T2 knobs; Generate «на всякий случай»; MCP; том T2; slat=25; **Hi3DGen / Pixal3D / Direct3D-S2 / Step1X — не переоткрывать как quality** |
-| **Наш next** | Товарищ верстает Workspace. Мы: `--auth` Tripo/Rodin когда ключи; Hitem pack; generate позже. Default T2. `knightGate=pending` |
+| **Товарищ / AI_MESH (POLY_LAB)** | `git pull` master: Input mode plate (Image/Text/Multi) + **Rodin Quality Tier** strip; T2 inspector. Tripo H3.1/P1 без P2 |
+| **Мы / paradox_worker** | `feat/trellis2-poc`: `POST /api/jobs` + `rodinQualityTier`; `RODIN_QUALITY_TIERS` в `rodin_client.py`. Tripo P2 — только Studio/3DAI |
+| **Не трогать** | img2mv; Generate «на всякий случай»; MCP; том T2; **Hi3DGen / Pixal3D / Direct3D-S2 / Step1X — не переоткрывать как quality** |
+| **Наш next** | Rodin `--live` smoke с ключом; Hitem inspector; Tripo generate на ПК. Default T2. `knightGate=pending` |
 
 ---
 
@@ -498,6 +498,9 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-09-03 | **Rodin unify (как 3DAI):** один picker `rodin` («Rodin 2.5») + `rodinQualityTier` lowest/low/medium/high/ultra → Gen-2.5 Extreme-Low…Extreme-High. `rodin_extreme` `show_in_catalog=False` (API legacy → ultra). Credits по тиру (medium≈25, high≈30, ultra≈60). UI: `POLY_LAB` `RodinEngineParams` + `rodinQuality.ts`. |
+| 2026-09-02 | **Rodin 2.5 UI (POLY_LAB):** multi-view slots + PBR locked (позже слито в Quality Tier). Док: `POLY_LAB/memory-bank/studio-engine-params.md` § Rodin. |
+| 2026-09-02 | **Tripo ⏸:** credits 1000 в UI до 2026-09-07; письмо Lorna про P2 GameReady API — ждём. P2 нет в OpenAPI (`P1-20260311` only). Не переименовывать в P2 до API. |
 | 2026-08-28 | **ТЗ 6.0 Gemini:** выкинуть FAL, T2 $0.006, Tripo $0.08, Rodin $0.22, C++ ров, Delaware+партнёр 24г ради Meshy. Разбор `tz60CtoReview.md`. Код/ARCHITECTURE.md не писать. |
 | 2026-08-28 | **Meshy Enterprise NO:** Marko — unable to support customers in Russia (compliance). Повтор / consumer Pro — нет. Слот Meshy = FAL ×2.5 или без слота. |
 | 2026-08-27 веч | **Meshy 7 vs 3DAI (воркспейс, не карточка):** глина 35 cr, +tex+PBR 40 cr, ETA 5–10 мин и на глине. Basic $19/1000 → $0.67 / $0.76. FAL v7: глина $0.80, tex $1.20, ultra $1.40. Дешёвая розница 3DAI **не с агрегатора** — у завода Meshy Pro глина ~$0.40 (20 API cr). Белые склады (FAL/Pixazo/WaveSpeed) дороже 3DAI. PoYo $0.30 (только v6) — серый, не брать. Стратегия: не равнять 35/40 cr; полка FAL ×2.5; текстура не +5 cr. **Заявка Meshy Enterprise отправлена** (AI_MESH = хаб как 3DAI, T2 на аренде RunPod, ключ только бэкенд). **Ждём ответ.** Письма Tripo `business@tripo3d.ai` / Rodin `hello@deemos.com` / Hitem `apicontact@hi3d.ai` — черновики готовы, слать после Meshy. РФ: селфсервис Visa на RunPod/FAL уже работает; Enterprise KYC ≠ кабинет; не играть страну в форме. Не юрконсультация. |
@@ -1005,6 +1008,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-09-03** | Pedrokita | Rodin = один engine + Quality Tier (hub + POLY_LAB). Input mode plate. Memory sync | `git pull` товарищу; Rodin live smoke; Hitem inspector |
+| **2026-09-02** | Pedrokita | Rodin 2.5 Workspace UI (POLY_LAB): multi-view inspector, picker tags; hub label sync. Tripo research: P2 только Studio, credits OK | → слито в unify 09-03 |
 | **2026-08-31** веч | Pedrokita | Push хаба: Hitem/Tripo/Rodin + lab-карточки + `workspaceFrontend.md` для Cursor товарища. Hunyuan парк (SMS Tencent) | Товарищ: Workspace в AI_MESH. Мы: ключи Tripo/Rodin, не generate рыцаря |
 | **2026-08-31** | Pedrokita | Tripo + Rodin в шлюзе (не FAL). Catalog + 2.5×. Lab: карточки Свои/Meshy/Hitem/Tripo/Rodin | `--auth` потом generate; не рыцарь |
 | **2026-08-31** | Pedrokita | Hitem Open Platform в шлюзе: 4 Image-to-3D SKU, не FAL. Каталог + credits 2.5× | `.env` HITEM_CLIENT_*; рыцарь; не v3 master |

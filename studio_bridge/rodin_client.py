@@ -21,6 +21,8 @@ from studio_bridge.hitem_client import _multipart, fetch_image
 
 API_BASE = "https://api.hyper3d.com/api/v2"
 DEFAULT_TIMEOUT_SEC = 60
+DEFAULT_RODIN_QUALITY = "medium"
+RODIN_ENGINE_IDS = frozenset({"rodin", "rodin_extreme"})
 
 
 class RodinNotConfiguredError(RuntimeError):
@@ -35,32 +37,85 @@ class RodinHttpError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class RodinPreset:
-    tier: str
+class RodinQualityTier:
+    id: str
+    api_tier: str
+    quality_override: str
     list_usd: float
     eta_sec: int
     label: str
-    blurb: str
-    quality_override: str = "500000"
 
 
-RODIN_PRESETS: dict[str, RodinPreset] = {
-    "rodin": RodinPreset(
-        tier="Gen-2.5-High",
-        list_usd=0.30,
-        eta_sec=240,
-        label="Rodin Gen-2.5 High",
-        blurb="Органика / hero. 1 concurrent. PBR GLB.",
+RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
+    "lowest": RodinQualityTier(
+        "lowest",
+        "Gen-2.5-Extreme-Low",
+        "20000",
+        0.15,
+        120,
+        "Lowest",
     ),
-    "rodin_extreme": RodinPreset(
-        tier="Gen-2.5-Extreme-High",
-        list_usd=0.60,
-        eta_sec=360,
-        label="Rodin Extreme-High",
-        blurb="Жирный тир Rodin. Дороже. 1 concurrent.",
-        quality_override="1000000",
+    "low": RodinQualityTier(
+        "low",
+        "Gen-2.5-Low",
+        "60000",
+        0.20,
+        150,
+        "Low",
+    ),
+    "medium": RodinQualityTier(
+        "medium",
+        "Gen-2.5-Medium",
+        "500000",
+        0.25,
+        210,
+        "Medium",
+    ),
+    "high": RodinQualityTier(
+        "high",
+        "Gen-2.5-High",
+        "500000",
+        0.30,
+        240,
+        "High",
+    ),
+    "ultra": RodinQualityTier(
+        "ultra",
+        "Gen-2.5-Extreme-High",
+        "1000000",
+        0.60,
+        360,
+        "Ultra",
     ),
 }
+
+
+@dataclass(frozen=True)
+class RodinEngineMeta:
+    label: str
+    blurb: str
+    eta_sec: int
+
+
+RODIN_ENGINE = RodinEngineMeta(
+    label="Rodin 2.5",
+    blurb="Hyper3D Gen-2.5 — hard-surface, PBR GLB, 1–5 photos. Quality tier in params.",
+    eta_sec=RODIN_QUALITY_TIERS[DEFAULT_RODIN_QUALITY].eta_sec,
+)
+
+
+def resolve_rodin_quality(engine_id: str, quality_tier: str | None) -> RodinQualityTier:
+    if engine_id == "rodin_extreme":
+        return RODIN_QUALITY_TIERS["ultra"]
+    q = (quality_tier or DEFAULT_RODIN_QUALITY).strip().lower()
+    tier = RODIN_QUALITY_TIERS.get(q)
+    if tier is None:
+        raise ValueError(f"unknown Rodin quality tier {quality_tier!r}")
+    return tier
+
+
+def is_rodin_engine(engine_id: str) -> bool:
+    return engine_id in RODIN_ENGINE_IDS
 
 
 def api_key() -> str:
@@ -106,10 +161,11 @@ def submit_image_to_3d(
     *,
     image_urls: list[str],
     view_slots: dict[str, str | None] | None = None,
+    quality_tier: str | None = None,
 ) -> dict[str, Any]:
-    preset = RODIN_PRESETS.get(engine_id)
-    if preset is None:
+    if not is_rodin_engine(engine_id):
         raise ValueError(f"{engine_id} is not a Rodin engine")
+    tier = resolve_rodin_quality(engine_id, quality_tier)
     urls = list(image_urls)
     if view_slots:
         ordered = [
@@ -124,9 +180,9 @@ def submit_image_to_3d(
         name, payload, mime = fetch_image(url)
         files.append(("images", f"{i}_{name}", payload, mime))
     fields = {
-        "tier": preset.tier,
+        "tier": tier.api_tier,
         "mesh_mode": "Raw",
-        "quality_override": preset.quality_override,
+        "quality_override": tier.quality_override,
         "material": "PBR",
         "geometry_file_format": "glb",
     }
@@ -151,7 +207,12 @@ def submit_image_to_3d(
         sub = str(jobs[0].get("subscription_key") or "").strip()
     if not task_uuid or not sub:
         raise RodinHttpError(502, f"rodin submit missing uuid/subscription_key: {list(parsed)}")
-    return {"uuid": task_uuid, "subscription_key": sub, "tier": preset.tier}
+    return {
+        "uuid": task_uuid,
+        "subscription_key": sub,
+        "tier": tier.api_tier,
+        "qualityTier": tier.id,
+    }
 
 
 def query_status(subscription_key: str) -> dict[str, Any]:

@@ -35,7 +35,7 @@ from studio_bridge.gateway import (  # noqa: E402
     parse_tripo_job_id,
 )
 from studio_bridge.hitem_client import HITEM_PRESETS, map_hitem_state, view_plan  # noqa: E402
-from studio_bridge.rodin_client import RODIN_PRESETS, map_rodin_jobs  # noqa: E402
+from studio_bridge.rodin_client import map_rodin_jobs  # noqa: E402
 from studio_bridge.tripo_client import TRIPO_PRESETS, map_tripo_status  # noqa: E402
 from studio_bridge.geo import (  # noqa: E402
     HunyuanGeoBlocked,
@@ -104,7 +104,6 @@ def main() -> None:
         "tripo",
         "tripo_p1",
         "rodin",
-        "rodin_extreme",
     }
     assert "trellis2_fal" not in catalog_ids
     assert get_engine("hitem3d").provider == "hitem"
@@ -185,8 +184,10 @@ def main() -> None:
     assert quote_engine("tripo").credits == 30
     assert quote_engine("tripo_p1").credits == 50
     assert quote_engine("rodin").kind == "rodin"
-    assert quote_engine("rodin").credits == 30
-    assert quote_engine("rodin_extreme").credits == 60
+    assert quote_engine("rodin").credits == 25
+    assert quote_engine("rodin", rodin_quality="high").credits == 30
+    assert quote_engine("rodin", rodin_quality="ultra").credits == 60
+    assert quote_engine("rodin_extreme", rodin_quality="ultra").credits == 60
     assert set(HITEM_PRESETS) == {
         "hitem3d",
         "hitem3d_pro",
@@ -194,7 +195,9 @@ def main() -> None:
         "hitem3d_portrait",
     }
     assert set(TRIPO_PRESETS) == {"tripo", "tripo_p1"}
-    assert set(RODIN_PRESETS) == {"rodin", "rodin_extreme"}
+    from studio_bridge.rodin_client import RODIN_QUALITY_TIERS
+
+    assert set(RODIN_QUALITY_TIERS) == {"lowest", "low", "medium", "high", "ultra"}
     assert map_tripo_status("success") == "ready"
     assert map_tripo_status("cancelled") == "failed"
     assert map_rodin_jobs({"jobs": [{"status": "Done"}]}) == "ready"
@@ -206,7 +209,13 @@ def main() -> None:
     assert "tripo" in tariffs
     assert "tripo_p1" in tariffs
     assert "rodin" in tariffs
-    assert "rodin_extreme" in tariffs
+    assert "rodin_extreme" not in tariffs
+    rodin_tiers = {
+        row.get("rodinQualityTier")
+        for row in credit_catalog()["tariffs"]
+        if row.get("engineId") == "rodin" and row.get("rodinQualityTier")
+    }
+    assert rodin_tiers == {"lowest", "low", "medium", "high", "ultra"}
     assert "hunyuan" not in tariffs
 
     try:

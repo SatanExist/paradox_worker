@@ -20,14 +20,16 @@ Lab-референс карточек: `scripts/studio_lab.html` (`.\scripts\stu
 @memory-bank/posterCards.md
 
 Сделай Workspace Image-to-3D:
-1. Default engine = trellis2. Селектор — кликабельные карточки по вендорам, не один <select>.
+1. Default engine = trellis2. Hero-кнопка → fullscreen picker (1/3 список, 2/3 showcase).
    Группы: Свои GPU (trellis2, hi3dgen) / Meshy · FAL / Hitem / Tripo / Rodin.
-   Данные: GET /api/engines или GET /api/product-copy → engines.
-2. Поле configured === false → карточка тусклая, Generate не слать (нет ключа на бэке).
+   Данные: GET /api/engines или GET /api/product-copy → engines (+ engine.showcase).
+2. Поле configured === false → строка тусклая, Generate и «Выбрать» disabled.
+3. Showcase (эталон trellis2): heroCutoutUrl, watermark, anchors, examples[], bestFor[].
+   Lab-референс: scripts/studio_lab.html + studio_bridge/engine_showcases.py.
 3. Пресеты качества Low/Medium/High/Realistic только если engine.qualityPresets (T2).
-   Чужие сети — без этой лестницы, свои credits/etaSeconds.
+   Rodin: **не** два слота — один `rodin` + полоска Quality Tier (Lowest→Ultra) → поле `rodinQualityTier`.
 4. Слоты: Front обязателен; Side/Back/Extra опционально. Пустые не слать.
-5. POST /api/jobs { engine, tier, viewSlots, seed }. Poll GET /api/jobs/{jobId}.
+5. POST /api/jobs { engine, tier, viewSlots, seed, rodinQualityTier? }. Poll GET /api/jobs/{jobId}.
 6. Лента = posterUrl JPEG. Большой вьюер = один GLB (modelUrl). Не ключи в браузер.
 7. Визуал: ruby-jelly (rose/coral), не cosmic cyan. Вьюер .js не .mjs.
 8. Hunyuan на витрине нет. Не обещать «как Meshy». Generate = деньги, confirm.
@@ -50,12 +52,35 @@ Lab-референс карточек: `scripts/studio_lab.html` (`.\scripts\stu
 | `hitem3d_portrait` | Hitem | hitem | 50 | портрет |
 | `tripo` | Tripo | tripo | 30 | H3.1 |
 | `tripo_p1` | Tripo | tripo | 50 | P1 |
-| `rodin` | Rodin | rodin | 30 | Gen-2.5 High |
-| `rodin_extreme` | Rodin | rodin | 60 | Extreme-High |
+| `rodin` | Rodin | rodin | 15–60 по тиру | **Один** Rodin 2.5; Quality Tier Lowest→Ultra (default Medium≈25 cr). Ultra≈60 |
 
-Нет на витрине: `hunyuan`, `hunyuan_pro`, FAL-T2. Hunyuan = Tencent Cloud, регистрация с РФ зависла (SMS). Не рисовать карточку.
+Нет на витрине: `rodin_extreme` (legacy id, API → ultra), `hunyuan`, `hunyuan_pro`, FAL-T2. Hunyuan = Tencent Cloud, регистрация с РФ зависла (SMS). Не рисовать карточку.
+
+**Rodin Quality Tier → Hyper3D:** lowest→Extreme-Low · low→Low · medium→Medium · high→High · ultra→Extreme-High. См. `RODIN_QUALITY_TIERS` в `studio_bridge/rodin_client.py`; в каталоге `engine.rodinQualityTiers[]`.
 
 Поле `configured` (bool): ключ на бэке есть/нет. Не путать с «сеть плохая».
+
+---
+
+## Engine showcase (picker правая 2/3)
+
+Эталон: **`trellis2`** в `studio_bridge/engine_showcases.py`. Lab: `studio_lab.html` → hero-кнопка «Модель» → fullscreen picker.
+
+Поле `engine.showcase` (optional):
+
+| Поле | Тип | Зачем |
+|------|-----|--------|
+| `headline` | string | заголовок витрины |
+| `heroCutoutUrl` | url | PNG без фона, центр композиции |
+| `heroFallbackUrl` | url | запас, если cutout 404 |
+| `watermark` | string | крупный текст на фоне |
+| `capabilities` | string[] | chips |
+| `bestFor` | string[] | rose chips «когда выбирать» |
+| `avoidFor` | string[] | опционально |
+| `examples` | `{kind,url,label}[]` | полоска 4 превью (input/output/detail) |
+| `anchors` | `{text,class}[]` | подписи вокруг hero: `tl` `tr` `bl` `br` |
+
+Новый engine = скопировать блок `trellis2` в `engine_showcases.py` + свои `/preview_textures/…` или R2 URL.
 
 ---
 

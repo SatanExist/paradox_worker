@@ -24,7 +24,7 @@
 
 Default = `trellis2`. Честные имена в UI: «Meshy 6», не «наша SOTA».
 
-Живой FAL: **только `meshy`**. Живой Hitem: `hitem3d`, `hitem3d_pro`, `hitem3d_v3`, `hitem3d_portrait` (`hitem:<engine>:<task_id>`). Живой Tripo: `tripo`, `tripo_p1` (`tripo:<engine>:<task_id>`). Живой Rodin: `rodin`, `rodin_extreme` (`rodin:<engine>:<uuid>|<subscription_key>`). POST `hunyuan` → **501**. Tencent — позже. Карточка без ключа в каталоге `configured: false`; create без ключа → 501.
+Живой FAL: **только `meshy`**. Живой Hitem: `hitem3d`, `hitem3d_pro`, `hitem3d_v3`, `hitem3d_portrait` (`hitem:<engine>:<task_id>`). Живой Tripo: `tripo`, `tripo_p1` (`tripo:<engine>:<task_id>`). Живой Rodin: **`rodin`** + опционально `rodinQualityTier` (`lowest`|`low`|`medium`|`high`|`ultra`). Job id `rodin:rodin:<uuid>|<subscription_key>`. Legacy `rodin_extreme` → ultra, вне каталога. POST `hunyuan` → **501**. Tencent — позже. Карточка без ключа в каталоге `configured: false`; create без ключа → 501.
 
 Ключи: `FAL_KEY`, `HITEM_CLIENT_ID`, `HITEM_CLIENT_SECRET`, `TRIPO_API_KEY`, `RODIN_API_KEY`/`HYPER3D_API_KEY` только сервер.
 

@@ -129,15 +129,32 @@ def t2_quote_for_preset(preset: str) -> CreditQuote:
     )
 
 
-def quote_engine(engine_id: str, *, tier: str = "medium") -> CreditQuote:
+def quote_rodin(quality_tier: str = "medium") -> CreditQuote:
+    from studio_bridge.rodin_client import resolve_rodin_quality
+
+    tier = resolve_rodin_quality("rodin", quality_tier)
+    return _direct_quote(
+        "rodin",
+        tier.list_usd,
+        "rodin",
+        f"Rodin 2.5 {tier.label} (direct)",
+    )
+
+
+def quote_engine(
+    engine_id: str,
+    *,
+    tier: str = "medium",
+    rodin_quality: str | None = None,
+) -> CreditQuote:
     eid = (engine_id or "trellis2").strip().lower()
     if eid == "trellis2":
         return t2_quote_for_preset(tier)
     if eid == "hi3dgen":
         return _T2_QUOTES["hi3dgen"]
     from studio_bridge.hitem_client import HITEM_PRESETS
-    from studio_bridge.rodin_client import RODIN_PRESETS
     from studio_bridge.tripo_client import TRIPO_PRESETS
+    from studio_bridge.rodin_client import is_rodin_engine
 
     hitem = HITEM_PRESETS.get(eid)
     if hitem is not None:
@@ -145,9 +162,11 @@ def quote_engine(engine_id: str, *, tier: str = "medium") -> CreditQuote:
     tripo = TRIPO_PRESETS.get(eid)
     if tripo is not None:
         return _direct_quote(eid, tripo.list_usd, "tripo", f"{tripo.label} (direct)")
-    rodin = RODIN_PRESETS.get(eid)
-    if rodin is not None:
-        return _direct_quote(eid, rodin.list_usd, "rodin", f"{rodin.label} (direct)")
+    if is_rodin_engine(eid):
+        from studio_bridge.rodin_client import DEFAULT_RODIN_QUALITY
+
+        q = rodin_quality or ("ultra" if eid == "rodin_extreme" else DEFAULT_RODIN_QUALITY)
+        return quote_rodin(q)
     if eid in _FAL_LIST_USD:
         return _fal_quote(eid)
     raise ValueError(f"unknown engine {engine_id!r}")
@@ -176,11 +195,15 @@ def credit_catalog() -> dict:
     for eid in ("meshy",):
         rows.append(_fal_quote(eid).as_dict())
     from studio_bridge.hitem_client import HITEM_PRESETS
-    from studio_bridge.rodin_client import RODIN_PRESETS
     from studio_bridge.tripo_client import TRIPO_PRESETS
+    from studio_bridge.rodin_client import RODIN_QUALITY_TIERS
 
-    for eid in (*HITEM_PRESETS, *TRIPO_PRESETS, *RODIN_PRESETS):
+    for eid in (*HITEM_PRESETS, *TRIPO_PRESETS):
         rows.append(quote_engine(eid).as_dict())
+    for qid in RODIN_QUALITY_TIERS:
+        row = quote_rodin(qid).as_dict()
+        row["rodinQualityTier"] = qid
+        rows.append(row)
     return {
         "creditUsd": CREDIT_USD,
         "falMarkup": FAL_MARKUP,

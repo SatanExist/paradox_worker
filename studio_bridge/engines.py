@@ -9,10 +9,16 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from studio_bridge.credits import quote_engine
+from studio_bridge.credits import quote_engine, quote_rodin
+from studio_bridge.engine_showcases import attach_showcases
 from studio_bridge.geo import hunyuan_allowed
 from studio_bridge.hitem_client import HITEM_PRESETS
-from studio_bridge.rodin_client import RODIN_PRESETS
+from studio_bridge.rodin_client import (
+    DEFAULT_RODIN_QUALITY,
+    RODIN_ENGINE,
+    RODIN_QUALITY_TIERS,
+    is_rodin_engine,
+)
 from studio_bridge.tripo_client import TRIPO_PRESETS
 
 SLOT_ORDER: tuple[str, ...] = ("front", "side", "back", "extra")
@@ -170,31 +176,31 @@ _ENGINES: tuple[EngineSpec, ...] = (
     ),
     EngineSpec(
         id="rodin",
-        label=RODIN_PRESETS["rodin"].label,
+        label=RODIN_ENGINE.label,
         vendor="Hyper3D / Deemos",
         provider="rodin",
         role="organic",
-        blurb=RODIN_PRESETS["rodin"].blurb,
+        blurb=RODIN_ENGINE.blurb,
         fal_model=None,
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://developer.hyper3d.ai/",
-        eta_sec=RODIN_PRESETS["rodin"].eta_sec,
+        docs_url="https://docs.hyper3d.ai/en/api-specification/rodin-gen2-5",
+        eta_sec=RODIN_ENGINE.eta_sec,
     ),
     EngineSpec(
         id="rodin_extreme",
-        label=RODIN_PRESETS["rodin_extreme"].label,
+        label="Rodin 2.5 Extreme",
         vendor="Hyper3D / Deemos",
         provider="rodin",
         role="organic",
-        blurb=RODIN_PRESETS["rodin_extreme"].blurb,
+        blurb="Legacy engine id — use rodin + ultra quality tier.",
         fal_model=None,
         geo_gated=False,
-        show_in_catalog=True,
+        show_in_catalog=False,
         quality_presets=False,
-        docs_url="https://developer.hyper3d.ai/",
-        eta_sec=RODIN_PRESETS["rodin_extreme"].eta_sec,
+        docs_url="https://docs.hyper3d.ai/en/api-specification/rodin-gen2-5",
+        eta_sec=RODIN_QUALITY_TIERS["ultra"].eta_sec,
     ),
     EngineSpec(
         id="tripo",
@@ -312,7 +318,25 @@ def engine_catalog(*, country: str | None = None, include_hidden: bool = False) 
                     HITEM_PRESETS[spec.id].resolution if spec.provider == "hitem" else None
                 ),
                 "tripoModel": (TRIPO_PRESETS[spec.id].model if spec.provider == "tripo" else None),
-                "rodinTier": (RODIN_PRESETS[spec.id].tier if spec.provider == "rodin" else None),
+                "rodinTier": (
+                    RODIN_QUALITY_TIERS[DEFAULT_RODIN_QUALITY].api_tier
+                    if spec.id == "rodin"
+                    else None
+                ),
+                "rodinQualityTiers": (
+                    [
+                        {
+                            "id": q.id,
+                            "label": q.label,
+                            "credits": quote_rodin(q.id).credits,
+                            "etaSeconds": q.eta_sec,
+                            "apiTier": q.api_tier,
+                        }
+                        for q in RODIN_QUALITY_TIERS.values()
+                    ]
+                    if spec.id == "rodin"
+                    else None
+                ),
                 "configured": engine_keys_configured(spec),
                 "docsUrl": spec.docs_url,
                 "etaSeconds": spec.eta_sec,
@@ -321,7 +345,7 @@ def engine_catalog(*, country: str | None = None, include_hidden: bool = False) 
                 "knightGate": KNIGHT_GATE_STATUS,
             }
         )
-    return out
+    return attach_showcases(out)
 
 
 def _slot_urls(view_slots: dict[str, str | None] | None, image_urls: list[str]) -> dict[str, str]:

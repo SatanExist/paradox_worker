@@ -2,6 +2,7 @@
 
   python scripts/test_req_rodin.py
   python scripts/test_req_rodin.py --auth
+  python scripts/test_req_rodin.py --quality-tier ultra
 """
 
 from __future__ import annotations
@@ -24,9 +25,11 @@ load_dotenv(ROOT / ".env")
 from studio_bridge.credits import CREDIT_USD, quote_engine  # noqa: E402
 from studio_bridge.engines import get_engine  # noqa: E402
 from studio_bridge.rodin_client import (  # noqa: E402
-    RODIN_PRESETS,
+    DEFAULT_RODIN_QUALITY,
+    RODIN_QUALITY_TIERS,
     RodinNotConfiguredError,
     api_key,
+    resolve_rodin_quality,
 )
 
 KNIGHT = (
@@ -50,7 +53,12 @@ def _auth_check() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", default="rodin", choices=sorted(RODIN_PRESETS))
+    ap.add_argument("--engine", default="rodin", choices=("rodin", "rodin_extreme"))
+    ap.add_argument(
+        "--quality-tier",
+        default=DEFAULT_RODIN_QUALITY,
+        choices=sorted(RODIN_QUALITY_TIERS),
+    )
     ap.add_argument("--image-url", default=KNIGHT)
     ap.add_argument(
         "--auth",
@@ -62,11 +70,11 @@ def main() -> int:
         return _auth_check()
 
     spec = get_engine(args.engine)
-    preset = RODIN_PRESETS[args.engine]
-    quote = quote_engine(args.engine)
+    tier = resolve_rodin_quality(args.engine, args.quality_tier)
+    quote = quote_engine(args.engine, rodin_quality=tier.id)
     print("engine:", spec.id, spec.provider)
     print("docs:  ", spec.docs_url)
-    print("tier:  ", preset.tier, "quality_override", preset.quality_override)
+    print("quality:", tier.id, "api_tier", tier.api_tier, "override", tier.quality_override)
     print(
         f"credits: {quote.credits}  cogs ${quote.usd_cogs}  "
         f"user >= ${quote.credits * CREDIT_USD:.2f}"
