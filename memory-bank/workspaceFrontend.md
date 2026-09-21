@@ -50,12 +50,13 @@ Lab-референс карточек: `scripts/studio_lab.html` (`.\scripts\stu
 | `hitem3d_pro` | Hitem | hitem | 90 | v2.1 pro |
 | `hitem3d_v3` | Hitem | hitem | 210 | v3 quality |
 | `hitem3d_portrait` | Hitem | hitem | 50 | портрет |
-| `tripo` | Tripo | tripo | 30 | H3.1 |
-| `tripo_p1` | Tripo | tripo | 50 | P1 |
-| `tripo_p2` | Tripo | tripo | 70 | **P2 Preview** `P2-20260801`, `quad=true` (image-only v1) |
+| `tripo` | Tripo | tripo | 30 | H3.1 · image/text/multiview |
+| `tripo_p1` | Tripo | tripo | 50–60 | P1 Smart Mesh: Standard **50** / HD **60** (clay 40). Экспозиция: Std=меч, HD=книга→меч. Нет geo/quad. |
+| `tripo_p2` | Tripo | tripo | 100–130 | **P2 Preview** `P2-20260801`: глина 100 · Std 110 · Ultra 120 · Max 130. Пикер = 1/4 фото. Герои: бластер / рюкзак. Default Ultra+quads = 120. Не 3DAI 70/80. |
 | `rodin` | Rodin | rodin | 15–60 по тиру | **Один** Rodin 2.5; Quality Tier Lowest→Ultra (default Medium≈25 cr). Ultra≈60 |
+| `hunyuan` | Tencent | tencent | ~23–60 | **Одна сеть**, три **задачи** на карточке: Express → Pro → LowPoly. Pro=3.1 Normal|Geometry|Sketch (как 3DAI); Express=Rapid; LowPoly=Model 3.0 light mesh. Geo-gate EU/UK/KR. |
 
-Нет на витрине: `rodin_extreme` (legacy id, API → ultra), `hunyuan`, `hunyuan_pro`, FAL-T2. Hunyuan = Tencent Cloud, регистрация с РФ зависла (SMS). Не рисовать карточку.
+Нет на витрине: `rodin_extreme` (legacy id, API → ultra), `hunyuan_pro` (legacy → тот же движок), FAL-T2.
 
 **Rodin Quality Tier → Hyper3D:** lowest→Extreme-Low · low→Low · medium→Medium · high→High · ultra→Extreme-High. См. `RODIN_QUALITY_TIERS` в `studio_bridge/rodin_client.py`; в каталоге `engine.rodinQualityTiers[]`.
 
@@ -82,6 +83,30 @@ Lab-референс карточек: `scripts/studio_lab.html` (`.\scripts\stu
 | `anchors` | `{text,class}[]` | подписи вокруг hero: `tl` `tr` `bl` `br` |
 
 Новый engine = скопировать блок `trellis2` в `engine_showcases.py` + свои `/preview_textures/…` или R2 URL.
+
+### ⚠️ Фронт ушёл вперёд (2026-09-09 → 11)
+
+PolyLab больше **не** рисует коллаж из `examples[]`. Витрина = **editorial-экспозиция
+(Prime-каркас)**: заголовок слева, **живой GLB-герой**, лестница усилий, CTA,
+справа = вход + **штамп выхода (JPEG полки)** + specs.
+
+**TRELLIS.2 попап закрыт 2026-09-11 как шаблон для остальных сетей.**
+
+| Документ | Зачем |
+|----------|--------|
+| `POLY_LAB/memory-bank/studio-engine-showroom.md` | канон UX + свет героя + штамп + лого |
+| `POLY_LAB/memory-bank/studio-exposition-playbook.md` | **рецепт «добавить сеть»** §4 + свет герой≠штамп §7 |
+| `POLY_LAB/memory-bank/studio-poster-studio.md` | скрины fallback + pivot gizmo |
+
+Запуск poster studio: `paradox_worker` → `.\scripts\poster_studio.ps1` → `:8791`
+
+Что важно на стороне worker'а:
+
+- Герою нужен **GLB** `.png.glb` (эталонный атлас), не WebP-атлас без суффикса.
+- Фронт сжимает (Draco + WebP, `--simplify false`).
+- Pivot: `heroPivot` / `heroModelOffset` в `engineLens.ts` / `tierExposition.ts` — крутить в poster studio.
+- **Свет штампа** скопирован с lab `scripts/studio_viewer.js` `LIGHT_RIGS.studio` (не с упрощённого `studio_thumb.js`: там нет rim). Не менять viewer-риг, не сверившись со штампом в `/generate`.
+- Постеры-fallback: только WebGL (`poster_studio`), не CPU clay.
 
 ---
 

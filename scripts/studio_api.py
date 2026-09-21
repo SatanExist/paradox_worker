@@ -43,6 +43,7 @@ from studio_bridge.gateway import (  # noqa: E402
     get_studio_job,
 )
 from studio_bridge.hitem_client import HitemHttpError, HitemNotConfiguredError  # noqa: E402
+from studio_bridge.hunyuan_client import HunyuanHttpError, HunyuanNotConfiguredError  # noqa: E402
 from studio_bridge.rodin_client import RodinHttpError, RodinNotConfiguredError  # noqa: E402
 from studio_bridge.tripo_client import TripoHttpError, TripoNotConfiguredError  # noqa: E402
 from studio_bridge.geo import HunyuanGeoBlocked, country_from_headers  # noqa: E402
@@ -121,7 +122,7 @@ class CreateJobRequest(BaseModel):
     seed: int = Field(default=1, ge=0)
     engine: str = Field(
         default=DEFAULT_ENGINE,
-        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo, tripo_p1, tripo_p2, rodin.",
+        description="trellis2 (default), hi3dgen, meshy, hitem3d*, tripo*, rodin, hunyuan.",
     )
     rodinQualityTier: str | None = Field(
         default=None,
@@ -138,13 +139,21 @@ class CreateJobRequest(BaseModel):
         default=None,
         description=(
             "Tripo knobs: topology (P2), material, textureQuality, geometryQuality "
-            "(H3), smartLowPoly (H3 clay), facePreset, textureAlign, orientation, "
-            "autofix, seed."
+            "(H3 Ultra +20), smartLowPoly (H3 +10), facePreset, textureAlign, "
+            "orientation (textured only), autofix, seed (omit = vendor random). "
+            "Text mode skips OpenAI — native text-to-model. Credits stack from PAYG table."
+        ),
+    )
+    hunyuanOptions: dict | None = Field(
+        default=None,
+        description=(
+            "Hunyuan: lane pro|express|lowpoly; generateType Normal|Geometry|Sketch "
+            "(Pro); enablePbr; faceCount; polygonType (LowPoly). Express=Rapid API."
         ),
     )
     hitemOptions: dict | None = Field(
         default=None,
-        description="Hitem knobs: pbr, facePreset / face, shading (0.0–1.0).",
+        description="Hitem knobs: sku (fast|pro|v3), pbr, facePreset / face, shading (0.0–1.0).",
     )
     hi3dgenOptions: dict | None = Field(
         default=None,
@@ -157,7 +166,11 @@ class CreateJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_image_or_urls(self) -> CreateJobRequest:
-        if self.mode == "image" and not self.imageUrl and not self.imageUrls and not self.viewSlots:
+        if self.mode == "text":
+            if not (self.prompt or "").strip():
+                raise ValueError("prompt is required for mode=text")
+            return self
+        if not self.imageUrl and not self.imageUrls and not self.viewSlots:
             raise ValueError("imageUrl, imageUrls, or viewSlots is required for mode=image")
         return self
 
@@ -312,6 +325,7 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
             rodin_quality_tier=body.rodinQualityTier,
             rodin_options=body.rodinOptions,
             tripo_options=body.tripoOptions,
+            hunyuan_options=body.hunyuanOptions,
             hitem_options=body.hitemOptions,
             hi3dgen_options=body.hi3dgenOptions,
         )
@@ -325,9 +339,16 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
         HitemNotConfiguredError,
         TripoNotConfiguredError,
         RodinNotConfiguredError,
+        HunyuanNotConfiguredError,
     ) as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except (FalHttpError, HitemHttpError, TripoHttpError, RodinHttpError) as exc:
+    except (
+        FalHttpError,
+        HitemHttpError,
+        TripoHttpError,
+        RodinHttpError,
+        HunyuanHttpError,
+    ) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

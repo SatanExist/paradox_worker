@@ -5,16 +5,77 @@
 > В конце сессии: *«Обнови activeContext — что мы сделали»* → `git push`.
 > Синхронизация вдвоём: см. `@memory-bank/teamWorkflow.md`.
 
-Последнее обновление: **2026-09-03** — Rodin 2.5 = **один** engine + Quality Tier (Lowest→Ultra), как 3D AI Studio; `rodin_extreme` скрыт из каталога (legacy → ultra).
+Последнее обновление: **2026-09-21** — Hunyuan live LowPoly OK; UI = **одна сеть · три задачи** (Express → Pro → LowPoly).
 
 ### Сейчас (split)
 
 | | |
 |--|--|
-| **Товарищ / AI_MESH (POLY_LAB)** | `git pull` master: Input mode plate (Image/Text/Multi) + **Rodin Quality Tier** strip; T2 inspector. Tripo H3.1/P1 без P2 |
-| **Мы / paradox_worker** | `feat/trellis2-poc`: `POST /api/jobs` + `rodinQualityTier`; `RODIN_QUALITY_TIERS` в `rodin_client.py`. Tripo P2 — только Studio/3DAI |
+| **Товарищ / AI_MESH (POLY_LAB)** | Hunyuan: лестница Job Express/Pro/LowPoly ↔ inspector; Pro = Normal/Geometry/Sketch как 3DAI |
+| **Мы / paradox_worker** | Direct Tencent; LowPoly smoke DONE; CAM `hunyuan:*` |
+| **Tencent / Hunyuan** | Одна сеть HY 3D: Pro 3.1 · Express Rapid · LowPoly Model 3.0 |
 | **Не трогать** | img2mv; Generate «на всякий случай»; MCP; том T2; **Hi3DGen / Pixal3D / Direct3D-S2 / Step1X — не переоткрывать как quality** |
-| **Наш next** | Rodin `--live` smoke с ключом; Hitem inspector; Tripo generate на ПК. Default T2. `knightGate=pending` |
+| **Наш next** | Live Express/Pro по просьбе; `git push` memory + POLY_LAB |
+
+---
+
+## 📌 Hunyuan (канон 2026-09-21)
+
+| | |
+|--|--|
+| **Что это** | **Одна** сеть Tencent HY 3D — не три нейросети |
+| **Ось пикера** | Карточка `hunyuan`. Лестница **Job**: Express → Pro → LowPoly |
+| **Pro** | Model **3.1** · GenerateType Normal / Geometry / Sketch (как 3DAI) · FaceCount · multi-view |
+| **Express** | Rapid API · черновик · 15 vendor (+PBR 10) · без multi-view |
+| **LowPoly** | Pro API Model **3.0** · GenerateType LowPoly · мало поликов · 30 vendor |
+| **Цены юзер ×2.5** | Express ≈23 · Pro Normal ≈38 · LowPoly ≈45 · +PBR ≈+15 |
+| **Geo** | EU/UK/KR блок. Lab: `?country=RU` или localhost default RU |
+| **Файлы** | `hunyuan_client.py`, `HunyuanEngineParams.tsx`, `hunyuanOptions.ts`, `hunyuanQuality.ts` |
+| **Showcase** | `POLY_LAB/public/showcase/hunyuan/` — live LowPoly knight |
+
+---
+
+## 📌 Tripo — три экспозиции (канон 2026-09-17)
+
+### P2 Preview (`P2-20260801`)
+
+| | |
+|--|--|
+| **Ось пикера** | **Как снимаешь**: `photo` / `views`. **Не** geo Studio/HD/Ultra |
+| **Текстура** | Std/Ultra/Max в **инспекторе** (`standard`/`detailed`/`extreme`). Default **Ultra+PBR+quads = 120** |
+| **Цены vendor** | clay 100 · Std 110 · Ultra 120 · Max 130. Юзер ×2.5. Не 3DAI 70/80 |
+| **Герои** | 1 фото = **бластер**; 4 фото = **рюкзак** (TLOU2-дух, лямки со спины) |
+| **Не брать** | лица/лучница; геймпад; пересечения с H3/P1 героями |
+| **Quad→viewer** | FBX → convert GLTF ~+10 cr. Specs = tris конверта |
+| **Jobs** | blaster `910fa423-…` 120; pack `9d585ab7-…` 120; converts +10. Скрипты `p2_exposition_run.py`, `p2_pack_run.py` |
+| **Файлы** | `preview_textures/p2_ladder/` · `POLY_LAB/.../tripo_p2/` · `tripoP2Quality.ts` |
+
+### P1 Smart Mesh (`P1-20260311`)
+
+| | |
+|--|--|
+| **Ось пикера** | **Карты**: Standard **50** / HD **60** (clay 40). Нет geo / quad |
+| **Standard live** | **Рунный меч** 1 фото — `sword.glb` ~4.9k tris, job `c52cf8e6-…`, 50 cr. Keep ✅ |
+| **HD** | Пока **книга** (4 views) — **заменить** тем же мечом HD для честной оси |
+| **Default UI** | Standard |
+| **Файлы** | `preview_textures/p1_ladder/sword_standard.*` · showcase `tripo_p1/sword.*` · `scripts/p1_sword_standard_run.py` |
+
+### H3.1
+
+| | |
+|--|--|
+| **Ось** | Studio / HD / Ultra geo + texture Std/HD/**Max** (`extreme` +20). Без `quad` в UI (FBX) |
+| **Витрина** | camera / drill / scorpion — не трогать под P1/P2 |
+
+### Инспекторы (сверка с доками ✅ 2026-09-17)
+
+| | Quality | Mesh | Advanced (общий язык) |
+|--|---------|------|------------------------|
+| **P2** | Enable Texturing · Std/Ultra/Max · Shaded/PBR | Quad on/off | Auto Size · Model/Texture Seed · Texture Alignment · Orientation · Image Auto-Fix · face# |
+| **P1** | Material PBR/Shaded/None · Texture Std/HD | Faces Auto…High | то же Advanced (без Smart low-poly; **без Max**) |
+| **H3** | Material · Texture Std/HD/**Max** | Geometry Std/Ultra · Faces | + Smart low-poly (только clay) |
+
+Worker: `auto_size` на textured для всех серий; `texture_seed` общий; H3/P2 `extreme` allowed. Код: `TripoEngineParams.tsx`, `tripoOptions.ts`, `tripo_client.py`.
 
 ---
 
@@ -268,7 +329,7 @@ T2 finish shape: F1✅ F2✅ F3 character = native PBR (не W2b 80k); F5 bridge
 | Кто | Pedrokita (с Cursor агентом) |
 | ПК | Windows (`D:\AI_HUB\paradox_worker`) |
 | Ветка worker | `feat/trellis2-poc` |
-| Фокус | приоритет: сети/tex/инструменты юзера; MCP last; Draco skip |
+| Фокус | Tripo live smoke; Tencent Hunyuan ticket; engine picker UX; MCP last |
 
 ### ✅ MV2 Wonder3D — soft-NO-GO (2026-08-07)
 
@@ -498,6 +559,9 @@ Comfy Trellis2 workflows явно добавляют **Trellis2FillHolesWithMesh
 
 | Дата | Что |
 |------|-----|
+| 2026-09-15 | **Tripo Generate:** image + native text + multiview в шлюзе. Inspector параметры. Цитаты: H3 30 / P1 60 / P2 120 (P2 vendor $1.20 detailed). Кошелёк API **0**. |
+| 2026-09-15 | **Text→3D:** T2 = OpenAI→картинка→наш меш (~$0.12 warm). Tripo Text = их API (~$0.20), не гибрид (~$0.34). Свой TRELLIS-text — нет. |
+| 2026-09-08 | **Tripo 🟢 ключи OK:** `TRIPO_API_KEY` в `.env`, auth OK. Fix: Tripo signed URL `.glb?Policy=…` — `looks_like_glb_url()` по path; gateway + `tripo_client`. POLY_LAB engine picker UX (overlay, группы, CTA). **Tencent 2026-09-07:** registration issues → ticket через **Technical Support** на [contact-us](https://intl.cloud.tencent.com/contact-us) (не general Contact Us); потом Hunyuan 3D Global API activation |
 | 2026-09-03 | **Rodin unify (как 3DAI):** один picker `rodin` («Rodin 2.5») + `rodinQualityTier` lowest/low/medium/high/ultra → Gen-2.5 Extreme-Low…Extreme-High. `rodin_extreme` `show_in_catalog=False` (API legacy → ultra). Credits по тиру (medium≈25, high≈30, ultra≈60). UI: `POLY_LAB` `RodinEngineParams` + `rodinQuality.ts`. |
 | 2026-09-02 | **Rodin 2.5 UI (POLY_LAB):** multi-view slots + PBR locked (позже слито в Quality Tier). Док: `POLY_LAB/memory-bank/studio-engine-params.md` § Rodin. |
 | 2026-09-02 | **Tripo ⏸:** credits 1000 в UI до 2026-09-07; письмо Lorna про P2 GameReady API — ждём. P2 нет в OpenAPI (`P1-20260311` only). Не переименовывать в P2 до API. |
@@ -1008,6 +1072,14 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 
 | Дата | Кто | Что сделано | Следующий шаг |
 |------|-----|-------------|---------------|
+| **2026-09-18** | Pedrokita + Cursor | **Hunyuan экспозиция:** `ENGINE_EDITORIAL` + лестница Express/Pro/LowPoly + RU copy + лого. Постер-кресло interim (live GLB next) | Live Express/Pro hero → `showcase/hunyuan/*.glb`; `git push` |
+| **2026-09-17** | Pedrokita + Cursor | **Tripo трек:** P2 live (бластер+рюкзак); P1 Std=рунный меч в витрине; инспекторы P1/H3/P2 выровнены с доками (Advanced общий, H3 Max, auto_size/texture_seed на всех). Лучница/геймпад out | **P1 HD** тем же мечом (60 cr); `git push` memory (+ POLY_LAB когда готовы) |
+| **2026-09-15** | Pedrokita + Cursor | **H3.1 vs official docs:** omit default knobs / seed; stacked PAYG credits в quote + footer; poll `credits_consumed`. Texture off на clay; smart low-poly +10 не только clay | H3.1 рыцарь когда скажете; не img2mv |
+| **2026-09-15** | Pedrokita + Cursor | **Tripo в Generate:** `text-to-model` / `multiview-to-model` + старый image. Inspector knobs доезжают до API. Цитаты по опциям. Кошелёк 0 — smoke после top-up | Пополнить API Wallet; H3.1 рыцарь; не img2mv |
+| **2026-09-15** | Pedrokita + Cursor | **Text путь закрыт решением:** гибрид на своём слоте; native text только у Tripo; свой text-воркер не делаем | Tripo native text уже в шлюзе. T2 text по-прежнему гибрид |
+| **2026-09-11** | Pedrokita + Cursor | **Попап TRELLIS.2 закрыт как шаблон:** плоские лого (T2 = Microsoft 4-square), герой Neutral+Rodin rims, штамп выхода = isolated JPEG с ригом полки (`EngineEvidenceGlb`, не кроп героя). Канон+рецепт в POLY_LAB `studio-engine-showroom.md` / `studio-exposition-playbook.md` §7–8. Memory здесь и в POLY_LAB | Та же экспозиция на другие сети; `git push` memory (оба репо) |
+| **2026-09-10** | Pedrokita + Cursor | **Poster studio** (`:8791`): скрины тиров + pivot gizmo (Snap torso, Copy → `engineLens.ts`). Документ: `POLY_LAB/memory-bank/studio-poster-studio.md`. Front: лестница усилий, `cqw`, evidence, CSS `@import` (Turbopack), pivot T2 запечён. techContext / workspaceFrontend / AGENTS обновлены | `git push` memory (оба репо); проверить spin героя в `/generate` |
+| **2026-09-08** | Pedrokita | Tripo keys OK + signed-URL GLB fix. Engine picker UX (POLY_LAB). Tencent email: Technical Support ticket → Hunyuan API | Tripo live smoke retry; Tencent form; Rodin live |
 | **2026-09-03** | Pedrokita | Rodin = один engine + Quality Tier (hub + POLY_LAB). Input mode plate. Memory sync | `git pull` товарищу; Rodin live smoke; Hitem inspector |
 | **2026-09-02** | Pedrokita | Rodin 2.5 Workspace UI (POLY_LAB): multi-view inspector, picker tags; hub label sync. Tripo research: P2 только Studio, credits OK | → слито в unify 09-03 |
 | **2026-08-31** веч | Pedrokita | Push хаба: Hitem/Tripo/Rodin + lab-карточки + `workspaceFrontend.md` для Cursor товарища. Hunyuan парк (SMS Tencent) | Товарищ: Workspace в AI_MESH. Мы: ключи Tripo/Rodin, не generate рыцаря |
@@ -1107,7 +1179,8 @@ https://raw.githubusercontent.com/microsoft/TRELLIS/main/assets/example_image/T.
 | 2026-07-22 | Clay-first: `texture_mode=clay|textured` в worker; Studio default clay; T2-friendly polish | Release `6d763fa` + smoke OK |
 | 2026-07-22 | Industry Quality Recipes в Studio (presets → polish/T2I/decimation) | Warm economics |
 | 2026-07-20 | Unit economics: self-host 2–4× дешевле API; не клон Meshy; warm = ключ к марже | canvas + platformRoadmap § measured |
-| 2026-07-20 | Text→3D: в текущем worker отсутствует; MVP-вариант = text→image→T2 | отдельный text2mesh endpoint — позже |
+| 2026-09-15 | **Text→3D закрыт:** гибрид на T2; native `text-to-model` только Tripo; свой text-воркер нет | код Tripo+Text ещё гибрид — чинить на живом Generate |
+| 2026-07-20 | Text→3D: в текущем worker отсутствует; MVP-вариант = text→image→T2 | **перекрыто 2026-09-15** (свой text2mesh не делаем) |
 | 2026-07-20 | Studio tiers: preview=`512`/1024, quality=`1024_cascade`/2048 | ETA cold/warm в UX |
 | 2026-07-20 веч | POLY_LAB live + zombie watchdog (client); Release не нужен; wall≠cold | meshyWorkspace.md |
 | 2026-07-20 | Warm T2 `512`: load 0 → wall ~40 с (vs cold ~6 мин) | Studio ETA: cold vs warm честно |

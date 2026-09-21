@@ -12,7 +12,12 @@ from typing import Any, Literal
 from studio_bridge.credits import quote_engine, quote_rodin
 from studio_bridge.engine_showcases import attach_showcases
 from studio_bridge.geo import hunyuan_allowed
-from studio_bridge.hitem_client import HITEM_PRESETS
+from studio_bridge.hitem_client import (
+    HITEM_GENERAL_SKUS,
+    HITEM_PORTRAIT_SKUS,
+    HITEM_PRESETS,
+)
+from studio_bridge.hunyuan_client import HUNYUAN_ENGINE, is_configured as hunyuan_keys_ok
 from studio_bridge.rodin_client import (
     DEFAULT_RODIN_QUALITY,
     RODIN_ENGINE,
@@ -23,7 +28,7 @@ from studio_bridge.tripo_client import TRIPO_PRESETS
 
 SLOT_ORDER: tuple[str, ...] = ("front", "side", "back", "extra")
 
-Provider = Literal["runpod", "fal", "hitem", "tripo", "rodin"]
+Provider = Literal["runpod", "fal", "hitem", "tripo", "rodin", "tencent"]
 
 DEFAULT_ENGINE = "trellis2"
 KNIGHT_GATE_STATUS = "pending"  # eyes before prod; see scripts/fal_knight_ab.py
@@ -92,31 +97,31 @@ _ENGINES: tuple[EngineSpec, ...] = (
     ),
     EngineSpec(
         id="hunyuan",
-        label="Hunyuan Rapid (Tencent)",
+        label="Hunyuan 3D",
         vendor="Tencent",
-        provider="fal",
+        provider="tencent",
         role="other",
-        blurb="Снят с FAL. Tencent позже. Не default.",
-        fal_model="fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d",
+        blurb=HUNYUAN_ENGINE.blurb,
+        fal_model=None,
         geo_gated=True,
-        show_in_catalog=False,
+        show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d/api",
-        eta_sec=180,
+        docs_url="https://www.tencentcloud.com/document/product/1284/75540",
+        eta_sec=HUNYUAN_ENGINE.eta_sec,
     ),
     EngineSpec(
         id="hunyuan_pro",
-        label="Hunyuan Pro (Tencent)",
+        label="Hunyuan 3.1 Pro (legacy id)",
         vendor="Tencent",
-        provider="fal",
+        provider="tencent",
         role="other",
-        blurb="Снят с FAL. Tencent позже. Не default.",
-        fal_model="fal-ai/hunyuan-3d/v3.1/pro/image-to-3d",
+        blurb="Legacy id — use hunyuan (same Pro 3.1 API).",
+        fal_model=None,
         geo_gated=True,
         show_in_catalog=False,
         quality_presets=False,
-        docs_url="https://fal.ai/models/fal-ai/hunyuan-3d/v3.1/pro/image-to-3d/api",
-        eta_sec=300,
+        docs_url="https://www.tencentcloud.com/document/product/1284/75540",
+        eta_sec=HUNYUAN_ENGINE.eta_sec,
     ),
     EngineSpec(
         id="hitem3d",
@@ -141,7 +146,7 @@ _ENGINES: tuple[EngineSpec, ...] = (
         blurb=HITEM_PRESETS["hitem3d_pro"].blurb,
         fal_model=None,
         geo_gated=False,
-        show_in_catalog=True,
+        show_in_catalog=False,
         quality_presets=False,
         docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
         eta_sec=HITEM_PRESETS["hitem3d_pro"].eta_sec,
@@ -155,7 +160,7 @@ _ENGINES: tuple[EngineSpec, ...] = (
         blurb=HITEM_PRESETS["hitem3d_v3"].blurb,
         fal_model=None,
         geo_gated=False,
-        show_in_catalog=True,
+        show_in_catalog=False,
         quality_presets=False,
         docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
         eta_sec=HITEM_PRESETS["hitem3d_v3"].eta_sec,
@@ -173,6 +178,20 @@ _ENGINES: tuple[EngineSpec, ...] = (
         quality_presets=False,
         docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
         eta_sec=HITEM_PRESETS["hitem3d_portrait"].eta_sec,
+    ),
+    EngineSpec(
+        id="hitem3d_portrait_pro",
+        label=HITEM_PRESETS["hitem3d_portrait_pro"].label,
+        vendor="Hitem3D",
+        provider="hitem",
+        role=HITEM_PRESETS["hitem3d_portrait_pro"].role,
+        blurb=HITEM_PRESETS["hitem3d_portrait_pro"].blurb,
+        fal_model=None,
+        geo_gated=False,
+        show_in_catalog=False,
+        quality_presets=False,
+        docs_url="https://docs.hi3d.ai/en/api/api-reference/list/create-task",
+        eta_sec=HITEM_PRESETS["hitem3d_portrait_pro"].eta_sec,
     ),
     EngineSpec(
         id="rodin",
@@ -302,6 +321,8 @@ def engine_keys_configured(spec: EngineSpec) -> bool:
             os.getenv("RODIN_API_KEY", "").strip()
             or os.getenv("HYPER3D_API_KEY", "").strip()
         )
+    if spec.provider == "tencent":
+        return hunyuan_keys_ok()
     return False
 
 
@@ -330,6 +351,39 @@ def engine_catalog(*, country: str | None = None, include_hidden: bool = False) 
                 "hitemModel": (HITEM_PRESETS[spec.id].model if spec.provider == "hitem" else None),
                 "hitemResolution": (
                     HITEM_PRESETS[spec.id].resolution if spec.provider == "hitem" else None
+                ),
+                "hitemQualityTiers": (
+                    [
+                        {
+                            "id": sku,
+                            "label": {"fast": "Fast", "pro": "Pro", "v3": "v3"}[sku],
+                            "credits": quote_engine(
+                                "hitem3d", hitem_sku=sku
+                            ).credits,
+                            "etaSeconds": HITEM_PRESETS[HITEM_GENERAL_SKUS[sku]].eta_sec,
+                            "engineId": HITEM_GENERAL_SKUS[sku],
+                        }
+                        for sku in ("fast", "pro", "v3")
+                    ]
+                    if spec.id == "hitem3d"
+                    else (
+                        [
+                            {
+                                "id": sku,
+                                "label": {"fast": "Fast", "pro": "Pro"}[sku],
+                                "credits": quote_engine(
+                                    "hitem3d_portrait", hitem_sku=sku
+                                ).credits,
+                                "etaSeconds": HITEM_PRESETS[
+                                    HITEM_PORTRAIT_SKUS[sku]
+                                ].eta_sec,
+                                "engineId": HITEM_PORTRAIT_SKUS[sku],
+                            }
+                            for sku in ("fast", "pro")
+                        ]
+                        if spec.id == "hitem3d_portrait"
+                        else None
+                    )
                 ),
                 "tripoModel": (TRIPO_PRESETS[spec.id].model if spec.provider == "tripo" else None),
                 "rodinTier": (
@@ -401,25 +455,6 @@ def build_fal_arguments(
             "enable_pbr": True,
             "enable_safety_checker": True,
         }
-    if eid == "hunyuan":
-        body: dict[str, Any] = {"input_image_url": primary, "enable_pbr": True}
-        if slots.get("back"):
-            body["back_image_url"] = slots["back"]
-        if slots.get("side"):
-            body["left_image_url"] = slots["side"]
-        return body
-    if eid == "hunyuan_pro":
-        body = {
-            "input_image_url": primary,
-            "generate_type": "Normal",
-            "enable_pbr": True,
-            "face_count": 500_000,
-        }
-        if slots.get("back"):
-            body["back_image_url"] = slots["back"]
-        if slots.get("side"):
-            body["left_image_url"] = slots["side"]
-        return body
     if eid == "trellis2_fal":
         return {"image_url": primary}
     raise ValueError(f"no FAL builder for {eid}")

@@ -13,7 +13,7 @@ from typing import Literal
 CREDIT_USD = 0.025  # $25 / 1000 credits
 FAL_MARKUP = 2.5
 
-TariffKind = Literal["t2", "fal", "hitem", "tripo", "rodin"]
+TariffKind = Literal["t2", "fal", "hitem", "tripo", "rodin", "tencent"]
 
 
 @dataclass(frozen=True)
@@ -25,9 +25,11 @@ class CreditQuote:
     usd_cogs: float
     kind: TariffKind
     label: str
+    vendor_credits: int | None = None
+    breakdown: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
-        return {
+        payload = {
             "engineId": self.engine_id,
             "credits": self.credits,
             "creditsColdSurcharge": self.credits_cold_surcharge,
@@ -38,6 +40,10 @@ class CreditQuote:
             "creditUsd": CREDIT_USD,
             "falMarkup": FAL_MARKUP if self.kind != "t2" else None,
         }
+        if self.vendor_credits is not None:
+            payload["vendorCredits"] = self.vendor_credits
+            payload["creditBreakdown"] = list(self.breakdown)
+        return payload
 
 
 def credits_from_usd(usd: float) -> int:
@@ -73,15 +79,11 @@ _T2_QUOTES: dict[str, CreditQuote] = {
 # FAL public list (playground 2026-08-27) × 2.5, rounded up to whole credits.
 _FAL_LIST_USD: dict[str, float] = {
     "meshy": 0.80,
-    "hunyuan": 0.225,
-    "hunyuan_pro": 0.375,
     "trellis2_fal": 0.30,
 }
 
 _FAL_LABELS: dict[str, str] = {
     "meshy": "Meshy 6 (FAL)",
-    "hunyuan": "Hunyuan Rapid (FAL)",
-    "hunyuan_pro": "Hunyuan Pro (FAL)",
     "trellis2_fal": "TRELLIS.2 backup (FAL, not vitrine)",
 }
 
@@ -146,27 +148,67 @@ def quote_engine(
     *,
     tier: str = "medium",
     rodin_quality: str | None = None,
+    hitem_sku: str | None = None,
+    mode: str = "image",
+    tripo_options: dict | None = None,
+    hunyuan_options: dict | None = None,
 ) -> CreditQuote:
     eid = (engine_id or "trellis2").strip().lower()
     if eid == "trellis2":
         return t2_quote_for_preset(tier)
     if eid == "hi3dgen":
         return _T2_QUOTES["hi3dgen"]
-    from studio_bridge.hitem_client import HITEM_PRESETS
-    from studio_bridge.tripo_client import TRIPO_PRESETS
+    from studio_bridge.hitem_client import HITEM_PRESETS, resolve_hitem_engine
+    from studio_bridge.tripo_client import TRIPO_PRESETS, vendor_credits
     from studio_bridge.rodin_client import is_rodin_engine
+    from studio_bridge.hunyuan_client import (
+        HUNYUAN_ENGINE,
+        is_hunyuan_engine_id,
+        list_usd_for_options,
+        vendor_credits_for_options,
+    )
 
-    hitem = HITEM_PRESETS.get(eid)
-    if hitem is not None:
-        return _direct_quote(eid, hitem.list_usd, "hitem", f"{hitem.label} (direct)")
+    if eid in HITEM_PRESETS or eid == "hitem3d":
+        resolved = resolve_hitem_engine(eid, hitem_sku) if eid.startswith("hitem") else eid
+        hitem = HITEM_PRESETS[resolved]
+        return _direct_quote(resolved, hitem.list_usd, "hitem", f"{hitem.label} (direct)")
     tripo = TRIPO_PRESETS.get(eid)
     if tripo is not None:
-        return _direct_quote(eid, tripo.list_usd, "tripo", f"{tripo.label} (direct)")
+        task = mode if mode in {"image", "text", "multiview"} else "image"
+        n, lines = vendor_credits(eid, task=task, options=tripo_options)
+        usd = round(n * 0.01, 2)
+        credits = fal_user_credits(usd)
+        return CreditQuote(
+            engine_id=eid,
+            credits=credits,
+            credits_cold_surcharge=0,
+            usd_user=credits * CREDIT_USD,
+            usd_cogs=usd,
+            kind="tripo",
+            label=f"{tripo.label} (direct)",
+            vendor_credits=n,
+            breakdown=lines,
+        )
     if is_rodin_engine(eid):
         from studio_bridge.rodin_client import DEFAULT_RODIN_QUALITY
 
         q = rodin_quality or ("ultra" if eid == "rodin_extreme" else DEFAULT_RODIN_QUALITY)
         return quote_rodin(q)
+    if is_hunyuan_engine_id(eid):
+        n, lines = vendor_credits_for_options(hunyuan_options)
+        usd = list_usd_for_options(hunyuan_options)
+        credits = fal_user_credits(usd)
+        return CreditQuote(
+            engine_id="hunyuan",
+            credits=credits,
+            credits_cold_surcharge=0,
+            usd_user=credits * CREDIT_USD,
+            usd_cogs=usd,
+            kind="tencent",
+            label=f"{HUNYUAN_ENGINE.label} (direct)",
+            vendor_credits=n,
+            breakdown=lines,
+        )
     if eid in _FAL_LIST_USD:
         return _fal_quote(eid)
     raise ValueError(f"unknown engine {engine_id!r}")
@@ -204,6 +246,13 @@ def credit_catalog() -> dict:
         row = quote_rodin(qid).as_dict()
         row["rodinQualityTier"] = qid
         rows.append(row)
+    rows.append(quote_engine("hunyuan").as_dict())
+    rows.append(
+        quote_engine(
+            "hunyuan",
+            hunyuan_options={"generateType": "Normal", "enablePbr": True},
+        ).as_dict()
+    )
     return {
         "creditUsd": CREDIT_USD,
         "falMarkup": FAL_MARKUP,

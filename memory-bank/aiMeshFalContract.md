@@ -18,15 +18,15 @@
 | POST | `/api/jobs` | `engine` + `viewSlots` + опционально `country` |
 | GET | `/api/jobs/{id}?country=RU` | poll; FAL `fal:meshy:…`; Hitem `hitem:…`; Tripo `tripo:…`; Rodin `rodin:…\|…` |
 
-Страна: тело/`?country=` **или** заголовок `CF-IPCountry`. Гео-гейт Hunyuan в коде жив на потом; слота Hunyuan в каталоге нет.
+Страна: тело/`?country=` **или** заголовок `CF-IPCountry`. Гео-гейт Hunyuan: EU/UK/KR → скрыть + 403 на create/poll. Без страны → fail closed.
 
 ## Движки
 
 Default = `trellis2`. Честные имена в UI: «Meshy 6», не «наша SOTA».
 
-Живой FAL: **только `meshy`**. Живой Hitem: `hitem3d`, `hitem3d_pro`, `hitem3d_v3`, `hitem3d_portrait` (`hitem:<engine>:<task_id>`). Живой Tripo: `tripo`, `tripo_p1`, **`tripo_p2`** (`tripo:<engine>:<task_id>`; P2 = `P2-20260801` + `quad=true`). Живой Rodin: **`rodin`** + опционально `rodinQualityTier` (`lowest`|`low`|`medium`|`high`|`ultra`). Job id `rodin:rodin:<uuid>|<subscription_key>`. Legacy `rodin_extreme` → ultra, вне каталога. POST `hunyuan` → **501**. Tencent — позже. Карточка без ключа в каталоге `configured: false`; create без ключа → 501.
+Живой FAL: **только `meshy`**. Живой Hitem: `hitem3d`, `hitem3d_pro`, `hitem3d_v3`, `hitem3d_portrait` (`hitem:<engine>:<task_id>`). Живой Tripo: `tripo`, `tripo_p1`, **`tripo_p2`** (`tripo:<engine>:<task_id>`; P2 = `P2-20260801` + `quad=true`). Живой Rodin: **`rodin`** + опционально `rodinQualityTier` (`lowest`|`low`|`medium`|`high`|`ultra`). Job id `rodin:rodin:<uuid>|<subscription_key>`. Legacy `rodin_extreme` → ultra, вне каталога. Живой Hunyuan: **`hunyuan`** (job id `hunyuan:hunyuan:pro|rapid:<JobId>`). `hunyuanOptions.lane` = `pro`|`express`|`lowpoly`. Pro: GenerateType Normal|Geometry|Sketch + FaceCount. Express: Rapid API (15 +PBR10). LowPoly: Model 3.0 + PolygonType. Карточка без ключа `configured: false`; create без ключа → 501.
 
-Ключи: `FAL_KEY`, `HITEM_CLIENT_ID`, `HITEM_CLIENT_SECRET`, `TRIPO_API_KEY`, `RODIN_API_KEY`/`HYPER3D_API_KEY` только сервер.
+Ключи: `FAL_KEY`, `HITEM_CLIENT_ID`, `HITEM_CLIENT_SECRET`, `TRIPO_API_KEY`, `RODIN_API_KEY`/`HYPER3D_API_KEY`, `TENCENTCLOUD_SECRET_ID`/`TENCENTCLOUD_SECRET_KEY` только сервер.
 
 ## Кредиты
 
