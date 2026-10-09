@@ -1,0 +1,17 @@
+# Amvera: the studio lab behind polylab.pro. Only the site talks to it, over Amvera's
+# internal network (http://amvera-<project>-run-<user>), so it needs no public domain.
+# It starts paid jobs with the vendor keys, which live in the project's secrets together with
+# STUDIO_BRIDGE_SECRET; STUDIO_API_HOST=0.0.0.0 lets the site reach it, and the lab refuses
+# to listen that way without the secret. GPU work stays on RunPod.
+meta:
+  environment: python
+  toolchain:
+    name: pip
+    version: "3.11"
+
+build:
+  requirementsPath: requirements-studio.txt
+
+run:
+  command: python scripts/studio_api.py
+  containerPort: 8787
