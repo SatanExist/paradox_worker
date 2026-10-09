@@ -23,6 +23,8 @@ def build_texture_input(
     texture_size: int = 2048,
     return_base64: bool = False,
     preprocess_image: bool = True,
+    metallic_factor: float = 0.0,
+    roughness_factor: float = 0.85,
 ) -> dict[str, Any]:
     """Contract for worker_texture.py / Trellis2TexturingPipeline."""
     payload: dict[str, Any] = {
@@ -33,5 +35,7 @@ def build_texture_input(
         "texture_size": texture_size,
         "return_base64": return_base64,
         "preprocess_image": preprocess_image,
+        "metallic_factor": metallic_factor,
+        "roughness_factor": roughness_factor,
     }
     return payload

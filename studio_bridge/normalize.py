@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 StudioStatus = Literal["queued", "running", "ready", "failed"]
+
+
+def looks_like_glb_url(url: str | None) -> bool:
+    """True if URL path ends with .glb (ignores ?signed query strings)."""
+    if not url or not isinstance(url, str):
+        return False
+    path = urlparse(url.strip()).path.lower()
+    return path.endswith(".glb")
 
 
 def map_runpod_status(runpod_status: str | None) -> StudioStatus:

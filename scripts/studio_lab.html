@@ -16,6 +16,9 @@
       --muted: #8d8d96;
       --accent: #c6f04d;
       --accent-2: #9cc62a;
+      --rose: #ff7aa8;
+      --coral: #ff9a6b;
+      --jelly: rgba(255, 120, 140, 0.1);
       --gen: linear-gradient(90deg, #ff7aa8 0%, #ffc86b 100%);
       --danger: #ff6b8a;
       --radius: 10px;
@@ -104,6 +107,178 @@
     .engine-card.on small { color: var(--accent); }
     .engine-card.need-key { opacity: .48; }
     .engine-card.need-key small::after { content: " · нет ключа"; }
+
+    .engine-hero {
+      width: 100%; border: 1px solid rgba(255, 122, 168, .28); border-radius: 14px;
+      padding: 14px 14px; min-height: 72px; background: linear-gradient(135deg, #1a1218 0%, var(--elev) 100%);
+      color: var(--text); cursor: pointer; text-align: left; font: inherit;
+      display: grid; grid-template-columns: 44px 1fr 22px; gap: 12px; align-items: center;
+      transition: border-color .2s, background .2s, box-shadow .2s;
+      box-shadow: 0 0 0 0 rgba(255, 122, 168, 0);
+    }
+    .engine-hero:hover {
+      border-color: var(--rose); background: linear-gradient(135deg, #221018 0%, #1b1b1f 100%);
+      box-shadow: 0 0 24px rgba(255, 122, 168, .12);
+    }
+    .engine-hero .badge {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: var(--jelly); border: 1px solid rgba(255, 122, 168, .45);
+      display: grid; place-items: center; font-size: 12px; font-weight: 800; color: var(--rose);
+    }
+    .engine-hero b { display: block; font-size: 14px; font-weight: 700; line-height: 1.25; }
+    .engine-hero small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .engine-hero .chev { color: var(--rose); font-size: 18px; text-align: center; font-weight: 700; }
+
+    .engine-picker {
+      position: fixed; inset: 0; z-index: 10000; display: none;
+      place-items: center; padding: 16px; pointer-events: none;
+    }
+    .engine-picker.is-open { display: grid; pointer-events: auto; }
+    .engine-picker[hidden] { display: none !important; pointer-events: none; }
+    .engine-picker-backdrop {
+      position: absolute; inset: 0; background: rgba(6, 6, 8, .78);
+      backdrop-filter: blur(10px);
+    }
+    .engine-picker-panel {
+      position: relative; width: min(1180px, 96vw); height: min(760px, 94vh);
+      border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+      background: #101012; display: grid; grid-template-rows: auto 1fr auto;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .55);
+    }
+    .engine-picker-head {
+      display: grid; grid-template-columns: 1fr minmax(140px, 220px) 36px; gap: 12px;
+      align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line);
+    }
+    .engine-picker-head h2 { font-size: 15px; font-weight: 650; }
+    .engine-picker-head input {
+      width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--elev); color: var(--text); font-size: 13px;
+    }
+    .engine-picker-close {
+      width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 10px;
+      background: var(--elev); color: var(--muted); cursor: pointer; font-size: 16px;
+    }
+    .engine-picker-close:hover { color: var(--text); border-color: var(--rose); }
+    .engine-picker-body {
+      display: grid; grid-template-columns: minmax(240px, 33%) minmax(0, 67%);
+      min-height: 0;
+    }
+    .engine-picker-list {
+      border-right: 1px solid var(--line); overflow: auto; padding: 10px 10px 16px;
+      scrollbar-width: thin;
+    }
+    .engine-picker-group h4 {
+      margin: 10px 0 6px; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .engine-picker-row {
+      width: 100%; border: 1px solid transparent; border-radius: 10px;
+      padding: 9px 10px; background: transparent; color: var(--text);
+      cursor: pointer; text-align: left; font: inherit;
+      display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start;
+      transition: background .15s, border-color .15s;
+    }
+    .engine-picker-row:hover, .engine-picker-row.preview {
+      background: var(--jelly); border-color: rgba(255, 122, 168, .25);
+    }
+    .engine-picker-row.selected {
+      background: rgba(255, 122, 168, .14); border-color: var(--rose);
+    }
+    .engine-picker-row.need-key { opacity: .48; }
+    .engine-picker-row .dot {
+      width: 22px; height: 22px; border-radius: 7px; margin-top: 1px;
+      background: var(--elev); border: 1px solid var(--line);
+      display: grid; place-items: center; font-size: 9px; font-weight: 700; color: var(--rose);
+    }
+    .engine-picker-row b { display: block; font-size: 12px; font-weight: 600; line-height: 1.25; }
+    .engine-picker-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+    .engine-showcase {
+      position: relative; overflow: hidden; min-height: 0;
+      background:
+        radial-gradient(ellipse 70% 55% at 50% 45%, rgba(255, 122, 168, .08), transparent 70%),
+        #0c0c0e;
+    }
+    .engine-showcase-inner {
+      position: absolute; inset: 0; padding: 20px 24px 18px;
+      display: grid; grid-template-rows: 1fr auto auto;
+      opacity: 1; transition: opacity .32s ease;
+    }
+    .engine-showcase-inner.fade { opacity: 0; }
+    .showcase-stage {
+      position: relative; min-height: 0; display: grid; place-items: center;
+    }
+    .showcase-watermark {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      font-size: clamp(48px, 9vw, 96px); font-weight: 800; letter-spacing: -.03em;
+      color: rgba(255, 255, 255, .04); pointer-events: none; user-select: none;
+    }
+    .showcase-hero {
+      position: relative; z-index: 1; max-height: min(340px, 52vh);
+      max-width: min(420px, 80%); object-fit: contain;
+      filter: drop-shadow(0 24px 48px rgba(0, 0, 0, .55));
+      animation: heroFloat 5s ease-in-out infinite;
+    }
+    @keyframes heroFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    .showcase-anchor {
+      position: absolute; z-index: 2; font-size: 11px; font-weight: 600;
+      color: var(--rose); letter-spacing: .02em;
+      padding: 5px 10px; border-radius: 999px;
+      border: 1px solid rgba(255, 122, 168, .35); background: rgba(12, 12, 14, .72);
+      backdrop-filter: blur(6px);
+      animation: anchorIn .4s ease both;
+    }
+    .showcase-anchor.tl { left: 6%; top: 14%; }
+    .showcase-anchor.tr { right: 8%; top: 18%; animation-delay: .06s; }
+    .showcase-anchor.bl { left: 10%; bottom: 16%; animation-delay: .12s; }
+    .showcase-anchor.br { right: 10%; bottom: 14%; animation-delay: .18s; }
+    @keyframes anchorIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .showcase-copy { position: relative; z-index: 2; margin-top: 8px; }
+    .showcase-copy h3 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+    .showcase-copy p { color: var(--muted); font-size: 13px; line-height: 1.45; max-width: 54ch; }
+    .showcase-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .showcase-tag {
+      font-size: 11px; padding: 4px 9px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--text); background: rgba(20, 20, 24, .8);
+    }
+    .showcase-tag.good { border-color: rgba(255, 122, 168, .4); color: var(--rose); }
+    .showcase-examples {
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+      margin-top: 14px; position: relative; z-index: 2;
+    }
+    .showcase-ex {
+      border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+      background: #141416; aspect-ratio: 1 / 1; position: relative;
+    }
+    .showcase-ex img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .showcase-ex span {
+      position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 5px;
+      font-size: 9px; color: #ddd; background: linear-gradient(transparent, rgba(0,0,0,.82));
+    }
+    .showcase-fallback {
+      grid-row: 1 / -1;
+      display: grid; place-content: center; gap: 8px;
+      padding: 24px; text-align: center; min-height: 100%;
+    }
+    .showcase-fallback p { color: var(--muted); font-size: 13px; line-height: 1.45; max-width: 40ch; margin: 0 auto; }
+
+    .engine-picker-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 16px; border-top: 1px solid var(--line); background: #0e0e10;
+    }
+    #pickerMetrics { color: var(--muted); font-size: 12px; }
+    .engine-picker-cta {
+      border: 0; border-radius: 10px; padding: 11px 18px; cursor: pointer;
+      font-size: 14px; font-weight: 700; color: #1a1020; background: var(--gen);
+    }
+    .engine-picker-cta:disabled { opacity: .45; cursor: not-allowed; }
+
     .model-line { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
     .dropzone {
       margin-top: 10px; border: 1px dashed #3a3a42; border-radius: 12px;
@@ -343,7 +518,14 @@
         </div>
         <div class="label">Модель</div>
         <select class="select" id="engine" hidden></select>
-        <div id="engineGroups" class="engine-groups"></div>
+        <button type="button" class="engine-hero" id="engineHero" aria-haspopup="dialog" aria-expanded="false" aria-controls="enginePicker">
+          <span class="badge" id="engineHeroBadge">T2</span>
+          <span>
+            <b id="engineHeroTitle">TRELLIS.2</b>
+            <small id="engineHeroMeta">Свои GPU · 10 cr</small>
+          </span>
+          <span class="chev" aria-hidden="true">▾</span>
+        </button>
         <div id="geoRow" hidden>
         <label class="slot">Страна (гео Hunyuan)
           <select class="select" id="country">
@@ -457,6 +639,27 @@
     </aside>
   </div>
 
+  <div id="enginePicker" class="engine-picker" hidden aria-modal="true" role="dialog" aria-labelledby="enginePickerTitle">
+    <div class="engine-picker-backdrop" id="enginePickerBackdrop"></div>
+    <div class="engine-picker-panel">
+      <header class="engine-picker-head">
+        <h2 id="enginePickerTitle">Выбор модели</h2>
+        <input type="search" id="engineSearch" placeholder="Поиск…" autocomplete="off" />
+        <button type="button" class="engine-picker-close" id="enginePickerClose" aria-label="Закрыть">✕</button>
+      </header>
+      <div class="engine-picker-body">
+        <aside class="engine-picker-list" id="enginePickerList"></aside>
+        <section class="engine-showcase" id="engineShowcase" aria-live="polite">
+          <div class="engine-showcase-inner" id="engineShowcaseInner"></div>
+        </section>
+      </div>
+      <footer class="engine-picker-foot">
+        <span id="pickerMetrics">—</span>
+        <button type="button" class="engine-picker-cta" id="enginePickerSelect">Выбрать эту модель</button>
+      </footer>
+    </div>
+  </div>
+
   <script type="importmap">
   {
     "imports": {
@@ -491,6 +694,8 @@
     let engines = [];
     let pollTimer = null;
     let uploadTarget = "front";
+    let pickerPreviewId = "trellis2";
+    let pickerFilter = "";
     const thumbCache = new Map();
     const thumbQueued = new Set();
     let thumbQueue = [];
@@ -535,13 +740,256 @@
       { id: "rodin", title: "Rodin" },
     ];
 
+    const FALLBACK_T2_SHOWCASE = {
+      headline: "Native PBR · персонажи и доспехи",
+      heroCutoutUrl: "/preview_textures/ref_gold_armor_cutout.png",
+      heroFallbackUrl: "/preview_textures/ref_gold_armor_bust.png",
+      watermark: "TRELLIS.2",
+      capabilities: ["Native PBR", "Multi-view", "Low → Realistic", "Наш GPU"],
+      bestFor: ["Доспехи", "Персонажи", "Пропы с деталями"],
+      avoidFor: ["Clay-черновик"],
+      examples: [
+        { kind: "input", url: "/preview_textures/ref_gold_armor.png", label: "Вход" },
+        { kind: "output", url: "/preview_textures/knight_fast.png", label: "Poster" },
+        { kind: "output", url: "/preview_textures/poster_gpu_studio.jpg", label: "Studio IBL" },
+        { kind: "detail", url: "/preview_textures/armor_t2_ultra_native_pbr_png_delight_albedo.png", label: "Albedo" },
+      ],
+      anchors: [
+        { text: "Multi-view", class: "tl" },
+        { text: "Native PBR", class: "tr" },
+        { text: "4 пресета", class: "bl" },
+        { text: "Наш GPU", class: "br" },
+      ],
+    };
+
+    function engineGroupTitle(provider) {
+      const g = ENGINE_GROUPS.find((x) => x.id === provider);
+      return g ? g.title : provider;
+    }
+
+    function engineBadge(id) {
+      if (id === "trellis2") return "T2";
+      if (id === "hi3dgen") return "H0";
+      if (id.startsWith("hitem")) return "Hi";
+      if (id.startsWith("tripo")) return "Tr";
+      if (id.startsWith("rodin")) return "Rd";
+      if (id === "meshy") return "M6";
+      return (id || "?").slice(0, 2).toUpperCase();
+    }
+
+    function fmtEta(sec) {
+      const s = Number(sec);
+      if (!Number.isFinite(s) || s <= 0) return "—";
+      return `~${Math.max(1, Math.round(s / 60))} мин`;
+    }
+
+    function assetUrl(path) {
+      if (!path) return "";
+      if (path.startsWith("http") || path.startsWith("/")) return path;
+      return `/preview_textures/${path}`;
+    }
+
+    function engineById(id) {
+      return engines.find((e) => e.id === id) || null;
+    }
+
+    function updateEngineHero() {
+      const eng = currentEngine();
+      const title = document.getElementById("engineHeroTitle");
+      const meta = document.getElementById("engineHeroMeta");
+      const badge = document.getElementById("engineHeroBadge");
+      if (!eng) return;
+      if (title) title.textContent = eng.label || eng.id;
+      if (badge) badge.textContent = engineBadge(eng.id);
+      const group = engineGroupTitle(eng.provider);
+      const cr = eng.credits != null ? `${eng.credits} credits` : "—";
+      const eta = fmtEta(eng.etaSeconds);
+      const missing = eng.configured === false ? " · нет ключа" : "";
+      if (meta) meta.textContent = `${group} · ${cr} · ${eta}${missing}`;
+    }
+
     function selectEngine(id) {
       const sel = document.getElementById("engine");
       if (sel) sel.value = id;
-      document.querySelectorAll(".engine-card").forEach((btn) => {
-        btn.classList.toggle("on", btn.dataset.id === id);
-      });
+      pickerPreviewId = id;
+      updateEngineHero();
       updateGenerateMeta();
+      syncPickerSelection();
+    }
+
+    function syncPickerSelection() {
+      const active = selectedEngine();
+      document.querySelectorAll(".engine-picker-row").forEach((row) => {
+        const id = row.dataset.id;
+        row.classList.toggle("selected", id === active);
+        row.classList.toggle("preview", id === pickerPreviewId && id !== active);
+      });
+      updatePickerMetrics(pickerPreviewId);
+      if (isEnginePickerOpen()) renderShowcase(pickerPreviewId);
+    }
+
+    function isEnginePickerOpen() {
+      const modal = document.getElementById("enginePicker");
+      return !!(modal && modal.classList.contains("is-open"));
+    }
+
+    function setEnginePickerOpen(on) {
+      const modal = document.getElementById("enginePicker");
+      if (!modal) return;
+      modal.classList.toggle("is-open", !!on);
+      if (on) modal.removeAttribute("hidden");
+      else modal.setAttribute("hidden", "");
+      document.body.classList.toggle("picker-open", !!on);
+      document.body.style.overflow = on ? "hidden" : "";
+      const hero = document.getElementById("engineHero");
+      if (hero) hero.setAttribute("aria-expanded", on ? "true" : "false");
+    }
+
+    function updatePickerMetrics(id) {
+      const eng = engineById(id);
+      const el = document.getElementById("pickerMetrics");
+      const cta = document.getElementById("enginePickerSelect");
+      if (!eng || !el) return;
+      const cold = eng.creditsColdSurcharge ? ` (+${eng.creditsColdSurcharge} cold)` : "";
+      const missing = eng.configured === false;
+      el.textContent = missing
+        ? `${eng.credits ?? "—"} cr · ключ не задан`
+        : `${eng.credits ?? "—"} cr${cold} · ${fmtEta(eng.etaSeconds)}`;
+      if (cta) {
+        cta.disabled = missing;
+        cta.title = missing ? "Ключ API не задан в .env" : "";
+      }
+    }
+
+    function renderShowcase(id) {
+      const eng = engineById(id);
+      const wrap = document.getElementById("engineShowcaseInner");
+      if (!wrap || !eng) return;
+      wrap.classList.add("fade");
+      window.setTimeout(() => {
+        const sc = eng.showcase || (eng.id === "trellis2" ? FALLBACK_T2_SHOWCASE : null);
+        if (!sc) {
+          wrap.innerHTML = `
+            <div class="showcase-fallback">
+              <h3>${eng.label || eng.id}</h3>
+              <p>${eng.blurb || "Showcase для этой модели скоро."}</p>
+              <div class="showcase-tags">
+                <span class="showcase-tag">${eng.credits ?? "—"} cr</span>
+                <span class="showcase-tag">${fmtEta(eng.etaSeconds)}</span>
+              </div>
+            </div>`;
+        } else {
+          const anchors = (sc.anchors || [])
+            .map((a) => `<span class="showcase-anchor ${a.class || ""}">${a.text}</span>`)
+            .join("");
+          const examples = (sc.examples || [])
+            .map((ex) => `
+              <figure class="showcase-ex">
+                <img src="${assetUrl(ex.url)}" alt="${ex.label || ""}" loading="lazy" />
+                <span>${ex.label || ""}</span>
+              </figure>`)
+            .join("");
+          const bestFor = (sc.bestFor || [])
+            .map((t) => `<span class="showcase-tag good">${t}</span>`)
+            .join("");
+          const caps = (sc.capabilities || [])
+            .map((t) => `<span class="showcase-tag">${t}</span>`)
+            .join("");
+          const hero = assetUrl(sc.heroCutoutUrl || sc.heroFallbackUrl || "");
+          wrap.innerHTML = `
+            <div class="showcase-stage">
+              <div class="showcase-watermark">${sc.watermark || eng.id}</div>
+              ${anchors}
+              ${hero ? `<img class="showcase-hero" src="${hero}" alt="" loading="lazy"
+                onerror="this.onerror=null;this.src='${assetUrl(sc.heroFallbackUrl || "")}'" />` : ""}
+            </div>
+            <div class="showcase-copy">
+              <h3>${sc.headline || eng.label}</h3>
+              <p>${eng.blurb || ""}</p>
+              <div class="showcase-tags">${bestFor}${caps}</div>
+            </div>
+            ${examples ? `<div class="showcase-examples">${examples}</div>` : ""}`;
+        }
+        wrap.classList.remove("fade");
+      }, 120);
+    }
+
+    function renderPickerList() {
+      const list = document.getElementById("enginePickerList");
+      if (!list) return;
+      const q = pickerFilter.trim().toLowerCase();
+      list.innerHTML = "";
+      for (const group of ENGINE_GROUPS) {
+        const rows = engines.filter((e) => {
+          if (e.provider !== group.id) return false;
+          if (!q) return true;
+          const hay = `${e.label} ${e.id} ${e.blurb || ""}`.toLowerCase();
+          return hay.includes(q);
+        });
+        if (!rows.length) continue;
+        const box = document.createElement("div");
+        box.className = "engine-picker-group";
+        const h = document.createElement("h4");
+        h.textContent = group.title;
+        box.appendChild(h);
+        for (const e of rows) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "engine-picker-row";
+          if (e.configured === false) btn.classList.add("need-key");
+          btn.dataset.id = e.id;
+          const cr = e.credits != null ? `${e.credits} cr` : "";
+          const eta = fmtEta(e.etaSeconds);
+          btn.innerHTML = `
+            <span class="dot">${engineBadge(e.id)}</span>
+            <span><b>${e.label}</b><small>${cr} · ${eta}${e.configured === false ? " · нет ключа" : ""}</small></span>`;
+          btn.onmouseenter = () => {
+            pickerPreviewId = e.id;
+            syncPickerSelection();
+          };
+          btn.onclick = () => commitPickerEngine(e.id);
+          box.appendChild(btn);
+        }
+        list.appendChild(box);
+      }
+      syncPickerSelection();
+    }
+
+    function openEnginePicker() {
+      setEnginePickerOpen(true);
+      pickerPreviewId = selectedEngine();
+      pickerFilter = "";
+      const search = document.getElementById("engineSearch");
+      if (search) search.value = "";
+      renderPickerList();
+      renderShowcase(pickerPreviewId);
+      if (search) window.setTimeout(() => search.focus(), 0);
+    }
+
+    function closeEnginePicker() {
+      setEnginePickerOpen(false);
+    }
+
+    function commitPickerEngine(id) {
+      selectEngine(id);
+      closeEnginePicker();
+    }
+
+    function renderEngines(list) {
+      engines = (list || []).filter((e) => e.visible !== false);
+      const sel = document.getElementById("engine");
+      const prev = sel.value;
+      sel.innerHTML = "";
+      for (const e of engines) {
+        const opt = document.createElement("option");
+        opt.value = e.id;
+        opt.textContent = e.label;
+        if (e.default) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      if (prev && engines.some((e) => e.id === prev)) sel.value = prev;
+      if (!sel.value) sel.value = "trellis2";
+      selectEngine(sel.value || "trellis2");
     }
 
     function selectedCountry() {
@@ -577,51 +1025,6 @@
       if (eng) {
         document.getElementById("underFront").textContent = eng.blurb || (copy && copy.underFront) || "";
       }
-    }
-
-    function renderEngines(list) {
-      engines = (list || []).filter((e) => e.visible !== false);
-      const sel = document.getElementById("engine");
-      const prev = sel.value;
-      sel.innerHTML = "";
-      for (const e of engines) {
-        const opt = document.createElement("option");
-        opt.value = e.id;
-        opt.textContent = e.label;
-        if (e.default) opt.selected = true;
-        sel.appendChild(opt);
-      }
-      if (prev && engines.some((e) => e.id === prev)) sel.value = prev;
-      const wrap = document.getElementById("engineGroups");
-      wrap.innerHTML = "";
-      for (const group of ENGINE_GROUPS) {
-        const rows = engines.filter((e) => e.provider === group.id);
-        if (!rows.length) continue;
-        const box = document.createElement("div");
-        box.className = "engine-group";
-        const h = document.createElement("h4");
-        h.textContent = group.title;
-        box.appendChild(h);
-        const grid = document.createElement("div");
-        grid.className = "engine-grid";
-        for (const e of rows) {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "engine-card";
-          if (e.configured === false) btn.classList.add("need-key");
-          btn.dataset.id = e.id;
-          btn.title = e.configured === false
-            ? `${e.blurb || e.label} · ключ не задан`
-            : (e.blurb || e.label);
-          const cr = e.credits != null ? `${e.credits} cr` : "";
-          btn.innerHTML = `<b>${e.label}</b><small>${cr}</small>`;
-          btn.onclick = () => selectEngine(e.id);
-          grid.appendChild(btn);
-        }
-        box.appendChild(grid);
-        wrap.appendChild(box);
-      }
-      selectEngine(sel.value || "trellis2");
     }
 
     function renderPresets(list) {
@@ -850,7 +1253,18 @@
       } catch {
         renderPresets(FALLBACK_PRESETS);
         renderEngines([
-          { id: "trellis2", label: "TRELLIS.2 — native PBR", default: true, visible: true, qualityPresets: true, credits: 10, etaSeconds: 240 },
+          {
+            id: "trellis2",
+            label: "TRELLIS.2 — native PBR",
+            default: true,
+            visible: true,
+            provider: "runpod",
+            qualityPresets: true,
+            credits: 10,
+            etaSeconds: 240,
+            blurb: "Качество по умолчанию. Единственный слот, прошедший нашего рыцаря.",
+            showcase: FALLBACK_T2_SHOWCASE,
+          },
         ]);
         apiHint.textContent = "bridge down · studio_lab.ps1";
       }
@@ -869,6 +1283,14 @@
         renderRefs([
           { id: "armor", label: "Рыцарь", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_gold_armor.png" },
           { id: "chest", label: "Сундук", url: "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_chest.png" },
+          { id: "t2_letter_t", label: "T2 · Letter T", url: "/preview_textures/_t2_examples/T.png" },
+          { id: "t2_crown", label: "T2 · Crown", url: "/preview_textures/_t2_examples/0a34fae7ba57cb8870df5325b9c30ea474def1b0913c19c596655b85a79fdee4.webp" },
+          { id: "t2_chair", label: "T2 · Chair", url: "/preview_textures/_t2_examples/7baa867b4790b8596ee120f9b171b727fd9428c41980577a518505507c99d8a0.webp" },
+          { id: "t2_boy", label: "T2 · Steampunk boy", url: "/preview_textures/_t2_examples/454e7d8a30486c0635369936e7bec5677b78ae5f436d0e46af0d533738be859f.webp" },
+          { id: "t2_bear", label: "T2 · Bear", url: "/preview_textures/_t2_examples/5c80e5e03a3b60b6f03eaf555ba1dafc0e4230c472d7e8c8e2c5ca0a0dfcef10.webp" },
+          { id: "t2_statue", label: "T2 · Winged statue", url: "/preview_textures/_t2_examples/52284bf45134c59a94be150a5b18b9cc3619ada4b30ded8d8d0288383b8c016f.webp" },
+          { id: "t2_harbor", label: "T2 · Harbor", url: "/preview_textures/_t2_examples/8aa698c59aab48d4ce69a558d9159107890e3d64e522af404d9635ad0be21f88.webp" },
+          { id: "t2_aquarium", label: "T2 · Aquarium", url: "/preview_textures/_t2_examples/901d8de4c2011a8502a0decd0adec0fc7418f26165cd52ced64fd44f720353ef.webp" },
         ]);
         seedPosterHoverDemo();
         renderGallery(allGalleryModels());
@@ -1060,6 +1482,31 @@
       openModel("/preview_textures/draco_spike/preset_high_armor.draco.glb", "High Draco 23 MB");
     };
     document.getElementById("generate").onclick = runGenerate;
+
+    const engineHeroBtn = document.getElementById("engineHero");
+    if (engineHeroBtn) {
+      engineHeroBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openEnginePicker();
+      });
+    }
+    const pickerClose = document.getElementById("enginePickerClose");
+    const pickerBackdrop = document.getElementById("enginePickerBackdrop");
+    const pickerSelect = document.getElementById("enginePickerSelect");
+    const pickerSearch = document.getElementById("engineSearch");
+    if (pickerClose) pickerClose.onclick = closeEnginePicker;
+    if (pickerBackdrop) pickerBackdrop.onclick = closeEnginePicker;
+    if (pickerSelect) pickerSelect.onclick = () => commitPickerEngine(pickerPreviewId);
+    if (pickerSearch) {
+      pickerSearch.oninput = (e) => {
+        pickerFilter = e.target.value || "";
+        renderPickerList();
+      };
+    }
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && isEnginePickerOpen()) closeEnginePicker();
+    });
 
     window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
     window.addEventListener("dragleave", () => drop.classList.remove("on"));

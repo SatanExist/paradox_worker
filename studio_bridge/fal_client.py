@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -74,12 +75,25 @@ def _request(
     return parsed
 
 
-def submit(model_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Queue a job. Returns request_id / status_url / response_url."""
+def submit(
+    model_id: str,
+    arguments: dict[str, Any],
+    *,
+    webhook_url: str | None = None,
+) -> dict[str, Any]:
+    """Queue a job. Returns request_id / status_url / response_url.
+
+    When ``FAL_WEBHOOK_URL`` (or ``webhook_url``) is set, Fal POSTs the
+    finished payload there instead of us GETting a body that can 504.
+    """
     model = (model_id or "").strip().strip("/")
     if not model:
         raise ValueError("FAL model_id is required")
-    return _request("POST", f"{QUEUE_BASE}/{model}", payload=arguments)
+    url = f"{QUEUE_BASE}/{model}"
+    hook = (webhook_url if webhook_url is not None else os.getenv("FAL_WEBHOOK_URL", "")).strip()
+    if hook:
+        url = f"{url}?{urllib.parse.urlencode({'fal_webhook': hook})}"
+    return _request("POST", url, payload=arguments)
 
 
 def get_status(model_id: str, request_id: str) -> dict[str, Any]:
@@ -91,8 +105,15 @@ def get_status(model_id: str, request_id: str) -> dict[str, Any]:
 
 
 def get_result(model_id: str, request_id: str) -> dict[str, Any]:
+    """Final output. Queue docs (2026) put it at ``.../requests/{id}/response``."""
     model = (model_id or "").strip().strip("/")
     rid = (request_id or "").strip()
     if not rid:
         raise ValueError("FAL request_id is required")
-    return _request("GET", f"{QUEUE_BASE}/{model}/requests/{rid}")
+    response_url = f"{QUEUE_BASE}/{model}/requests/{rid}/response"
+    try:
+        return _request("GET", response_url)
+    except FalHttpError as exc:
+        if exc.status != 404:
+            raise
+        return _request("GET", f"{QUEUE_BASE}/{model}/requests/{rid}")

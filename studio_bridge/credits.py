@@ -78,12 +78,14 @@ _T2_QUOTES: dict[str, CreditQuote] = {
 
 # FAL public list (playground 2026-08-27) × 2.5, rounded up to whole credits.
 _FAL_LIST_USD: dict[str, float] = {
-    "meshy": 0.80,
+    "meshy": 1.20,
+    "meshy_game": 1.20,
     "trellis2_fal": 0.30,
 }
 
 _FAL_LABELS: dict[str, str] = {
-    "meshy": "Meshy 6 (FAL)",
+    "meshy": "Meshy 7.1 textured (FAL)",
+    "meshy_game": "Meshy Game Ready textured (FAL)",
     "trellis2_fal": "TRELLIS.2 backup (FAL, not vitrine)",
 }
 
@@ -131,15 +133,23 @@ def t2_quote_for_preset(preset: str) -> CreditQuote:
     )
 
 
-def quote_rodin(quality_tier: str = "medium") -> CreditQuote:
-    from studio_bridge.rodin_client import resolve_rodin_quality
+def quote_rodin(
+    quality_tier: str = "medium",
+    options: dict | None = None,
+) -> CreditQuote:
+    from studio_bridge.rodin_client import resolve_rodin_options, resolve_rodin_quality
 
     tier = resolve_rodin_quality("rodin", quality_tier)
+    usd = tier.list_usd
+    if options:
+        knobs = resolve_rodin_options(tier.id, options)
+        if knobs["high_pack"]:
+            usd += 0.80
     return _direct_quote(
         "rodin",
-        tier.list_usd,
-        "rodin",
-        f"Rodin 2.5 {tier.label} (direct)",
+        usd,
+        "fal",
+        f"Rodin 2.5 {tier.label} (FAL)",
     )
 
 
@@ -148,6 +158,7 @@ def quote_engine(
     *,
     tier: str = "medium",
     rodin_quality: str | None = None,
+    rodin_options: dict | None = None,
     hitem_sku: str | None = None,
     mode: str = "image",
     tripo_options: dict | None = None,
@@ -193,7 +204,7 @@ def quote_engine(
         from studio_bridge.rodin_client import DEFAULT_RODIN_QUALITY
 
         q = rodin_quality or ("ultra" if eid == "rodin_extreme" else DEFAULT_RODIN_QUALITY)
-        return quote_rodin(q)
+        return quote_rodin(q, rodin_options)
     if is_hunyuan_engine_id(eid):
         n, lines = vendor_credits_for_options(hunyuan_options)
         usd = list_usd_for_options(hunyuan_options)
@@ -234,7 +245,7 @@ def credit_catalog() -> dict:
         t2_quote_for_preset("high").as_dict(),
         _T2_QUOTES["hi3dgen"].as_dict(),
     ]
-    for eid in ("meshy",):
+    for eid in ("meshy", "meshy_game"):
         rows.append(_fal_quote(eid).as_dict())
     from studio_bridge.hitem_client import HITEM_PRESETS
     from studio_bridge.tripo_client import TRIPO_PRESETS

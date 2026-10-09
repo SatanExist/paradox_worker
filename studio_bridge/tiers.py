@@ -196,6 +196,7 @@ def build_runpod_input(
     texture_mode: TextureMode | None = None,
     soft_input: bool | None = None,
     soft_input_strength: float = 0.75,
+    preprocess_image: bool | None = None,
     multi_image_mode: MultiImageMode = DEFAULT_MULTI_IMAGE_MODE,
 ) -> dict:
     """Build RunPod job input. Multi (2–4 URLs) sets image_urls + multi_image_mode."""
@@ -203,6 +204,7 @@ def build_runpod_input(
     primary = urls[0]
     mode = texture_mode or tier.texture_mode
     use_soft = tier.soft_input_default if soft_input is None else bool(soft_input)
+    use_preprocess = True if preprocess_image is None else bool(preprocess_image)
     payload: dict = {
         "image_url": primary,
         "quality_tier": tier.quality_tier,
@@ -211,6 +213,7 @@ def build_runpod_input(
         "seed": seed,
         "decimation_target": tier.decimation_target,
         "remesh": tier.remesh,
+        "preprocess_image": use_preprocess,
         "return_base64": False,
     }
     if len(urls) >= MIN_MULTI_IMAGES:

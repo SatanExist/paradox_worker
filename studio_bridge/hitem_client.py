@@ -63,8 +63,8 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         face=2_000_000,
         eta_sec=240,
         list_usd=0.50,
-        label="Hitem Fast",
-        blurb="Печать / деталь. Прямой API, не FAL. PBR on. v2.1 · 1536fast.",
+        label="Hitem",
+        blurb="General object / print. Fast · Pro · v3 quality strip. PBR.",
         role="print",
     ),
     "hitem3d_pro": HitemPreset(
@@ -94,10 +94,61 @@ HITEM_PRESETS: dict[str, HitemPreset] = {
         eta_sec=240,
         list_usd=0.50,
         label="Hitem Portrait",
-        blurb="Сцена-портрет v2.1. Не персонаж-рыцарь по умолчанию.",
+        blurb="Faces & bust · Fast · Pro strip. scene-portrait v2.1.",
+        role="portrait",
+    ),
+    "hitem3d_portrait_pro": HitemPreset(
+        model="scene-portraitv2.1",
+        resolution="1536pro",
+        face=2_000_000,
+        eta_sec=360,
+        list_usd=0.90,
+        label="Hitem Portrait Pro",
+        blurb="Same portrait v2.1 — 1536pro. Direct API.",
         role="portrait",
     ),
 }
+
+# Catalog card `hitem3d` + hitemSku Fast/Pro/v3.
+HITEM_GENERAL_SKUS: dict[str, str] = {
+    "fast": "hitem3d",
+    "pro": "hitem3d_pro",
+    "v3": "hitem3d_v3",
+}
+# Catalog card `hitem3d_portrait` + sku Fast/Pro (no v3 — portrait has no 2048).
+HITEM_PORTRAIT_SKUS: dict[str, str] = {
+    "fast": "hitem3d_portrait",
+    "pro": "hitem3d_portrait_pro",
+}
+DEFAULT_HITEM_SKU = "fast"
+
+
+def hitem_catalog_id(resolved_engine_id: str) -> str:
+    """Map submit preset id back to the picker card id."""
+    eid = (resolved_engine_id or "").strip().lower()
+    if "portrait" in eid:
+        return "hitem3d_portrait"
+    return "hitem3d"
+
+
+def resolve_hitem_engine(engine_id: str, sku: str | None = None) -> str:
+    """Map picker id + optional sku to the preset used for submit/credits."""
+    eid = (engine_id or "").strip().lower()
+    if eid in ("hitem3d_pro", "hitem3d_v3", "hitem3d_portrait_pro"):
+        return eid
+    if eid == "hitem3d_portrait":
+        key = (sku or DEFAULT_HITEM_SKU).strip().lower()
+        mapped = HITEM_PORTRAIT_SKUS.get(key)
+        if mapped is None:
+            raise ValueError(f"unknown Hitem Portrait sku {sku!r} (fast|pro)")
+        return mapped
+    if eid != "hitem3d":
+        raise ValueError(f"{engine_id} is not a Hitem Image-to-3D engine")
+    key = (sku or DEFAULT_HITEM_SKU).strip().lower()
+    mapped = HITEM_GENERAL_SKUS.get(key)
+    if mapped is None:
+        raise ValueError(f"unknown Hitem sku {sku!r}")
+    return mapped
 
 
 def credentials() -> tuple[str, str]:

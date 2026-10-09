@@ -4,8 +4,19 @@
 .env
 preview_textures/lab_uploads/
 preview_textures/thumbs/
+preview_textures/fal_inbox/
 .env.*
 weights/
 *.pth
 *.glb
 __pycache__/
+
+# Local experiment output and one-off helpers; they stay on this machine.
+preview_textures/
+*.zip
+*.tgz
+*.log
+probe_out.txt
+pip311_err.txt
+scripts/_*
+scripts/ssh_mv_pod.cmd

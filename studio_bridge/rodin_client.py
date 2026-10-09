@@ -65,7 +65,7 @@ RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
         "lowest",
         "Gen-2.5-Extreme-Low",
         "20000",
-        0.15,
+        0.40,
         120,
         "Lowest",
     ),
@@ -73,7 +73,7 @@ RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
         "low",
         "Gen-2.5-Low",
         "60000",
-        0.20,
+        0.40,
         150,
         "Low",
     ),
@@ -81,7 +81,7 @@ RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
         "medium",
         "Gen-2.5-Medium",
         "500000",
-        0.25,
+        0.40,
         210,
         "Medium",
     ),
@@ -89,7 +89,7 @@ RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
         "high",
         "Gen-2.5-High",
         "500000",
-        0.30,
+        0.40,
         240,
         "High",
     ),
@@ -97,7 +97,7 @@ RODIN_QUALITY_TIERS: dict[str, RodinQualityTier] = {
         "ultra",
         "Gen-2.5-Extreme-High",
         "1000000",
-        0.60,
+        0.80,
         360,
         "Ultra",
     ),
@@ -113,7 +113,7 @@ class RodinEngineMeta:
 
 RODIN_ENGINE = RodinEngineMeta(
     label="Rodin 2.5",
-    blurb="Hyper3D Gen-2.5 — hard-surface, PBR GLB, 1–5 photos. Quality tier in params.",
+    blurb="Hyper3D Gen-2.5 через Fal. Hard-surface, PBR GLB, 1–5 фото. Тир в параметрах.",
     eta_sec=RODIN_QUALITY_TIERS[DEFAULT_RODIN_QUALITY].eta_sec,
 )
 
@@ -126,6 +126,28 @@ def resolve_rodin_quality(engine_id: str, quality_tier: str | None) -> RodinQual
     if tier is None:
         raise ValueError(f"unknown Rodin quality tier {quality_tier!r}")
     return tier
+
+
+_FAL_TRI = {
+    "20000": "20K Triangle",
+    "60000": "50K Triangle",
+    "500000": "500K Triangle",
+    "1000000": "1M Triangle",
+}
+_FAL_QUAD = {
+    "20000": "18K Quad",
+    "60000": "50K Quad",
+    "500000": "200K Quad",
+    "1000000": "200K Quad",
+}
+
+
+def fal_quality_mesh(mesh_mode: str, quality_override: str | None) -> str:
+    """Map our face preset onto Fal's combined mesh option. Auto lets Fal pick."""
+    if not quality_override:
+        return "Auto"
+    table = _FAL_QUAD if mesh_mode == "Quad" else _FAL_TRI
+    return table.get(str(quality_override), "Auto")
 
 
 def is_rodin_engine(engine_id: str) -> bool:
@@ -183,6 +205,19 @@ def _norm_choice(raw: str | None, allowed: frozenset[str], *, label: str, defaul
     raise ValueError(f"unknown Rodin {label} {raw!r}")
 
 
+def _rodin_flag(opts: dict[str, Any], *keys: str, default: bool) -> bool:
+    for key in keys:
+        if key not in opts:
+            continue
+        raw = opts[key]
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+    return default
+
+
 def resolve_rodin_options(
     quality_tier_id: str,
     options: dict[str, Any] | None,
@@ -190,26 +225,26 @@ def resolve_rodin_options(
     """Normalize Studio / API knobs for multipart submit."""
     opts = options or {}
     material = _norm_choice(
-        opts.get("material"), RODIN_MATERIALS, label="material", default="PBR"
+        opts.get("material"), RODIN_MATERIALS, label="material", default="Shaded"
     )
 
     raw_tex = opts.get("textureMode")
     if raw_tex is None:
         raw_tex = opts.get("texture_mode")
-    texture_mode: str | None = None
-    if raw_tex is not None and str(raw_tex).strip():
-        texture_mode = _norm_choice(
-            str(raw_tex),
-            RODIN_TEXTURE_MODES,
-            label="texture_mode",
-            default="medium",
-        )
+    if raw_tex is None or not str(raw_tex).strip():
+        raw_tex = "high"
+    texture_mode = _norm_choice(
+        str(raw_tex),
+        RODIN_TEXTURE_MODES,
+        label="texture_mode",
+        default="high",
+    )
 
     geometry_mode = _norm_choice(
         opts.get("geometryMode") or opts.get("geometry_instruct_mode"),
         RODIN_GEOMETRY_MODES,
         label="geometry_instruct_mode",
-        default="faithful",
+        default="creative",
     )
     if geometry_mode == "creative" and quality_tier_id not in CREATIVE_TIERS:
         raise ValueError("Rodin Creative geometry requires Medium, High, or Ultra tier")
@@ -221,7 +256,7 @@ def resolve_rodin_options(
         default="Raw",
     )
 
-    face_raw = opts.get("facePreset") or opts.get("face_preset") or "auto"
+    face_raw = opts.get("facePreset") or opts.get("face_preset") or "high"
     face_preset = _norm_choice(
         str(face_raw), RODIN_FACE_PRESETS, label="face_preset", default="auto"
     )
@@ -236,8 +271,11 @@ def resolve_rodin_options(
     high_pack = bool(
         opts.get("highPack") if "highPack" in opts else opts.get("high_pack", False)
     )
-    hd_texture = bool(
-        opts.get("hdTexture") if "hdTexture" in opts else opts.get("hd_texture", False)
+    hd_texture = _rodin_flag(opts, "hdTexture", "hd_texture", default=False)
+    texture_delight = _rodin_flag(opts, "textureDelight", "texture_delight", default=False)
+    ta_pose = _rodin_flag(opts, "taPose", "TAPose", "ta_pose", default=False)
+    use_original_alpha = _rodin_flag(
+        opts, "useOriginalAlpha", "use_original_alpha", default=True
     )
 
     seed_val: int | None = None
@@ -259,6 +297,9 @@ def resolve_rodin_options(
         "quality_override": quality_override,
         "high_pack": high_pack,
         "hd_texture": hd_texture,
+        "texture_delight": texture_delight,
+        "ta_pose": ta_pose,
+        "use_original_alpha": use_original_alpha,
         "seed": seed_val,
     }
 

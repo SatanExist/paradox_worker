@@ -12,6 +12,12 @@ PREVIEW_DIR = ROOT / "preview_textures"
 
 # Pinned first in the shelf. Current H0 work, then the 2026-08-16 T2 ladder.
 PINNED_GLBS: tuple[tuple[str, str], ...] = (
+    ("p1_hd_character.glb", "P1 HD — archer A-pose"),
+    ("p1_studio_car.glb", "P1 Standard — vintage sedan"),
+    ("p1_mesh_armor.glb", "P1 clay — spiked cuirass"),
+    ("h31_ultra_scorpion.glb", "H3.1 Ultra — mech scorpion"),
+    ("h31_hd_drill.glb", "H3.1 HD — cordless drill"),
+    ("h31_studio_camera.glb", "H3.1 Studio — vintage camera"),
     ("h0_armor_hi3dgen.glb", "Hi3DGen H0 — knight clay"),
     ("h0b_armor_slat12.glb", "Hi3DGen H0b — slat12"),
     ("h0c_armor_flexicubes.glb", "Hi3DGen H0c — FlexiCubes"),
@@ -25,6 +31,7 @@ PINNED_GLBS: tuple[tuple[str, str], ...] = (
     ("n2_pixal3d_knight_1024.glb", "N2 — Pixal3D knight 1024 (low-VRAM)"),
     ("n2_pixal3d_knight_1536.glb", "N2 — Pixal3D knight 1536 (low-VRAM)"),
     ("n3_direct3ds2_knight_1024.glb", "N3 — Direct3D-S2 knight 1024 clay"),
+    ("n4_step1x3d_knight.glb", "N4 — Step1X-3D knight geometry 384"),
     ("f2_triposr_knight.glb", "Ф2 recon — TripoSR knight (16s, fast tier)"),
     ("armor_t2_v17_realistic.png.glb", "Knight — Realistic 4K+polish"),
     ("preset_high_armor.png.glb", "Knight — High 2K+polish"),
@@ -46,6 +53,43 @@ SMOKE_IMAGE_REFS: tuple[tuple[str, str, str], ...] = (
         "Сундук",
         "https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev/smoke/ref_chest.png",
     ),
+    # Official microsoft/TRELLIS.2 demo inputs (images only — not GLB).
+    ("t2_letter_t", "T2 · Letter T", "/preview_textures/_t2_examples/T.png"),
+    (
+        "t2_crown",
+        "T2 · Crown",
+        "/preview_textures/_t2_examples/0a34fae7ba57cb8870df5325b9c30ea474def1b0913c19c596655b85a79fdee4.webp",
+    ),
+    (
+        "t2_chair",
+        "T2 · Chair",
+        "/preview_textures/_t2_examples/7baa867b4790b8596ee120f9b171b727fd9428c41980577a518505507c99d8a0.webp",
+    ),
+    (
+        "t2_boy",
+        "T2 · Steampunk boy",
+        "/preview_textures/_t2_examples/454e7d8a30486c0635369936e7bec5677b78ae5f436d0e46af0d533738be859f.webp",
+    ),
+    (
+        "t2_bear",
+        "T2 · Bear",
+        "/preview_textures/_t2_examples/5c80e5e03a3b60b6f03eaf555ba1dafc0e4230c472d7e8c8e2c5ca0a0dfcef10.webp",
+    ),
+    (
+        "t2_statue",
+        "T2 · Winged statue",
+        "/preview_textures/_t2_examples/52284bf45134c59a94be150a5b18b9cc3619ada4b30ded8d8d0288383b8c016f.webp",
+    ),
+    (
+        "t2_harbor",
+        "T2 · Harbor",
+        "/preview_textures/_t2_examples/8aa698c59aab48d4ce69a558d9159107890e3d64e522af404d9635ad0be21f88.webp",
+    ),
+    (
+        "t2_aquarium",
+        "T2 · Aquarium",
+        "/preview_textures/_t2_examples/901d8de4c2011a8502a0decd0adec0fc7418f26165cd52ced64fd44f720353ef.webp",
+    ),
 )
 
 ALLOWED_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -63,6 +107,9 @@ def smoke_image_refs() -> list[dict[str, str]]:
     base = _public_base()
     out: list[dict[str, str]] = []
     for ref_id, label, url in SMOKE_IMAGE_REFS:
+        if url.startswith("/"):
+            out.append({"id": ref_id, "label": label, "url": url})
+            continue
         if url.startswith("https://pub-c826a97383ba4fadbc6436f422b17bfd.r2.dev"):
             suffix = url.split("/smoke/", 1)[-1]
             url = f"{base}/smoke/{suffix}"

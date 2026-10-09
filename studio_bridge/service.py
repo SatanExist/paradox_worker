@@ -86,6 +86,7 @@ def create_job(
     soft_input: bool | None = None,
     soft_input_strength: float = 0.75,
     texture_mode: TextureMode | None = None,
+    preprocess_image: bool | None = None,
 ) -> dict[str, Any]:
     tier_cfg = get_tier(tier)
     api_key = _api_key()
@@ -112,6 +113,7 @@ def create_job(
         multi_image_mode=fusion,
         soft_input=soft_input,
         soft_input_strength=soft_input_strength,
+        preprocess_image=preprocess_image,
     )
     job_id = submit_job(tier_cfg.endpoint_id, api_key, job_input)
 

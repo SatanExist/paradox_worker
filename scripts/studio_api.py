@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
+import json
 import mimetypes
 import os
 import sys
@@ -37,6 +40,11 @@ from studio_bridge.lab_workspace import (  # noqa: E402
 from studio_bridge.credits import credit_catalog  # noqa: E402
 from studio_bridge.engines import DEFAULT_ENGINE, engine_catalog  # noqa: E402
 from studio_bridge.fal_client import FalHttpError, FalNotConfiguredError  # noqa: E402
+from studio_bridge.fal_webhook import (  # noqa: E402
+    FalWebhookError,
+    store_webhook,
+    verify_webhook,
+)
 from studio_bridge.gateway import (  # noqa: E402
     EngineNotConfiguredError,
     create_studio_job,
@@ -77,6 +85,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Once the lab is public, the site's /api/studio proxy is its only door: the proxy checks who is
+# asking and what was paid for, then sends this secret along. Without STUDIO_BRIDGE_SECRET the
+# lab answers only this machine, as in local development.
+BRIDGE_SECRET = os.getenv("STUDIO_BRIDGE_SECRET", "").strip()
+SECRET_HEADER = "x-studio-secret"
+OPEN_PATHS = {"/health"}
+
+
+def _from_this_machine(request: Request) -> bool:
+    if request.headers.get("x-forwarded-for"):
+        return False  # came through a proxy, whatever address it shows
+    try:
+        return ipaddress.ip_address(request.client.host if request.client else "").is_loopback
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def require_site_secret(request: Request, call_next):
+    if request.url.path in OPEN_PATHS:
+        return await call_next(request)
+    if BRIDGE_SECRET:
+        given = request.headers.get(SECRET_HEADER, "")
+        allowed = hmac.compare_digest(given.encode("utf-8"), BRIDGE_SECRET.encode("utf-8"))
+    else:
+        allowed = _from_this_machine(request)
+    if not allowed:
+        return Response(
+            content=json.dumps({"detail": "Forbidden"}),
+            status_code=403,
+            media_type="application/json",
+        )
+    return await call_next(request)
 
 
 class ViewSlots(BaseModel):
@@ -132,7 +174,15 @@ class CreateJobRequest(BaseModel):
         default=None,
         description=(
             "Rodin Gen-2.5 knobs: material, textureMode, geometryMode, meshMode, "
-            "facePreset, highPack, hdTexture, seed."
+            "facePreset, highPack, hdTexture, textureDelight, taPose, "
+            "useOriginalAlpha, seed."
+        ),
+    )
+    meshyOptions: dict | None = Field(
+        default=None,
+        description=(
+            "Meshy 7.1 knobs: lane standard|game-ready, geometryResolution "
+            "standard|2k|4k, topology, shouldTexture, enablePbr, shouldRemesh, pose."
         ),
     )
     tripoOptions: dict | None = Field(
@@ -302,6 +352,23 @@ def lab_save_thumbnail(body: ThumbBody) -> dict:
     return {"thumb": url}
 
 
+@app.post("/api/fal/webhook")
+async def fal_webhook(request: Request) -> dict:
+    """Fal queue completion. Verified ED25519; body kept for job polling."""
+    body = await request.body()
+    try:
+        verify_webhook(body, request.headers)
+        parsed = json.loads(body.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise FalWebhookError("webhook body must be an object")
+        store_webhook(parsed)
+    except FalWebhookError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="webhook body is not JSON") from exc
+    return {"ok": True}
+
+
 @app.post("/api/jobs")
 def post_job(body: CreateJobRequest, request: Request) -> dict:
     slots = body.viewSlots.model_dump() if body.viewSlots else None
@@ -324,6 +391,7 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
             country=country,
             rodin_quality_tier=body.rodinQualityTier,
             rodin_options=body.rodinOptions,
+            meshy_options=body.meshyOptions,
             tripo_options=body.tripoOptions,
             hunyuan_options=body.hunyuanOptions,
             hitem_options=body.hitemOptions,
@@ -416,6 +484,11 @@ def main() -> None:
 
     host = os.getenv("STUDIO_API_HOST", "127.0.0.1")
     port = int(os.getenv("STUDIO_API_PORT", "8787"))
+    if host not in ("127.0.0.1", "localhost", "::1") and not BRIDGE_SECRET:
+        raise SystemExit(
+            f"Refusing to listen on {host} without STUDIO_BRIDGE_SECRET: "
+            "anyone could start paid jobs past the site."
+        )
     uvicorn.run(app, host=host, port=port, reload=False)
 
 

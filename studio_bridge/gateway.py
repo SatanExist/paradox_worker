@@ -34,6 +34,7 @@ from studio_bridge.fal_client import (
     get_status,
     submit,
 )
+from studio_bridge.fal_webhook import load_webhook
 from studio_bridge.geo import HunyuanGeoBlocked, assert_hunyuan_allowed
 from studio_bridge.hitem_client import (
     HitemHttpError,
@@ -224,6 +225,7 @@ def _credit_fields(
     *,
     tier: str,
     rodin_quality: str | None = None,
+    rodin_options: dict[str, Any] | None = None,
     hitem_sku: str | None = None,
     mode: str | None = None,
     tripo_options: dict[str, Any] | None = None,
@@ -234,6 +236,7 @@ def _credit_fields(
         engine_id,
         tier=tier,
         rodin_quality=rodin_quality,
+        rodin_options=rodin_options,
         hitem_sku=hitem_sku,
         mode=mode or "image",
         tripo_options=tripo_options,
@@ -449,6 +452,7 @@ def create_studio_job(
     country: str | None = None,
     rodin_quality_tier: str | None = None,
     rodin_options: dict[str, Any] | None = None,
+    meshy_options: dict[str, Any] | None = None,
     tripo_options: dict[str, Any] | None = None,
     hunyuan_options: dict[str, Any] | None = None,
     hitem_options: dict[str, Any] | None = None,
@@ -508,6 +512,48 @@ def create_studio_job(
         payload["provider"] = "runpod"
         return payload
 
+    if spec.provider == "fal" and spec.id in {"rodin", "rodin_extreme"} and mode == "text":
+        text = (prompt or "").strip()
+        if not text:
+            raise ValueError("prompt is required for mode=text")
+        quote_bits = _credit_fields(
+            spec.id,
+            tier=str(tier),
+            rodin_quality=rodin_quality_tier,
+            rodin_options=rodin_options,
+        )
+        arguments = build_fal_arguments(
+            spec.id,
+            image_urls=[],
+            seed=seed,
+            rodin_quality=rodin_quality_tier,
+            rodin_options=rodin_options,
+            meshy_options=meshy_options,
+            prompt=text,
+        )
+        queued = submit(spec.fal_model or "", arguments)
+        request_id = str(queued.get("request_id") or queued.get("requestId") or "").strip()
+        if not request_id:
+            raise FalHttpError(502, f"FAL submit missing request_id: {queued}")
+        return {
+            "jobId": encode_fal_job_id(spec.id, request_id),
+            "falRequestId": request_id,
+            "falModel": spec.fal_model,
+            "mode": mode,
+            "engine": spec.id,
+            "provider": "fal",
+            "vendor": spec.vendor,
+            "imageUrl": None,
+            "imageUrls": [],
+            "viewCount": 0,
+            "statusLine": status_line(1),
+            "prompt": text,
+            "etaSecondsCold": spec.eta_sec,
+            "etaSecondsWarm": spec.eta_sec,
+            "status": "queued",
+            **quote_bits,
+        }
+
     urls, text_prompt, _suggested = resolve_source_urls(
         mode=mode,
         image_url=image_url,
@@ -516,7 +562,12 @@ def create_studio_job(
         view_slots=view_slots,
     )
     primary = urls[0]
-    quote_bits = _credit_fields(spec.id, tier=str(tier))
+    quote_bits = _credit_fields(
+        spec.id,
+        tier=str(tier),
+        rodin_quality=rodin_quality_tier,
+        rodin_options=rodin_options,
+    )
 
     if spec.id == "hi3dgen":
         opts = hi3dgen_options or {}
@@ -645,6 +696,10 @@ def create_studio_job(
         image_urls=urls,
         view_slots=view_slots,
         seed=seed,
+        rodin_quality=rodin_quality_tier,
+        rodin_options=rodin_options,
+        meshy_options=meshy_options,
+        prompt=text_prompt,
     )
     queued = submit(spec.fal_model or "", arguments)
     request_id = str(queued.get("request_id") or queued.get("requestId") or "").strip()
@@ -801,7 +856,26 @@ def _get_fal_job(
             payload.update(refund_payload(quote, error=err))
         return payload
 
-    result = get_result(spec.fal_model or "", request_id)
+    delivered = load_webhook(request_id)
+    if isinstance(delivered, dict) and delivered.get("status") == "ERROR":
+        err = str(delivered.get("error") or "fal_webhook_error")
+        payload["status"] = "failed"
+        payload.update(refund_payload(quote, error=err))
+        return payload
+    if isinstance(delivered, dict) and delivered.get("status") == "OK":
+        result = delivered
+    else:
+        try:
+            result = get_result(spec.fal_model or "", request_id)
+        except FalHttpError as exc:
+            # Partner gateways 504 the result body after COMPLETED. Stay in
+            # running so the client keeps polling until the webhook lands.
+            if exc.status in {502, 503, 504}:
+                payload["status"] = "running"
+                payload["delivery"] = "fal-pending"
+                payload["error"] = None
+                return payload
+            raise
     glb, poster, size = extract_glb_url(result)
     payload["posterUrl"] = poster
     payload["modelBytes"] = size

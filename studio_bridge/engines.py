@@ -33,7 +33,9 @@ Provider = Literal["runpod", "fal", "hitem", "tripo", "rodin", "tencent"]
 DEFAULT_ENGINE = "trellis2"
 KNIGHT_GATE_STATUS = "pending"  # eyes before prod; see scripts/fal_knight_ab.py
 # Partner FAL we actually sell. Everything else is vendor API or parked.
-FAL_SHELF_IDS: frozenset[str] = frozenset({"meshy"})
+FAL_SHELF_IDS: frozenset[str] = frozenset(
+    {"meshy", "meshy_game", "rodin", "rodin_extreme"}
+)
 
 
 @dataclass(frozen=True)
@@ -83,16 +85,30 @@ _ENGINES: tuple[EngineSpec, ...] = (
     ),
     EngineSpec(
         id="meshy",
-        label="Meshy 6",
+        label="Meshy 7.1",
         vendor="Meshy",
         provider="fal",
         role="other",
-        blurb="Партнёр FAL, не ключ meshy.ai. Дорогой слот, не default.",
-        fal_model="fal-ai/meshy/v6/image-to-3d",
+        blurb="Через Fal, не ключ meshy.ai. Текстура включена. Дорогой слот, не default.",
+        fal_model="meshy/v7.1/image-to-3d",
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://fal.ai/models/fal-ai/meshy/v6/image-to-3d/api",
+        docs_url="https://fal.ai/models/meshy/v7.1/image-to-3d/api",
+        eta_sec=480,
+    ),
+    EngineSpec(
+        id="meshy_game",
+        label="Meshy Game Ready",
+        vendor="Meshy",
+        provider="fal",
+        role="other",
+        blurb="Тот же Fal Meshy 7.1, режим smart-topology (T2). До 15 000 граней.",
+        fal_model="meshy/v7.1/image-to-3d",
+        geo_gated=False,
+        show_in_catalog=True,
+        quality_presets=False,
+        docs_url="https://fal.ai/models/meshy/v7.1/image-to-3d/api",
         eta_sec=480,
     ),
     EngineSpec(
@@ -197,24 +213,24 @@ _ENGINES: tuple[EngineSpec, ...] = (
         id="rodin",
         label=RODIN_ENGINE.label,
         vendor="Hyper3D / Deemos",
-        provider="rodin",
+        provider="fal",
         role="hard_surface",
         blurb=RODIN_ENGINE.blurb,
-        fal_model=None,
+        fal_model="fal-ai/hyper3d/rodin/v2.5",
         geo_gated=False,
         show_in_catalog=True,
         quality_presets=False,
-        docs_url="https://docs.hyper3d.ai/en/api-specification/rodin-gen2-5",
+        docs_url="https://fal.ai/models/fal-ai/hyper3d/rodin/v2.5/api",
         eta_sec=RODIN_ENGINE.eta_sec,
     ),
     EngineSpec(
         id="rodin_extreme",
         label="Rodin 2.5 Extreme",
         vendor="Hyper3D / Deemos",
-        provider="rodin",
+        provider="fal",
         role="hard_surface",
         blurb="Legacy engine id — use rodin + ultra quality tier.",
-        fal_model=None,
+        fal_model="fal-ai/hyper3d/rodin/v2.5",
         geo_gated=False,
         show_in_catalog=False,
         quality_presets=False,
@@ -431,33 +447,164 @@ def _slot_urls(view_slots: dict[str, str | None] | None, image_urls: list[str]) 
     return slots
 
 
+def _meshy_flag(opts: dict[str, Any], *keys: str, default: bool) -> bool:
+    for key in keys:
+        if key not in opts:
+            continue
+        raw = opts[key]
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+    return default
+
+
+def _meshy_fal_arguments(image_url: str, options: dict[str, Any] | None) -> dict[str, Any]:
+    """Meshy 7.1 on Fal. Game Ready is smart-topology on this same endpoint."""
+    opts = options or {}
+    lane = str(opts.get("lane") or opts.get("model_type") or "standard").strip().lower()
+    game = lane in {"game-ready", "game_ready", "smart-topology", "smart_topology"}
+    pose = str(opts.get("pose") or opts.get("pose_mode") or "").strip().lower()
+    if pose in {"none", "off"}:
+        pose = ""
+    if pose not in {"", "a-pose", "t-pose"}:
+        pose = ""
+    payload: dict[str, Any] = {
+        "image_url": image_url,
+        "model_type": "smart-topology" if game else "standard",
+        "should_texture": _meshy_flag(opts, "shouldTexture", "should_texture", default=True),
+        "enable_pbr": _meshy_flag(opts, "enablePbr", "enable_pbr", default=True),
+        "enable_safety_checker": True,
+        "pose_mode": pose,
+    }
+    if game:
+        # Auto polycount: omit target_polycount so Fal uses the T2 default (4,000, max 15,000).
+        # Topology and remesh are ignored in this mode.
+        return payload
+    geo = str(
+        opts.get("geometryResolution") or opts.get("geometry_resolution") or "2k"
+    ).strip().lower()
+    if geo not in {"standard", "2k", "4k"}:
+        geo = "2k"
+    topology = str(opts.get("topology") or "triangle").strip().lower()
+    if topology not in {"triangle", "quad"}:
+        topology = "triangle"
+    payload["geometry_resolution"] = geo
+    payload["topology"] = topology
+    # Remesh on without a polycount target decimates to ~30k faces and
+    # throws away the geometry pass. Meshy's own high-quality recipe is off.
+    payload["should_remesh"] = _meshy_flag(
+        opts, "shouldRemesh", "should_remesh", default=False
+    )
+    return payload
+
+
 def build_fal_arguments(
     engine_id: str,
     *,
     image_urls: list[str],
     view_slots: dict[str, str | None] | None = None,
     seed: int = 1,
+    rodin_quality: str | None = None,
+    rodin_options: dict[str, Any] | None = None,
+    meshy_options: dict[str, Any] | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     """Payload for POST queue.fal.run/{model} — field names from each API tab."""
     spec = get_engine(engine_id)
     if spec.provider != "fal" or not spec.fal_model:
         raise ValueError(f"{engine_id} is not a FAL engine")
-    if not image_urls:
-        raise ValueError("image URL required")
-    primary = image_urls[0]
-    slots = _slot_urls(view_slots, image_urls)
     eid = spec.id
+    text = (prompt or "").strip()
+    if not image_urls and not (eid in {"rodin", "rodin_extreme"} and text):
+        raise ValueError("image URL required")
+    primary = image_urls[0] if image_urls else ""
 
-    if eid == "meshy":
-        return {
-            "image_url": primary,
-            "should_texture": True,
-            "enable_pbr": True,
-            "enable_safety_checker": True,
-        }
+    if eid in {"meshy", "meshy_game"}:
+        opts = dict(meshy_options or {})
+        opts["lane"] = "game-ready" if eid == "meshy_game" else "standard"
+        return _meshy_fal_arguments(primary, opts)
     if eid == "trellis2_fal":
         return {"image_url": primary}
+    if eid in {"rodin", "rodin_extreme"}:
+        return _rodin_fal_arguments(
+            eid,
+            image_urls=image_urls,
+            view_slots=view_slots,
+            quality=rodin_quality,
+            options=rodin_options,
+            prompt=text,
+        )
     raise ValueError(f"no FAL builder for {eid}")
+
+
+def _rodin_fal_arguments(
+    engine_id: str,
+    *,
+    image_urls: list[str],
+    view_slots: dict[str, str | None] | None,
+    quality: str | None,
+    options: dict[str, Any] | None,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    """Fal Rodin v2.5 input. Same knobs as the Studio inspector."""
+    from studio_bridge.rodin_client import (
+        fal_quality_mesh,
+        resolve_rodin_options,
+        resolve_rodin_quality,
+    )
+
+    tier = resolve_rodin_quality(engine_id, quality)
+    knobs = resolve_rodin_options(tier.id, options)
+    urls = list(image_urls)
+    if view_slots:
+        ordered = [
+            (view_slots.get(key) or "").strip()
+            for key in ("front", "side", "back", "extra")
+        ]
+        picked = [url for url in ordered if url]
+        if picked:
+            urls = picked
+    text = (prompt or "").strip()
+    if not urls and not text:
+        raise ValueError("image URL or prompt required")
+    payload: dict[str, Any] = {
+        "tier": tier.api_tier,
+        "geometry_file_format": "glb",
+        "material": knobs["material"],
+        "quality_mesh_option": fal_quality_mesh(
+            knobs["mesh_mode"],
+            knobs["quality_override"],
+        ),
+        "hd_texture": bool(knobs["hd_texture"]),
+        "texture_delight": bool(knobs["texture_delight"]),
+        "TAPose": bool(knobs["ta_pose"]),
+        "use_original_alpha": bool(knobs["use_original_alpha"]),
+        "enable_creative_mode": knobs["geometry_instruct_mode"] == "creative",
+    }
+    if urls:
+        payload["image_urls"] = urls[:5]
+    if text:
+        payload["prompt"] = text
+    if knobs["texture_mode"]:
+        payload["texture_mode"] = knobs["texture_mode"]
+    if knobs["high_pack"]:
+        payload["addons"] = ["HighPack"]
+    if knobs["seed"] is not None:
+        payload["seed"] = knobs["seed"]
+    return payload
+
+
+def _unwrap_fal_output(result: dict[str, Any]) -> dict[str, Any]:
+    """Queue result is the model output, sometimes nested one level."""
+    for key in ("response", "data", "payload", "output"):
+        inner = result.get(key)
+        if isinstance(inner, dict) and any(
+            name in inner for name in ("model_glb", "model_mesh", "model_urls", "model_meshes")
+        ):
+            return inner
+    return result
 
 
 def _file_url(node: Any) -> str | None:
@@ -472,17 +619,22 @@ def _file_url(node: Any) -> str | None:
 
 def extract_glb_url(fal_result: dict[str, Any]) -> tuple[str | None, str | None, int | None]:
     """Return (glb_url, poster_url, bytes) from mixed Partner output schemas."""
-    poster = _file_url(fal_result.get("thumbnail")) or _file_url(
-        fal_result.get("rendered_image")
-    )
+    body = _unwrap_fal_output(fal_result)
+    poster = _file_url(body.get("thumbnail")) or _file_url(body.get("rendered_image"))
+    if poster is None:
+        textures = body.get("textures")
+        if isinstance(textures, list) and textures:
+            poster = _file_url(textures[0])
+    meshes = body.get("model_meshes") if isinstance(body.get("model_meshes"), list) else []
     candidates: list[Any] = [
-        fal_result.get("model_glb"),
-        (fal_result.get("model_urls") or {}).get("glb")
-        if isinstance(fal_result.get("model_urls"), dict)
+        body.get("model_glb"),
+        (body.get("model_urls") or {}).get("glb")
+        if isinstance(body.get("model_urls"), dict)
         else None,
-        fal_result.get("pbr_model"),
-        fal_result.get("model_mesh"),
-        fal_result.get("model"),
+        body.get("pbr_model"),
+        body.get("model_mesh"),
+        *meshes,
+        body.get("model"),
     ]
     glb_url = None
     size = None
