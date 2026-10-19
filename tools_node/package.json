@@ -1,0 +1,13 @@
+{
+  "name": "paradox-tools-node",
+  "private": true,
+  "type": "module",
+  "description": "glTF helpers for the tools worker: unpack Draco / meshopt / quantized GLBs so trimesh and pymeshlab can read them.",
+  "dependencies": {
+    "@gltf-transform/core": "^4.2.1",
+    "@gltf-transform/extensions": "^4.2.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "draco3dgltf": "^1.5.7",
+    "meshoptimizer": "^0.22.0"
+  }
+}

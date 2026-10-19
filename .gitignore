@@ -20,3 +20,5 @@ probe_out.txt
 pip311_err.txt
 scripts/_*
 scripts/ssh_mv_pod.cmd
+
+tools_node/node_modules/

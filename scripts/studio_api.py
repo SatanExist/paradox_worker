@@ -58,6 +58,12 @@ from studio_bridge.geo import HunyuanGeoBlocked, country_from_headers  # noqa: E
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
 from studio_bridge.r2_public import R2NotConfiguredError, upload_public_file  # noqa: E402
 from studio_bridge.text2image import Text2ImageNotConfiguredError  # noqa: E402
+from studio_bridge.tools_jobs import (  # noqa: E402
+    ToolsNotConfiguredError,
+    create_tool_job,
+    get_tool_job,
+    is_tool_job,
+)
 from studio_bridge.tiers import (  # noqa: E402
     DEFAULT_MULTI_IMAGE_MODE,
     DEFAULT_PRESET,
@@ -133,6 +139,13 @@ class ViewSlots(BaseModel):
 class ThumbBody(BaseModel):
     id: str
     image: str
+
+
+class ToolJobRequest(BaseModel):
+    operation: str
+    modelUrl: str
+    params: dict = Field(default_factory=dict)
+    outputKey: str
 
 
 class CreateJobRequest(BaseModel):
@@ -424,6 +437,24 @@ def post_job(body: CreateJobRequest, request: Request) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/tools/jobs")
+def post_tool_job(body: ToolJobRequest) -> dict:
+    """A tool on a finished model (print prep, …). The site makes the version row; we do the work."""
+    try:
+        return create_tool_job(
+            operation=body.operation,
+            model_url=body.modelUrl,
+            params=body.params,
+            output_key=body.outputKey,
+        )
+    except ToolsNotConfiguredError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job_status(
     job_id: str,
@@ -431,6 +462,15 @@ def get_job_status(
     tier: TierName = DEFAULT_PRESET,
     country: str | None = None,
 ) -> dict:
+    if is_tool_job(job_id):
+        try:
+            return get_tool_job(job_id)
+        except ToolsNotConfiguredError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
     try:
         return get_studio_job(
             job_id,

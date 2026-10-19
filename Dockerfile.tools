@@ -1,0 +1,49 @@
+# Tools worker — CPU serverless on RunPod, same hookup as TRELLIS.2 / Hi3DGen.
+# Work on finished models (print prep now; LOD, web optimise, Blender jobs next), no GPU, no weights.
+# Tags: ghcr.io/satanexist/paradox_worker:tools-sha-<short>
+#
+# Kept small on purpose: trimesh + pymeshlab cover print prep; Node + gltf-transform only unpack
+# compressed GLBs (Draco / meshopt / quantized) before trimesh reads them. Blender (headless)
+# goes in when the first tool that needs it does, not before.
+
+# gltf-transform and its decoders are plain JS + wasm: installed here, copied over with the node binary.
+FROM node:20-slim AS tools_node
+WORKDIR /app/tools_node
+COPY tools_node/package.json tools_node/package-lock.json ./
+RUN npm ci --omit=dev
+COPY tools_node/decode.mjs ./
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# pymeshlab wheels need GL / glib at import time even headless.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip && \
+    pip install runpod requests boto3 "numpy<2.3" scipy networkx "trimesh==4.5.3" "pymeshlab==2023.12.post3"
+
+COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
+COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
+COPY studio_bridge/tools_ops.py /app/studio_bridge/tools_ops.py
+COPY studio_bridge/r2_public.py /app/studio_bridge/r2_public.py
+COPY worker_tools.py /app/worker_tools.py
+COPY --from=tools_node /usr/local/bin/node /usr/local/bin/node
+COPY --from=tools_node /app/tools_node /app/tools_node
+ENV TOOLS_NODE_DIR=/app/tools_node
+
+RUN python -c "import trimesh, pymeshlab, runpod; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
+    cd /app/tools_node && node -e "import('@gltf-transform/core').then(() => console.log('gltf-transform ok'))"
+
+ARG PARADOX_BUILD_SHA=dev
+ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
+ENV PARADOX_WORKER_VARIANT=tools
+
+CMD ["python", "-u", "/app/worker_tools.py"]
