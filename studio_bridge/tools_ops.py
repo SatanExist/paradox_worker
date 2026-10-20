@@ -165,13 +165,43 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     return {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
 
 
+def _deviation(original, result, shift: list[float]) -> dict[str, float]:
+    """How far the lighter surface strays from the original, as % of the model's largest side.
+
+    Measured both ways with pymeshlab: new surface → old (did it bulge or sink) and old → new
+    (did a part go missing). The original is moved by the same `shift` as the result first.
+    """
+    import numpy as np
+    import pymeshlab
+
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(np.asarray(original.vertices) + np.asarray(shift), np.asarray(original.faces)))
+    ms.add_mesh(pymeshlab.Mesh(np.asarray(result.vertices), np.asarray(result.faces)))
+    size = float(max(original.extents)) or 1.0
+    samples = 200_000
+    ways = [
+        ms.get_hausdorff_distance(sampledmesh=1, targetmesh=0, samplevert=False, sampleface=True, samplenum=samples),
+        ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=False, sampleface=True, samplenum=samples),
+    ]
+    return {
+        "meanPct": round(max(w["mean"] for w in ways) / size * 100, 3),
+        "maxPct": round(max(w["max"] for w in ways) / size * 100, 2),
+    }
+
+
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     # trimesh would flatten the model into one mesh and drop its textures; a game needs both,
     # so the whole job runs in gltf-transform, which also unpacks Draco / meshopt on the way in.
+    # trimesh only reads both files afterwards, to measure how much the shape changed.
     node = shutil.which("node")
     if not node or not (TOOLS_NODE / "game.mjs").is_file():
         raise RuntimeError("no gltf-transform here to prepare the model")
-    job = {"targetTris": int(params.get("targetTris") or 20000), "textureSize": int(params.get("textureSize") or 2048)}
+    job: dict[str, Any] = {
+        "targetTris": int(params.get("targetTris") or 20000),
+        "textureSize": int(params.get("textureSize") or 2048),
+    }
+    if params.get("maxErrorPct"):
+        job["maxErrorPct"] = float(params["maxErrorPct"])
     done = subprocess.run(
         [node, str(TOOLS_NODE / "game.mjs"), str(in_path), str(out_path), json.dumps(job)],
         capture_output=True,
@@ -183,12 +213,17 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     result = json.loads(done.stdout)
     if result["after"]["triangles"] == 0:
         raise ValueError("could not read the model's geometry")
-    return {
-        "operation": "game_prep",
-        "steps": result["steps"],
-        "before": result["before"],
-        "after": {**result["after"], "targetTris": job["targetTris"], "budgetReached": result["budgetReached"]},
+    after = {
+        **result["after"],
+        "targetTris": job["targetTris"],
+        "budgetReached": result["budgetReached"],
+        "deviation": _deviation(_load(in_path), _load(out_path), result["shift"]),
     }
+    if "maxErrorPct" in job:
+        after["maxErrorPct"] = job["maxErrorPct"]
+    if result["specks"]["pieces"]:
+        after["specksRemoved"] = result["specks"]
+    return {"operation": "game_prep", "steps": result["steps"], "before": result["before"], "after": after}
 
 
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
