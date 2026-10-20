@@ -33,6 +33,8 @@ const SPECK = 0.005;
  */
 const NORMAL_WEIGHT = 0.5;
 const UV_WEIGHT = 1.0;
+/** To a budget: enough normal weight to keep the shading, UVs left to the locked seams. */
+const BUDGET_NORMAL_WEIGHT = 0.2;
 
 /** What a game dev looks at: triangles drawn, vertices, materials, how big the textures are. */
 function stats(doc, path) {
@@ -83,21 +85,25 @@ function triangleMeshes(doc) {
       if (prim.getMode() !== TRIANGLES || !position || !indices) continue;
       const count = position.getCount();
       const parts = [
-        [prim.getAttribute("NORMAL"), NORMAL_WEIGHT],
-        [prim.getAttribute("TEXCOORD_0"), UV_WEIGHT],
+        [prim.getAttribute("NORMAL"), NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT],
+        [prim.getAttribute("TEXCOORD_0"), UV_WEIGHT, 0],
       ].filter(([accessor]) => accessor);
       const stride = parts.reduce((n, [accessor]) => n + accessor.getElementSize(), 0);
       const attributes = new Float32Array(count * stride);
       const weights = [];
+      const budgetWeights = [];
       let offset = 0;
-      for (const [accessor, weight] of parts) {
+      for (const [accessor, weight, budgetWeight] of parts) {
         const size = accessor.getElementSize();
         const element = [];
         for (let i = 0; i < count; i++) {
           accessor.getElement(i, element);
           for (let k = 0; k < size; k++) attributes[i * stride + offset + k] = element[k];
         }
-        for (let k = 0; k < size; k++) weights.push(weight);
+        for (let k = 0; k < size; k++) {
+          weights.push(weight);
+          budgetWeights.push(budgetWeight);
+        }
         offset += size;
       }
       const positions = Float32Array.from(position.getArray());
@@ -107,6 +113,7 @@ function triangleMeshes(doc) {
         attributes,
         stride,
         weights,
+        budgetWeights,
         indices: Uint32Array.from(indices.getArray()),
         scale: MeshoptSimplifier.getScale(positions, 3),
       });
@@ -150,14 +157,16 @@ function dropSpecks(prims, modelScale) {
 }
 
 /**
- * Collapse triangles to `ratio` of them, the shape alone weighed: to a budget, weighing normals
- * and UVs too cost twice the shape error on our test models. How far the surface really moved
- * is measured afterwards (tools_ops.py).
+ * Collapse triangles to `ratio` of them. Mostly the shape is weighed, normals a little: with the
+ * shape alone the light fell wrong (models looked chrome), with full weights the shape error
+ * doubled. How far the surface really moved is measured afterwards (tools_ops.py).
  */
 function cut(prims, ratio, flags = []) {
   for (const p of prims) {
     const target = Math.floor((p.indices.length / 3) * ratio) * 3;
-    [p.indices] = MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, Number.MAX_VALUE, flags);
+    [p.indices] = p.stride
+      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.budgetWeights, null, target, Number.MAX_VALUE, flags)
+      : MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, Number.MAX_VALUE, flags);
   }
 }
 
