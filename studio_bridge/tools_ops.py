@@ -8,6 +8,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
 
   print_prep  weld, drop broken faces, fix normals, close holes (pymeshlab when present),
               optionally scale to a height in mm, stand the model on the plate (Y up, base at 0)
+  game_prep   cut triangles to a budget and shrink textures, keeping materials and UVs
+              (gltf-transform: tools_node/game.mjs), stand the model on the floor
 """
 
 from __future__ import annotations
@@ -163,8 +165,35 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     return {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
 
 
+def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    # trimesh would flatten the model into one mesh and drop its textures; a game needs both,
+    # so the whole job runs in gltf-transform, which also unpacks Draco / meshopt on the way in.
+    node = shutil.which("node")
+    if not node or not (TOOLS_NODE / "game.mjs").is_file():
+        raise RuntimeError("no gltf-transform here to prepare the model")
+    job = {"targetTris": int(params.get("targetTris") or 20000), "textureSize": int(params.get("textureSize") or 2048)}
+    done = subprocess.run(
+        [node, str(TOOLS_NODE / "game.mjs"), str(in_path), str(out_path), json.dumps(job)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"could not prepare the model: {done.stderr.strip()[-300:]}")
+    result = json.loads(done.stdout)
+    if result["after"]["triangles"] == 0:
+        raise ValueError("could not read the model's geometry")
+    return {
+        "operation": "game_prep",
+        "steps": result["steps"],
+        "before": result["before"],
+        "after": {**result["after"], "targetTris": job["targetTris"], "budgetReached": result["budgetReached"]},
+    }
+
+
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
     "print_prep": print_prep,
+    "game_prep": game_prep,
 }
 
 

@@ -2,16 +2,16 @@
 # Work on finished models (print prep now; LOD, web optimise, Blender jobs next), no GPU, no weights.
 # Tags: ghcr.io/satanexist/paradox_worker:tools-sha-<short>
 #
-# Kept small on purpose: trimesh + pymeshlab cover print prep; Node + gltf-transform only unpack
-# compressed GLBs (Draco / meshopt / quantized) before trimesh reads them. Blender (headless)
-# goes in when the first tool that needs it does, not before.
+# Kept small on purpose: trimesh + pymeshlab cover print prep; Node + gltf-transform unpack
+# compressed GLBs (Draco / meshopt / quantized) before trimesh reads them and run game prep
+# (game.mjs: simplify + sharp for textures). Blender (headless) goes in its own image.
 
 # gltf-transform and its decoders are plain JS + wasm: installed here, copied over with the node binary.
 FROM node:20-slim AS tools_node
 WORKDIR /app/tools_node
 COPY tools_node/package.json tools_node/package-lock.json ./
 RUN npm ci --omit=dev
-COPY tools_node/decode.mjs ./
+COPY tools_node/decode.mjs tools_node/game.mjs ./
 
 FROM python:3.11-slim
 
@@ -40,7 +40,7 @@ COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
 RUN python -c "import trimesh, pymeshlab, runpod; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
-    cd /app/tools_node && node -e "import('@gltf-transform/core').then(() => console.log('gltf-transform ok'))"
+    cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp')]).then(([, s]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp))"
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
