@@ -6,7 +6,7 @@
 // Two ways to cut: to a triangle budget (targetTris), or — with maxErrorPct — to as few
 // triangles as keep the surface within that share of the model's size, targetTris then
 // being the most it may keep.
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { ImageUtils, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { center, compactPrimitive, dedup, dequantize, getBounds, prune, textureCompress, weld } from "@gltf-transform/functions";
@@ -23,6 +23,8 @@ const params = JSON.parse(rawParams || "{}");
 const targetTris = Number(params.targetTris) || 20000;
 const textureSize = Number(params.textureSize) || 2048;
 const maxError = Number(params.maxErrorPct) > 0 ? Number(params.maxErrorPct) / 100 : null;
+// Points (float32 x,y,z) where an earlier cut lost detail: vertices there are kept (tools_ops.py).
+const keep = params.keepFile ? new Float32Array(readFileSync(params.keepFile).buffer.slice(0)) : null;
 
 const TRIANGLES = 4;
 /** Pieces smaller than this share of the model are specks the generator left floating around it. */
@@ -161,11 +163,28 @@ function dropSpecks(prims, modelScale) {
  * shape alone the light fell wrong (models looked chrome), with full weights the shape error
  * doubled. How far the surface really moved is measured afterwards (tools_ops.py).
  */
+/** Mark the vertices sitting exactly on the points to keep (seams split one point into several). */
+function keepPoints(prims) {
+  const wanted = new Set();
+  for (let i = 0; i + 2 < keep.length; i += 3) wanted.add(`${keep[i]},${keep[i + 1]},${keep[i + 2]}`);
+  let kept = 0;
+  for (const p of prims) {
+    p.lock = new Uint8Array(p.positions.length / 3);
+    for (let v = 0; v < p.lock.length; v++) {
+      if (wanted.has(`${p.positions[v * 3]},${p.positions[v * 3 + 1]},${p.positions[v * 3 + 2]}`)) {
+        p.lock[v] = 1;
+        kept++;
+      }
+    }
+  }
+  return kept;
+}
+
 function cut(prims, ratio, flags = []) {
   for (const p of prims) {
     const target = Math.floor((p.indices.length / 3) * ratio) * 3;
     [p.indices] = p.stride
-      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.budgetWeights, null, target, Number.MAX_VALUE, flags)
+      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.budgetWeights, p.lock ?? null, target, Number.MAX_VALUE, flags)
       : MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, Number.MAX_VALUE, flags);
   }
 }
@@ -218,6 +237,7 @@ if (maxError !== null) {
   cutWithin(prims, maxError, modelScale);
   steps.push(`triangles cut within ${maxError * 100}% of the model's size`);
 }
+if (keep) steps.push(`kept ${keepPoints(prims)} vertices where a first cut lost detail`);
 if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.

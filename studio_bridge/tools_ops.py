@@ -165,43 +165,168 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     return {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
 
 
-def _deviation(original, result, shift: list[float]) -> dict[str, float]:
-    """How far the lighter surface strays from the original, as % of the model's largest side.
+def _shaded(path: Path):
+    """Vertices, faces and the file's own vertex normals (what the light uses), in model space,
+    and whether any node moves its mesh (then positions differ from the mesh's own).
 
-    Measured both ways with pymeshlab: new surface → old (did it bulge or sink) and old → new
-    (did a part go missing). The original is moved by the same `shift` as the result first.
+    `_load` merges into one trimesh and recomputes normals; a scene keeps the ones the file has.
+    """
+    import numpy as np
+    import trimesh
+
+    plain = _unpacked(path)
+    try:
+        scene = trimesh.load(plain, process=False)
+    finally:
+        if plain != path:
+            try:
+                plain.unlink(missing_ok=True)
+            except OSError:  # Windows keeps it open while trimesh holds the scene
+                pass
+    if isinstance(scene, trimesh.Trimesh):
+        scene = trimesh.Scene(scene)
+    verts, faces, normals, offset, moved = [], [], [], 0, False
+    for node in scene.graph.nodes_geometry:
+        matrix, name = scene.graph[node]
+        geom = scene.geometry.get(name)
+        if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+            continue
+        moved = moved or not np.allclose(matrix, np.eye(4))
+        turned = np.asarray(geom.vertex_normals) @ matrix[:3, :3].T
+        normals.append(turned / np.linalg.norm(turned, axis=1, keepdims=True).clip(1e-12))
+        verts.append(trimesh.transform_points(geom.vertices, matrix))
+        faces.append(np.asarray(geom.faces) + offset)
+        offset += len(geom.vertices)
+    if not faces:
+        raise ValueError("could not read the model's geometry")
+    return np.vstack(verts), np.vstack(faces), np.vstack(normals), moved
+
+
+def _compare(original, out_path: Path, shift: list[float], find_lost: bool = False):
+    """How much the lighter model differs from the original, in shape and in shading.
+
+    Shape: pymeshlab Hausdorff both ways — new surface → old (did it bulge or sink) and old →
+    new (did a part go missing) — as % of the model's largest side.
+    Shading: the angle between the normals the light uses on the new surface and on the old one
+    nearby. Shape alone missed it when a cut model looked chrome; this catches that.
+    `original` is what `_shaded` gave for it; it is moved by the same `shift` as the result first.
+    With `find_lost`, also returns how far each original vertex is from the new surface (% of
+    size): where that is large, a part went missing. Otherwise the second value is None.
     """
     import numpy as np
     import pymeshlab
+    from scipy.spatial import cKDTree
+
+    ov, of, on, _ = original
+    ov = ov + np.asarray(shift)
+    rv, rf, rn, _ = _shaded(out_path)
+    size = float((ov.max(0) - ov.min(0)).max()) or 1.0
 
     ms = pymeshlab.MeshSet()
-    ms.add_mesh(pymeshlab.Mesh(np.asarray(original.vertices) + np.asarray(shift), np.asarray(original.faces)))
-    ms.add_mesh(pymeshlab.Mesh(np.asarray(result.vertices), np.asarray(result.faces)))
-    size = float(max(original.extents)) or 1.0
+    ms.add_mesh(pymeshlab.Mesh(ov, of))
+    ms.add_mesh(pymeshlab.Mesh(rv, rf))
     samples = 200_000
     ways = [
         ms.get_hausdorff_distance(sampledmesh=1, targetmesh=0, samplevert=False, sampleface=True, samplenum=samples),
         ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=False, sampleface=True, samplenum=samples),
     ]
-    return {
+
+    # Points spread over the new surface by area, with the normal the light sees there.
+    rng = np.random.default_rng(0)
+    count = 50_000
+    tri = rv[rf]
+    cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    area = np.linalg.norm(cross, axis=1)
+    pick = rng.choice(len(rf), count, p=area / area.sum())
+    u, v = rng.random(count), rng.random(count)
+    over = u + v > 1
+    u[over], v[over] = 1 - u[over], 1 - v[over]
+    bary = np.stack([1 - u - v, u, v], axis=1)[:, :, None]
+    points = (tri[pick] * bary).sum(1)
+    seen = (rn[rf[pick]] * bary).sum(1)
+
+    # The old surface nearby: the closest point on the faces found around it, preferring faces
+    # on the same side (on a thin part the back face can be closer), and the normal there
+    # blended from its corners as the light would. Candidate faces come two ways: nearest face
+    # centres (right on dense meshes) and points spread over the surface by area (on a long thin
+    # face a point can be far from its centre). Meshlab's own transfer recomputes the normals,
+    # so it can't be used.
+    import trimesh
+
+    facing = cross[pick] / area[pick, None].clip(1e-30)
+    o_tri = ov[of]
+    o_cross = np.cross(o_tri[:, 1] - o_tri[:, 0], o_tri[:, 2] - o_tri[:, 0])
+    o_area = np.linalg.norm(o_cross, axis=1)
+    spread = int(min(1_000_000, max(200_000, 2 * len(of))))
+    o_pick = rng.choice(len(of), spread, p=o_area / o_area.sum())
+    a, b = rng.random(spread), rng.random(spread)
+    over = a + b > 1
+    a[over], b[over] = 1 - a[over], 1 - b[over]
+    o_points = (o_tri[o_pick] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)
+    _, by_centre = cKDTree(o_tri.mean(1)).query(points, k=min(16, len(of)))
+    _, around = cKDTree(o_points).query(points, k=16)
+    near = np.hstack([by_centre.reshape(count, -1), o_pick[around]])
+    k = near.shape[1]
+    repeated = np.repeat(points, k, axis=0)
+    closest = trimesh.triangles.closest_point(o_tri[near.reshape(-1)], repeated)
+    dist = np.linalg.norm(closest - repeated, axis=1).reshape(count, k)
+    same_side = np.einsum("nkd,nd->nk", o_cross[near], facing) > 0
+    dist = np.where(same_side | ~same_side.any(1, keepdims=True), dist, np.inf)
+    best = dist.argmin(1)
+    face = near[np.arange(count), best]
+    at = closest.reshape(count, k, 3)[np.arange(count), best]
+    o_bary = trimesh.triangles.points_to_barycentric(o_tri[face], at)[:, :, None]
+    old = (on[of[face]] * o_bary).sum(1)
+
+    cos = np.einsum("nd,nd->n", seen, old) / (np.linalg.norm(seen, axis=1) * np.linalg.norm(old, axis=1)).clip(1e-12)
+    angle = np.degrees(np.arccos(cos.clip(-1, 1)))
+    deviation = {
         "meanPct": round(max(w["mean"] for w in ways) / size * 100, 3),
         "maxPct": round(max(w["max"] for w in ways) / size * 100, 2),
+        "normalMeanDeg": round(float(angle.mean()), 1),
+        "normalP95Deg": round(float(np.percentile(angle, 95)), 1),
     }
+    if not find_lost:
+        return deviation, None
+    # Every original vertex against the new surface. Meshlab hands the samples back in its own
+    # order, so they are matched to the vertices by position.
+    ms.get_hausdorff_distance(
+        sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(ov), savesample=True
+    )
+    sampled = ms.mesh(ms.mesh_number() - 2).vertex_matrix()
+    nearest = ms.mesh(ms.mesh_number() - 1).vertex_matrix()
+    _, which = cKDTree(sampled).query(ov)
+    lost = np.linalg.norm(sampled[which] - nearest[which], axis=1) / size * 100
+    return deviation, lost
 
 
-def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
-    # trimesh would flatten the model into one mesh and drop its textures; a game needs both,
-    # so the whole job runs in gltf-transform, which also unpacks Draco / meshopt on the way in.
-    # trimesh only reads both files afterwards, to measure how much the shape changed.
+def _lost_detail(original, lost, target_tris: int):
+    """A few vertices to keep where a cut lost the most: the farthest of each lost spot.
+
+    Spots are where an original vertex ended up over 1% of the model's size from the new
+    surface — antennas, barrels, edges cut off. One vertex per spot, spaced at least 1% apart,
+    at most 2% of the triangle budget, so the budget is still met.
+    """
+    import numpy as np
+
+    ov = original[0]
+    size = float((ov.max(0) - ov.min(0)).max()) or 1.0
+    order = np.argsort(-lost)
+    order = order[lost[order] > 1.0][:20_000]
+    cap = max(20, target_tris // 50)
+    chosen: list[int] = []
+    for v in order:
+        if len(chosen) >= cap:
+            break
+        if not chosen or np.linalg.norm(ov[chosen] - ov[v], axis=1).min() > 0.01 * size:
+            chosen.append(int(v))
+    return ov[chosen]
+
+
+def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, Any]:
     node = shutil.which("node")
     if not node or not (TOOLS_NODE / "game.mjs").is_file():
         raise RuntimeError("no gltf-transform here to prepare the model")
-    job: dict[str, Any] = {
-        "targetTris": int(params.get("targetTris") or 20000),
-        "textureSize": int(params.get("textureSize") or 2048),
-    }
-    if params.get("maxErrorPct"):
-        job["maxErrorPct"] = float(params["maxErrorPct"])
     done = subprocess.run(
         [node, str(TOOLS_NODE / "game.mjs"), str(in_path), str(out_path), json.dumps(job)],
         capture_output=True,
@@ -213,17 +338,65 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     result = json.loads(done.stdout)
     if result["after"]["triangles"] == 0:
         raise ValueError("could not read the model's geometry")
+    return result
+
+
+def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    # trimesh would flatten the model into one mesh and drop its textures; a game needs both,
+    # so the whole job runs in gltf-transform, which also unpacks Draco / meshopt on the way in.
+    # trimesh only reads both files afterwards, to measure how much the shape and shading changed.
+    import numpy as np
+
+    job: dict[str, Any] = {
+        "targetTris": int(params.get("targetTris") or 20000),
+        "textureSize": int(params.get("textureSize") or 2048),
+    }
+    if params.get("maxErrorPct"):
+        job["maxErrorPct"] = float(params["maxErrorPct"])
+    original = _shaded(in_path)
+    result = _game_mjs(in_path, out_path, job)
+    to_budget = "maxErrorPct" not in job
+    deviation, lost = _compare(original, out_path, result["shift"], find_lost=to_budget and not original[3])
+    steps = list(result["steps"])
+
+    # To a budget a whole part can go (the error limit is off). When the worst spot stands out,
+    # keep a vertex at each place that went missing and cut again; take it only if it measures
+    # better: the worst spot clearly smaller, the shape on the whole no worse.
+    if lost is not None and deviation["maxPct"] > max(1.0, 4 * deviation["meanPct"]):
+        keep = _lost_detail(original, lost, job["targetTris"])
+        if len(keep):
+            fd, keep_name = tempfile.mkstemp(suffix=".f32")
+            os.close(fd)
+            fd, second_name = tempfile.mkstemp(suffix=".glb")
+            os.close(fd)
+            keep_path, second_path = Path(keep_name), Path(second_name)
+            try:
+                keep_path.write_bytes(np.asarray(keep, dtype=np.float32).tobytes())
+                second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
+                again, _ = _compare(original, second_path, second["shift"])
+                if again["maxPct"] < 0.9 * deviation["maxPct"] and again["meanPct"] <= 1.15 * deviation["meanPct"]:
+                    shutil.copyfile(second_path, out_path)
+                    result, deviation, steps = second, again, list(second["steps"])
+                else:
+                    steps.append(f"tried keeping {len(keep)} lost spots: no better, first cut kept")
+            finally:
+                keep_path.unlink(missing_ok=True)
+                try:
+                    second_path.unlink(missing_ok=True)
+                except OSError:  # Windows: trimesh may still hold it
+                    pass
+
     after = {
         **result["after"],
         "targetTris": job["targetTris"],
         "budgetReached": result["budgetReached"],
-        "deviation": _deviation(_load(in_path), _load(out_path), result["shift"]),
+        "deviation": deviation,
     }
     if "maxErrorPct" in job:
         after["maxErrorPct"] = job["maxErrorPct"]
     if result["specks"]["pieces"]:
         after["specksRemoved"] = result["specks"]
-    return {"operation": "game_prep", "steps": result["steps"], "before": result["before"], "after": after}
+    return {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after}
 
 
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
