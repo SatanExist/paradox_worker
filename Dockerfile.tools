@@ -2,7 +2,8 @@
 # Work on finished models (print prep now; LOD, web optimise, Blender jobs next), no GPU, no weights.
 # Tags: ghcr.io/satanexist/paradox_worker:tools-sha-<short>
 #
-# Kept small on purpose: trimesh + pymeshlab cover print prep; Node + gltf-transform only unpack
+# Kept small on purpose: trimesh + pymeshlab cover print prep, libigl (its CGAL booleans) + cgal (Alpha Wrap) the
+# solid, scikit-image the voxel fallback; Node + gltf-transform only unpack
 # compressed GLBs (Draco / meshopt / quantized) before trimesh reads them. Blender (headless)
 # goes in when the first tool that needs it does, not before.
 
@@ -28,18 +29,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --upgrade pip && \
-    pip install runpod requests boto3 "numpy<2.3" scipy networkx "trimesh==4.5.3" "pymeshlab==2023.12.post3"
+    pip install runpod requests boto3 "numpy<2.3" scipy networkx "trimesh==4.5.3" "pymeshlab==2023.12.post3" \
+        "libigl==2.6.3" "scikit-image==0.26.0" "cgal==6.0.1.post202410241521"
 
 COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
 COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
 COPY studio_bridge/tools_ops.py /app/studio_bridge/tools_ops.py
+COPY studio_bridge/print_remesh.py /app/studio_bridge/print_remesh.py
+COPY studio_bridge/print_solid.py /app/studio_bridge/print_solid.py
 COPY studio_bridge/r2_public.py /app/studio_bridge/r2_public.py
 COPY worker_tools.py /app/worker_tools.py
 COPY --from=tools_node /usr/local/bin/node /usr/local/bin/node
 COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
-RUN python -c "import trimesh, pymeshlab, runpod; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
+RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
     cd /app/tools_node && node -e "import('@gltf-transform/core').then(() => console.log('gltf-transform ok'))"
 
 ARG PARADOX_BUILD_SHA=dev

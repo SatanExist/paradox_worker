@@ -6,8 +6,10 @@ No GPU and no network here: the caller downloads the input and uploads the resul
 Compressed GLBs (Draco, meshopt, quantized — what Tripo, Meshy and our own showcase ship) are
 unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read them as zeros.
 
-  print_prep  weld, drop broken faces, fix normals, close holes (pymeshlab when present),
-              optionally scale to a height in mm, stand the model on the plate (Y up, base at 0)
+  print_prep  weld, then make it one closed solid that keeps its surface (print_solid: patch the holes,
+              fill a hollow skin, or a 0.5 mm wrap, whichever lost nothing and filled more); the voxel rebuild
+              (print_remesh) is the fallback; optionally scale to a height in mm, stand the model
+              on the plate (Y up, base at 0)
 """
 
 from __future__ import annotations
@@ -26,6 +28,12 @@ from studio_bridge.mesh_repair import load_glb_mesh, mesh_stats
 
 TOOLS_NODE = Path(os.getenv("TOOLS_NODE_DIR", Path(__file__).resolve().parents[1] / "tools_node"))
 PACKED = {"KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"}
+DEFAULT_PRINT_HEIGHT_MM = 120.0
+SOLID_STEPS = {
+    "repair": "made one closed solid (holes patched)",
+    "solidify": "made one closed solid (hollow skin filled)",
+    "wrap": "made one closed solid (wrapped 0.5 mm)",
+}
 
 
 def _glb_extensions(path: Path) -> set[str]:
@@ -45,7 +53,9 @@ def _unpacked(path: Path) -> Path:
     node = shutil.which("node")
     if not node or not (TOOLS_NODE / "decode.mjs").is_file():
         raise RuntimeError("compressed model, and no gltf-transform here to unpack it")
-    out = Path(tempfile.mkstemp(suffix=".glb")[1])
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    os.close(fd)
+    out = Path(name)
     done = subprocess.run(
         [node, str(TOOLS_NODE / "decode.mjs"), str(path), str(out)],
         capture_output=True,
@@ -131,15 +141,36 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     before = _print_checks(mesh)
     steps.append("welded")
 
-    if not mesh.is_watertight:
-        mesh, used = _close_holes_pymeshlab(mesh, int(params.get("maxHoleSize") or 5000))
-        if used:
-            steps.append("holes closed (pymeshlab)")
-        trimesh.repair.fill_holes(mesh)
+    height_mm = params.get("heightMm")
+    remesh = solid = None
+    # The solid is made at a print scale: the tolerances (a 3 mm ball, 0.5 mm wrap, 1 mm loss) are physical.
+    # Without a height the model is taken as a typical figurine; very small or large prints are worked at
+    # the nearest sane size, so the tolerances scale with them.
+    current = float(mesh.extents[1])
+    work_mm = min(max(float(height_mm or DEFAULT_PRINT_HEIGHT_MM), 40.0), 250.0)
+    mm_per_unit = work_mm / current if current > 0 else 1000.0
+    try:
+        from studio_bridge.print_solid import make_solid
+
+        mesh, solid = make_solid(mesh, mm_per_unit)
+        solid["atHeightMm"] = work_mm
+        steps.append(SOLID_STEPS.get(solid["method"], "made one closed solid"))
+    except Exception as exc:  # the old path: close holes, and rebuild from voxels when that falls short
+        print(f"print_solid failed, voxel fallback: {exc}")
+        if not mesh.is_watertight:
+            original = mesh.copy()
+            mesh, used = _close_holes_pymeshlab(mesh, int(params.get("maxHoleSize") or 5000))
+            if used:
+                steps.append("holes closed (pymeshlab)")
+            trimesh.repair.fill_holes(mesh)
+            if not mesh.is_watertight:
+                from studio_bridge.print_remesh import remesh_solid
+
+                mesh, remesh = remesh_solid(mesh, mm_per_unit, compare_to=original)
+                steps.append(f"rebuilt as a closed solid ({remesh['voxelMm']:g} mm detail)")
     trimesh.repair.fix_normals(mesh)
     steps.append("normals fixed")
 
-    height_mm = params.get("heightMm")
     if height_mm:
         current = float(mesh.extents[1])
         if current > 0:
@@ -159,8 +190,13 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             roughnessFactor=0.9,
         )
     )
-    mesh.export(out_path)
-    return {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
+    mesh.export(out_path, file_type="glb", include_normals=True)  # without normals three.js renders it black
+    report = {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
+    if solid:
+        report["solid"] = solid
+    if remesh:
+        report["remesh"] = remesh
+    return report
 
 
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
@@ -173,6 +209,8 @@ def run_operation(operation: str, in_path: Path, params: dict[str, Any]) -> tupl
     fn = OPERATIONS.get(operation)
     if fn is None:
         raise ValueError(f"unknown operation: {operation}")
-    out_path = Path(tempfile.mkstemp(suffix=".glb")[1])
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    os.close(fd)  # the tool writes it by name; an open handle would lock it on Windows
+    out_path = Path(name)
     report = fn(in_path, out_path, params or {})
     return out_path, report

@@ -7,6 +7,8 @@ on:
       - "Dockerfile.tools"
       - "worker_tools.py"
       - "studio_bridge/tools_ops.py"
+      - "studio_bridge/print_remesh.py"
+      - "studio_bridge/print_solid.py"
       - "studio_bridge/mesh_repair.py"
       - "studio_bridge/r2_public.py"
       - "tools_node/package.json"
