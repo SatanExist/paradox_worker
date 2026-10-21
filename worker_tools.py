@@ -20,7 +20,7 @@ import runpod
 sys.path.insert(0, "/app")
 
 from studio_bridge.r2_public import upload_public_file  # noqa: E402
-from studio_bridge.tools_ops import OPERATIONS, run_operation  # noqa: E402
+from studio_bridge.tools_ops import OPERATIONS, extra_key, run_operation  # noqa: E402
 
 MAX_INPUT_BYTES = 200 * 1024 * 1024
 
@@ -51,13 +51,16 @@ def handler(job: dict) -> dict:
         return {"error": "Missing model_url or bad output_key"}
 
     in_path = out_path = None
+    extra: dict[str, Path] = {}
     try:
         t0 = time.perf_counter()
         in_path = _download(model_url)
-        out_path, report = run_operation(operation, in_path, params)
+        out_path, report, extra = run_operation(operation, in_path, params)
         url = upload_public_file(out_path, output_key)
+        extra_urls = {name: upload_public_file(path, extra_key(output_key, name)) for name, path in extra.items()}
         return {
             "model_url": url,
+            "extra_urls": extra_urls,
             "report": report,
             "elapsed_ms": int((time.perf_counter() - t0) * 1000),
             "variant": "tools",
@@ -68,7 +71,7 @@ def handler(job: dict) -> dict:
         print(tb)
         return {"error": str(exc)[:500], "traceback": tb}
     finally:
-        for path in (in_path, out_path):
+        for path in (in_path, out_path, *extra.values()):
             if path is not None:
                 path.unlink(missing_ok=True)
 

@@ -8,16 +8,19 @@ defect and refill it); then:
 
   repair     drop inside-out pockets and crumbs, one exact self-union (CGAL via libigl), bridge pieces
              floating within 1.5 mm. The surface stays as modelled, apart from the patches.
-  solidify   only for a paper skin (repaired walls thinner than 1 mm on average, 2·V/A): fill the
-             chamber behind the skin (space a 3 mm ball can't reach from outside), then the same finish.
-             On a real solid the "chamber" would be its own interior, so solids never get this.
+  solidify   only for a paper skin (repaired walls thinner than 1 mm on average, 2·V/A), or when no other
+             candidate came out solid: the chamber behind the raw skin (space a 3 mm ball can't reach
+             from outside) becomes a solid block, fused by one union with the wrap below. Nothing is
+             cut away, so no surface goes missing. On a real solid the "chamber" would be its own
+             interior, so solids never get this.
   wrap       CGAL Alpha Wrap at 0.5 mm, then the same bridges. Closed and manifold by construction, and it
              fills thin openwork (beads, lace) solid, at the cost of rounding up to 0.5 mm. Only built for
              models that came in open.
 
 A candidate that left original surface behind (farther than 1 mm and outside the result) on more than
-0.1 % of it fails. Of the rest the one that changed least wins, unless the other holds clearly more
-volume: that is the one that filled the hollow. Lengths are in mm at the working print height.
+0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. Of the rest the one that
+changed least wins, unless the other holds clearly more volume: that is the one that filled the hollow.
+When every result is paper the report says so (thinWalls). Lengths are in mm at the working print height.
 """
 
 from __future__ import annotations
@@ -157,12 +160,15 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
 # --- the exact chain -------------------------------------------------------------------------------
 
 
-def _fill_chamber(m, log: Log, ball_mm: float = BALL_MM):
-    """Drop the skin faces that face into a chamber, then close what is left: the hollow becomes solid.
-    Returns the mesh and the chamber's volume in cm³ (0 when there is none and nothing changed)."""
+def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
+    """The chamber behind the skin as a solid block, reaching just into the skin so a union with the closed
+    shell fuses the two. Nothing of the skin is deleted, so nothing of its surface can go missing. Works on
+    the raw skin, holes and all: the ball can't get through a hole narrower than itself.
+    Returns the block (None when there is no chamber) and its volume in cm³."""
     import numpy as np
     import trimesh
     from scipy import ndimage
+    from skimage.measure import marching_cubes
 
     ext = float(m.extents.max())
     p = max(0.25, ext / 480)
@@ -184,24 +190,30 @@ def _fill_chamber(m, log: Log, ball_mm: float = BALL_MM):
     outside = ndimage.distance_transform_edt(~reach).astype(np.float32) * p <= ball_mm  # all those balls sweep
     del reach
     interior = ~skin & ~outside
-    del skin, outside
+    del outside
     deep = interior & clear
     del clear
     if not deep.any():
-        return m, 0.0
-    chamber = ndimage.binary_dilation(deep, np.ones((3, 3, 3), bool), iterations=int(np.ceil(ball_mm / p)) + 2, mask=interior)
-    del deep, interior
+        return None, 0.0
+    # every ball that fits in the chamber, rolled out to its full size: a round ball can't squeeze through a
+    # crack in the skin, so the block stops at the skin and never fills the grooves on the outside
+    chamber = interior & (ndimage.distance_transform_edt(~deep).astype(np.float32) * p <= ball_mm)
+    del deep
     cm3 = float(chamber.sum()) * p**3 / 1000
-    probe = np.clip(np.floor((m.triangles_center + m.face_normals * 2 * p - lo) / p).astype(int), 0, dims - 1)
-    inner = chamber[tuple(probe.T)]
+    chamber = ndimage.binary_dilation(chamber, mask=interior)  # the last voxel up to the skin
+    del interior
+    chamber = ndimage.binary_dilation(chamber, mask=chamber | skin)  # and one into it
+    del skin
+    field = ndimage.gaussian_filter(chamber.astype(np.float32), 0.6)  # soften the voxel steps
     del chamber
-    log(f"  chamber {cm3:.1f} cm3 at {p:.2f} mm; inner skin faces {int(inner.sum())} of {len(m.faces)}")
-    if not inner.any():
-        return m, cm3
-    m = m.copy()
-    m.update_faces(~inner)
-    m.remove_unreferenced_vertices()
-    return _local_repair(m, log, cut_first=False), cm3
+    V, F, _, _ = marching_cubes(field, level=0.5, spacing=(p, p, p))
+    del field
+    block = trimesh.Trimesh(V + lo, F, process=False)
+    if block.volume < 0:
+        block.invert()
+    block = _drop_pockets(block)
+    log(f"  chamber {cm3:.1f} cm3 at {p:.2f} mm; block {len(block.faces)} faces")
+    return block, cm3
 
 
 def _drop_pockets(m):
@@ -311,23 +323,36 @@ def _finish(m, log: Log):
     return m, {"piecesBridged": bridged}
 
 
-def _repaired(orig, repaired, log: Log):
+def _shell(orig, shared: dict[str, Any], log: Log):
+    """The wrap of the original: built once, used by both wrap and solidify."""
+    if "shell" not in shared:
+        t = time.time()
+        shared["shell"] = _wrap(orig.vertices, orig.faces, WRAP_ALPHA_MM)
+        log(f"  wrap {time.time() - t:.0f}s")
+    return shared["shell"].copy()
+
+
+def _repaired(orig, repaired, shared, log: Log):
     return _finish(repaired.copy(), log)
 
 
-def _solidified(orig, repaired, log: Log):
+def _solidified(orig, repaired, shared, log: Log):
+    """The closed wrap of the skin, fused with a block filling the chamber behind it."""
     t = time.time()
-    m, chamber = _fill_chamber(repaired.copy(), log)
+    block, chamber = _chamber_block(orig, log)
     log(f"  chamber {time.time() - t:.0f}s")
-    m, extra = _finish(m, log)
-    return m, {"chamberCm3": round(float(chamber), 2), **extra}
-
-
-def _wrapped(orig, repaired, log: Log):
+    if block is None:
+        raise RuntimeError("no chamber behind the skin")
+    shell = _shell(orig, shared, log)
     t = time.time()
-    m = _wrap(orig.vertices, orig.faces, WRAP_ALPHA_MM)
-    log(f"  wrap {time.time() - t:.0f}s")
+    m = _drop_pockets(_union(shell, block))  # gaps the block didn't reach are sealed pockets: filled too
+    log(f"  fill union {time.time() - t:.0f}s")
     m, bridged = _bridge(m, log)
+    return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged}
+
+
+def _wrapped(orig, repaired, shared, log: Log):
+    m, bridged = _bridge(_shell(orig, shared, log), log)
     return m, {"piecesBridged": bridged}
 
 
@@ -360,15 +385,26 @@ def _measure(orig, orig_pts, m) -> dict[str, Any]:
         outside[far] = igl.winding_number(V, F, orig_pts[far]) < 0.5
     lost = gone * outside
     watertight = bool(m.is_watertight)
+    wall = _thickness(m)
     return {
         "watertight": watertight,
         "parts": _pieces(m),
         "volumeCm3": round(float(m.volume) / 1000, 2) if watertight else None,
+        "wallMm": None if wall is None else round(wall, 2),
         "faces": int(len(m.faces)),
         "changedShare": round(float((off > 0.3).mean()), 4),
         "lostShare": round(float((lost > LOST_MM).mean()), 5),
         "lostMaxMm": round(float(lost.max()), 2),
     }
+
+
+def _paper(c: dict[str, Any]) -> bool:
+    return c["wallMm"] is not None and c["wallMm"] < SKIN_MM
+
+
+def _good(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Closed, kept the surface, and solid rather than paper."""
+    return [c for c in cands if c["watertight"] and (c["volumeCm3"] or 0) > 0 and c["lostShare"] <= LOST_MAX_SHARE and not _paper(c)]
 
 
 def _pick(cands: list[dict[str, Any]]):
@@ -381,6 +417,8 @@ def _pick(cands: list[dict[str, Any]]):
         least = min(c["lostShare"] for c in closed)
         ok = [c for c in closed if c["lostShare"] == least]
         note = f"every candidate lost some surface; kept the one that lost least ({least:.2%})"
+    if any(not _paper(c) for c in ok):  # a paper skin prints as paper: it loses to any real solid
+        ok = [c for c in ok if not _paper(c)]
     ok.sort(key=lambda c: c["changedShare"])
     best = ok[0]
     for c in ok[1:]:
@@ -415,18 +453,28 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
     if not came_closed or not builders:
         builders.append(("wrap", _wrapped))
     cands: list[dict[str, Any]] = []
-    for name, build in builders:
+    shared: dict[str, Any] = {}
+
+    def build(name: str, fn: Callable) -> None:
         t1 = time.time()
         log(f" {name}:")
         try:
-            m, extra = build(orig, repaired, log)
+            m, extra = fn(orig, repaired, shared, log)
         except Exception as exc:
             log(f"  {name} failed: {exc}")
-            continue
+            return
         c = {"method": name, **_measure(orig, orig_pts, m), **extra, "secs": round(time.time() - t1, 1)}
         log(f"  {name}: {c}")
         c["_mesh"] = m
         cands.append(c)
+
+    for name, fn in builders:
+        build(name, fn)
+    # The wall guessed from the repaired mesh is only a guess: holes capped flat can make a paper skin
+    # look solid. What counts is the results, so when none of them came out solid, fill the hollow anyway.
+    if not _good(cands) and all(c["method"] != "solidify" for c in cands):
+        log(" no solid result: trying solidify after all")
+        build("solidify", _solidified)
 
     best, note = _pick(cands)
     if best is None:
@@ -438,9 +486,69 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
         "method": best["method"],
         "cameClosed": came_closed,
         "wallMm": None if wall is None else round(wall, 2),
+        "resultWallMm": best["wallMm"],
+        "thinWalls": _paper(best),  # every result was paper: say so instead of "ready"
         "candidates": [{k: v for k, v in c.items() if not k.startswith("_")} for c in cands],
         "secs": round(time.time() - t0, 1),
     }
     if note:
         info["note"] = note
     return out, info
+
+
+# --- floating pieces -------------------------------------------------------------------------------
+
+def split_floating(mesh, mm_per_unit: float):
+    """Pieces hanging in mid-air, apart from the body: a slicer prints them on supports or as spaghetti.
+    The body is the biggest shell; a piece that rests on the plate (a sword lying by the feet) or sits inside
+    the body stays with it. Those within 1.5 mm were already bridged, so these are farther off. The caller
+    decides whether they go (the user picks; the default is to remove them).
+    Returns (body, pieces, about) with about = one dict per piece, biggest first; pieces is None when there
+    are none. Y is up."""
+    import igl
+    import numpy as np
+    import trimesh
+
+    F = np.asarray(mesh.faces)
+    lab = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(F))
+    n = int(lab.max()) + 1 if len(lab) else 0
+    if n <= 1:
+        return mesh, None, []
+    tri = np.asarray(mesh.triangles, np.float64)
+    vol = np.bincount(lab, np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6, n)
+    body = int(np.argmax(vol))
+    in_body = lab == body
+    BV = np.asarray(mesh.vertices, np.float64)
+    bF = F[in_body]
+    base = float(BV[np.unique(bF), 1].min())
+    floating = []
+    for k in np.argsort(-vol):
+        if k == body or vol[k] <= 0:  # inside-out shells are pockets, not pieces
+            continue
+        f = F[lab == k]
+        v = BV[np.unique(f)]
+        if (v[:, 1].min() - base) * mm_per_unit < 1.0:  # stands on the plate: a separate part, not debris
+            continue
+        if igl.winding_number(BV, bF, v[:1])[0] > 0.5:  # inside the body
+            continue
+        floating.append(k)
+    if not floating:
+        return mesh, None, []
+    about = []
+    for k in floating:
+        v = BV[np.unique(F[lab == k])]
+        probe = v[:: max(1, len(v) // 500)]
+        gap = float(np.sqrt(igl.point_mesh_squared_distance(probe, BV, bF)[0].min()))
+        lo, hi = v.min(0), v.max(0)
+        about.append({
+            "volumeCm3": round(float(vol[k]) * mm_per_unit**3 / 1000, 3),
+            "gapMm": round(gap * mm_per_unit, 1),
+            "_center": (lo + hi) / 2,
+            "_size": hi - lo,
+        })
+    away = np.isin(lab, floating)
+    parts = trimesh.Trimesh(BV, F[away], process=False)
+    parts.remove_unreferenced_vertices()
+    keep = trimesh.Trimesh(BV, F[~away], process=False)
+    keep.remove_unreferenced_vertices()
+    return keep, parts, about

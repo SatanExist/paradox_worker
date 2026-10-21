@@ -9,7 +9,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
   print_prep  weld, then make it one closed solid that keeps its surface (print_solid: patch the holes,
               fill a hollow skin, or a 0.5 mm wrap, whichever lost nothing and filled more); the voxel rebuild
               (print_remesh) is the fallback; optionally scale to a height in mm, stand the model
-              on the plate (Y up, base at 0)
+              on the plate (Y up, base at 0). Pieces hanging in mid-air are reported and removed unless
+              params["floating"] is "keep"; the other choice is written too, as the "alternate" file
 """
 
 from __future__ import annotations
@@ -155,6 +156,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         mesh, solid = make_solid(mesh, mm_per_unit)
         solid["atHeightMm"] = work_mm
         steps.append(SOLID_STEPS.get(solid["method"], "made one closed solid"))
+        if solid.get("thinWalls"):
+            steps.append(f"walls stay thin (about {solid['resultWallMm']:g} mm): it may print as a fragile shell")
     except Exception as exc:  # the old path: close holes, and rebuild from voxels when that falls short
         print(f"print_solid failed, voxel fallback: {exc}")
         if not mesh.is_watertight:
@@ -171,27 +174,62 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     trimesh.repair.fix_normals(mesh)
     steps.append("normals fixed")
 
-    if height_mm:
-        current = float(mesh.extents[1])
-        if current > 0:
-            mesh.apply_scale(float(height_mm) / 1000.0 / current)
-            steps.append(f"scaled to {float(height_mm):g} mm")
+    # Pieces hanging in mid-air: the user chooses, the default is to remove them. Both files are made, so
+    # the choice is instant; the main one follows params["floating"], the other goes out as "alternate".
+    from studio_bridge.print_solid import split_floating
 
-    # On the plate: centred on X/Z, lowest point at Y=0.
-    lo, hi = mesh.bounds
-    mesh.apply_translation([-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2])
+    try:
+        body, pieces, about = split_floating(mesh, mm_per_unit)
+    except Exception as exc:  # a report extra: never worth failing the print for
+        print(f"floating pieces not checked: {exc}")
+        body, pieces, about = mesh, None, []
+    keep = str(params.get("floating") or "remove") == "keep"
+
+    # Scale and plate placement come from the body alone, so both files line up and the body sits on Y=0.
+    s = 1.0
+    if height_mm and float(body.extents[1]) > 0:
+        s = float(height_mm) / 1000.0 / float(body.extents[1])
+        steps.append(f"scaled to {float(height_mm):g} mm")
+    lo, hi = body.bounds * s
+    shift = np.array([-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2])
+    for m in (body, pieces):
+        if m is not None:
+            m.apply_scale(s)
+            m.apply_translation(shift)
     steps.append("placed on plate")
 
-    # One plain material: a print has no texture, and a clay look shows the shape best.
-    mesh.visual = trimesh.visual.TextureVisuals(
-        material=trimesh.visual.material.PBRMaterial(
-            baseColorFactor=np.array([200, 196, 188, 255], dtype=np.uint8),
-            metallicFactor=0.0,
-            roughnessFactor=0.9,
-        )
-    )
-    mesh.export(out_path, file_type="glb", include_normals=True)  # without normals three.js renders it black
-    report = {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(mesh)}
+    floating = None
+    if pieces is not None:
+        unit_mm = 1000.0  # glTF is metres
+        floating = {
+            "count": len(about),
+            "volumeCm3": round(sum(p["volumeCm3"] for p in about), 3),
+            "pieces": [
+                {
+                    "volumeCm3": p["volumeCm3"],
+                    "gapMm": p["gapMm"],
+                    "centerMm": [round(float(v), 1) for v in (p["_center"] * s + shift) * unit_mm],
+                    "sizeMm": [round(float(v), 1) for v in p["_size"] * s * unit_mm],
+                }
+                for p in about
+            ],
+            "default": "remove",
+            "file": "keep" if keep else "remove",
+            "alternate": "remove" if keep else "keep",
+        }
+        n = floating["count"]
+        what = f"{n} floating piece{'s' if n != 1 else ''} ({floating['volumeCm3']:g} cm³)"
+        steps.append(f"kept {what}" if keep else f"removed {what}")
+
+    with_pieces = {"body": body, "floating": pieces} if pieces is not None else {"body": body}
+    main = with_pieces if keep else {"body": body}
+    _export_print(main, out_path)
+    report = {"operation": "print_prep", "steps": steps, "before": before, "after": _print_checks(_joined(main))}
+    if floating:
+        alt = out_path.with_name(out_path.stem + "-alternate.glb")
+        _export_print({"body": body} if keep else with_pieces, alt)
+        report["floating"] = floating
+        report["extraFiles"] = {"alternate": str(alt)}
     if solid:
         report["solid"] = solid
     if remesh:
@@ -199,13 +237,47 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     return report
 
 
+def _joined(parts: dict[str, Any]):
+    import trimesh
+
+    meshes = [m for m in parts.values() if m is not None]
+    return meshes[0] if len(meshes) == 1 else trimesh.util.concatenate(meshes)
+
+
+def _export_print(parts: dict[str, Any], path: Path) -> None:
+    """One node per part ("body", "floating"), so the studio can tint the pieces the user may remove.
+    One plain material: a print has no texture, and a clay look shows the shape best."""
+    import numpy as np
+    import trimesh
+
+    scene = trimesh.Scene()
+    for name, m in parts.items():
+        if m is None:
+            continue
+        m.visual = trimesh.visual.TextureVisuals(
+            material=trimesh.visual.material.PBRMaterial(
+                baseColorFactor=np.array([200, 196, 188, 255], dtype=np.uint8),
+                metallicFactor=0.0,
+                roughnessFactor=0.9,
+            )
+        )
+        scene.add_geometry(m, geom_name=name, node_name=name)
+    scene.export(path, file_type="glb", include_normals=True)  # without normals three.js renders it black
+
+
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
     "print_prep": print_prep,
 }
 
 
-def run_operation(operation: str, in_path: Path, params: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
-    """Run one tool; returns the output GLB path and its report."""
+def extra_key(output_key: str, name: str) -> str:
+    """Where an extra file goes: next to the main one, tools/abc.glb -> tools/abc-alternate.glb."""
+    return f"{output_key[:-4]}-{name}.glb" if output_key.endswith(".glb") else f"{output_key}-{name}"
+
+
+def run_operation(operation: str, in_path: Path, params: dict[str, Any]) -> tuple[Path, dict[str, Any], dict[str, Path]]:
+    """Run one tool; returns the output GLB path, its report, and any extra files by name (the caller
+    uploads them next to the main one and deletes them)."""
     fn = OPERATIONS.get(operation)
     if fn is None:
         raise ValueError(f"unknown operation: {operation}")
@@ -213,4 +285,5 @@ def run_operation(operation: str, in_path: Path, params: dict[str, Any]) -> tupl
     os.close(fd)  # the tool writes it by name; an open handle would lock it on Windows
     out_path = Path(name)
     report = fn(in_path, out_path, params or {})
-    return out_path, report
+    extra = {name: Path(p) for name, p in (report.pop("extraFiles", None) or {}).items()}
+    return out_path, report, extra
