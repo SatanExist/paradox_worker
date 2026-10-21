@@ -202,102 +202,126 @@ def _shaded(path: Path):
     return np.vstack(verts), np.vstack(faces), np.vstack(normals), moved
 
 
-def _compare(original, out_path: Path, shift: list[float], find_lost: bool = False):
-    """How much the lighter model differs from the original, in shape and in shading.
+class _Reference:
+    """The original, ready to measure lighter versions against, built once per job.
 
-    Shape: pymeshlab Hausdorff both ways — new surface → old (did it bulge or sink) and old →
-    new (did a part go missing) — as % of the model's largest side.
-    Shading: the angle between the normals the light uses on the new surface and on the old one
-    nearby. Shape alone missed it when a cut model looked chrome; this catches that.
-    `original` is what `_shaded` gave for it; it is moved by the same `shift` as the result first.
-    With `find_lost`, also returns how far each original vertex is from the new surface (% of
-    size): where that is large, a part went missing. Otherwise the second value is None.
+    Everything that only depends on the original — a mesh ready for meshlab, the face corners and normals,
+    the search trees over face centres and over points spread on its surface — is made here, so
+    a second cut is measured without rebuilding any of it. Results are moved back by the shift
+    `game.mjs` applied, rather than moving the original, so nothing here depends on the cut.
     """
-    import numpy as np
-    import pymeshlab
-    from scipy.spatial import cKDTree
 
-    ov, of, on, _ = original
-    ov = ov + np.asarray(shift)
-    rv, rf, rn, _ = _shaded(out_path)
-    size = float((ov.max(0) - ov.min(0)).max()) or 1.0
+    SPREAD_MIN, SPREAD_MAX = 200_000, 1_000_000
 
-    ms = pymeshlab.MeshSet()
-    ms.add_mesh(pymeshlab.Mesh(ov, of))
-    ms.add_mesh(pymeshlab.Mesh(rv, rf))
-    samples = 200_000
-    ways = [
-        ms.get_hausdorff_distance(sampledmesh=1, targetmesh=0, samplevert=False, sampleface=True, samplenum=samples),
-        ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=False, sampleface=True, samplenum=samples),
-    ]
+    def __init__(self, original):
+        import numpy as np
+        import pymeshlab
+        from scipy.spatial import cKDTree
 
-    # Points spread over the new surface by area, with the normal the light sees there.
-    rng = np.random.default_rng(0)
-    count = 50_000
-    tri = rv[rf]
-    cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
-    area = np.linalg.norm(cross, axis=1)
-    pick = rng.choice(len(rf), count, p=area / area.sum())
-    u, v = rng.random(count), rng.random(count)
-    over = u + v > 1
-    u[over], v[over] = 1 - u[over], 1 - v[over]
-    bary = np.stack([1 - u - v, u, v], axis=1)[:, :, None]
-    points = (tri[pick] * bary).sum(1)
-    seen = (rn[rf[pick]] * bary).sum(1)
+        self.ov, self.of, self.on, self.moved = original
+        self.size = float((self.ov.max(0) - self.ov.min(0)).max()) or 1.0
+        self.mesh = pymeshlab.Mesh(self.ov, self.of)
+        self.tri = self.ov[self.of]
+        self.cross = np.cross(self.tri[:, 1] - self.tri[:, 0], self.tri[:, 2] - self.tri[:, 0])
+        area = np.linalg.norm(self.cross, axis=1)
+        rng = np.random.default_rng(1)
+        spread = int(min(self.SPREAD_MAX, max(self.SPREAD_MIN, 2 * len(self.of))))
+        self.spread_face = rng.choice(len(self.of), spread, p=area / area.sum())
+        a, b = rng.random(spread), rng.random(spread)
+        over = a + b > 1
+        a[over], b[over] = 1 - a[over], 1 - b[over]
+        spread_points = (self.tri[self.spread_face] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)
+        self.by_centre = cKDTree(self.tri.mean(1))
+        self.by_spread = cKDTree(spread_points)
+        self.by_vertex = None  # built the first time lost parts are looked for
 
-    # The old surface nearby: the closest point on the faces found around it, preferring faces
-    # on the same side (on a thin part the back face can be closer), and the normal there
-    # blended from its corners as the light would. Candidate faces come two ways: nearest face
-    # centres (right on dense meshes) and points spread over the surface by area (on a long thin
-    # face a point can be far from its centre). Meshlab's own transfer recomputes the normals,
-    # so it can't be used.
-    import trimesh
+    def compare(self, out_path: Path, shift: list[float], find_lost: bool = False):
+        """How much the lighter model differs from the original, in shape and in shading.
 
-    facing = cross[pick] / area[pick, None].clip(1e-30)
-    o_tri = ov[of]
-    o_cross = np.cross(o_tri[:, 1] - o_tri[:, 0], o_tri[:, 2] - o_tri[:, 0])
-    o_area = np.linalg.norm(o_cross, axis=1)
-    spread = int(min(1_000_000, max(200_000, 2 * len(of))))
-    o_pick = rng.choice(len(of), spread, p=o_area / o_area.sum())
-    a, b = rng.random(spread), rng.random(spread)
-    over = a + b > 1
-    a[over], b[over] = 1 - a[over], 1 - b[over]
-    o_points = (o_tri[o_pick] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)
-    _, by_centre = cKDTree(o_tri.mean(1)).query(points, k=min(16, len(of)))
-    _, around = cKDTree(o_points).query(points, k=16)
-    near = np.hstack([by_centre.reshape(count, -1), o_pick[around]])
-    k = near.shape[1]
-    repeated = np.repeat(points, k, axis=0)
-    closest = trimesh.triangles.closest_point(o_tri[near.reshape(-1)], repeated)
-    dist = np.linalg.norm(closest - repeated, axis=1).reshape(count, k)
-    same_side = np.einsum("nkd,nd->nk", o_cross[near], facing) > 0
-    dist = np.where(same_side | ~same_side.any(1, keepdims=True), dist, np.inf)
-    best = dist.argmin(1)
-    face = near[np.arange(count), best]
-    at = closest.reshape(count, k, 3)[np.arange(count), best]
-    o_bary = trimesh.triangles.points_to_barycentric(o_tri[face], at)[:, :, None]
-    old = (on[of[face]] * o_bary).sum(1)
+        Shape: pymeshlab Hausdorff both ways — new surface → old (did it bulge or sink) and old →
+        new (did a part go missing) — as % of the model's largest side.
+        Shading: the angle between the normals the light uses on the new surface and on the old
+        one nearby. Shape alone missed it when a cut model looked chrome; this catches that.
+        With `find_lost`, also returns how far each original vertex is from the new surface (% of
+        size): where that is large, a part went missing. Otherwise the second value is None.
+        """
+        import numpy as np
+        import pymeshlab
+        import trimesh
+        from scipy.spatial import cKDTree
 
-    cos = np.einsum("nd,nd->n", seen, old) / (np.linalg.norm(seen, axis=1) * np.linalg.norm(old, axis=1)).clip(1e-12)
-    angle = np.degrees(np.arccos(cos.clip(-1, 1)))
-    deviation = {
-        "meanPct": round(max(w["mean"] for w in ways) / size * 100, 3),
-        "maxPct": round(max(w["max"] for w in ways) / size * 100, 2),
-        "normalMeanDeg": round(float(angle.mean()), 1),
-        "normalP95Deg": round(float(np.percentile(angle, 95)), 1),
-    }
-    if not find_lost:
-        return deviation, None
-    # Every original vertex against the new surface. Meshlab hands the samples back in its own
-    # order, so they are matched to the vertices by position.
-    ms.get_hausdorff_distance(
-        sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(ov), savesample=True
-    )
-    sampled = ms.mesh(ms.mesh_number() - 2).vertex_matrix()
-    nearest = ms.mesh(ms.mesh_number() - 1).vertex_matrix()
-    _, which = cKDTree(sampled).query(ov)
-    lost = np.linalg.norm(sampled[which] - nearest[which], axis=1) / size * 100
-    return deviation, lost
+        rv, rf, rn, _ = _shaded(out_path)
+        rv = rv - np.asarray(shift)
+        # A fresh set each time (meshlab crashes when meshes are taken out of one), with the
+        # original's ready-made copy.
+        ms = pymeshlab.MeshSet()
+        ms.add_mesh(self.mesh)
+        ms.add_mesh(pymeshlab.Mesh(rv, rf))
+        samples = 200_000
+        ways = [
+            ms.get_hausdorff_distance(sampledmesh=1, targetmesh=0, samplevert=False, sampleface=True, samplenum=samples),
+            ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=False, sampleface=True, samplenum=samples),
+        ]
+        lost = None
+        if find_lost:
+            # Every original vertex against the new surface. Meshlab hands the samples back in its
+            # own order, so they are matched to the vertices by position.
+            ms.get_hausdorff_distance(
+                sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(self.ov), savesample=True
+            )
+            saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
+            sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
+            if self.by_vertex is None:
+                self.by_vertex = cKDTree(self.ov)
+            _, which = self.by_vertex.query(sampled, workers=-1)
+            lost = np.zeros(len(self.ov))
+            lost[which] = np.linalg.norm(sampled - nearest, axis=1) / self.size * 100
+
+        # Points spread over the new surface by area, with the normal the light sees there.
+        rng = np.random.default_rng(0)
+        count = 50_000
+        tri = rv[rf]
+        cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        area = np.linalg.norm(cross, axis=1)
+        pick = rng.choice(len(rf), count, p=area / area.sum())
+        u, v = rng.random(count), rng.random(count)
+        over = u + v > 1
+        u[over], v[over] = 1 - u[over], 1 - v[over]
+        bary = np.stack([1 - u - v, u, v], axis=1)[:, :, None]
+        points = (tri[pick] * bary).sum(1)
+        seen = (rn[rf[pick]] * bary).sum(1)
+        facing = cross[pick] / area[pick, None].clip(1e-30)
+
+        # The old surface nearby: the closest point on the faces found around it, preferring
+        # faces on the same side (on a thin part the back face can be closer), and the normal
+        # there blended from its corners as the light would. Candidate faces come two ways:
+        # nearest face centres (right on dense meshes) and points spread over the surface by area
+        # (on a long thin face a point can be far from its centre). Meshlab's own transfer
+        # recomputes the normals, so it can't be used.
+        _, by_centre = self.by_centre.query(points, k=min(16, len(self.of)), workers=-1)
+        _, around = self.by_spread.query(points, k=16, workers=-1)
+        near = np.hstack([by_centre.reshape(count, -1), self.spread_face[around]])
+        k = near.shape[1]
+        repeated = np.repeat(points, k, axis=0)
+        closest = trimesh.triangles.closest_point(self.tri[near.reshape(-1)], repeated)
+        dist = np.linalg.norm(closest - repeated, axis=1).reshape(count, k)
+        same_side = np.einsum("nkd,nd->nk", self.cross[near], facing) > 0
+        dist = np.where(same_side | ~same_side.any(1, keepdims=True), dist, np.inf)
+        best = dist.argmin(1)
+        face = near[np.arange(count), best]
+        at = closest.reshape(count, k, 3)[np.arange(count), best]
+        o_bary = trimesh.triangles.points_to_barycentric(self.tri[face], at)[:, :, None]
+        old = (self.on[self.of[face]] * o_bary).sum(1)
+
+        cos = np.einsum("nd,nd->n", seen, old) / (np.linalg.norm(seen, axis=1) * np.linalg.norm(old, axis=1)).clip(1e-12)
+        angle = np.degrees(np.arccos(cos.clip(-1, 1)))
+        deviation = {
+            "meanPct": round(max(w["mean"] for w in ways) / self.size * 100, 3),
+            "maxPct": round(max(w["max"] for w in ways) / self.size * 100, 2),
+            "normalMeanDeg": round(float(angle.mean()), 1),
+            "normalP95Deg": round(float(np.percentile(angle, 95)), 1),
+        }
+        return deviation, lost
 
 
 def _lost_detail(original, lost, target_tris: int):
@@ -353,10 +377,16 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     }
     if params.get("maxErrorPct"):
         job["maxErrorPct"] = float(params["maxErrorPct"])
-    original = _shaded(in_path)
-    result = _game_mjs(in_path, out_path, job)
+    # The cut runs in node while this process gets the original ready to measure against.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        cutting = pool.submit(_game_mjs, in_path, out_path, job)
+        original = _shaded(in_path)
+        reference = _Reference(original)
+        result = cutting.result()
     to_budget = "maxErrorPct" not in job
-    deviation, lost = _compare(original, out_path, result["shift"], find_lost=to_budget and not original[3])
+    deviation, lost = reference.compare(out_path, result["shift"], find_lost=to_budget and not original[3])
     steps = list(result["steps"])
 
     # To a budget a whole part can go (the error limit is off). When the worst spot stands out,
@@ -373,7 +403,7 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
             try:
                 keep_path.write_bytes(np.asarray(keep, dtype=np.float32).tobytes())
                 second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
-                again, _ = _compare(original, second_path, second["shift"])
+                again, _ = reference.compare(second_path, second["shift"])
                 if again["maxPct"] < 0.9 * deviation["maxPct"] and again["meanPct"] <= 1.15 * deviation["meanPct"]:
                     shutil.copyfile(second_path, out_path)
                     result, deviation, steps = second, again, list(second["steps"])
