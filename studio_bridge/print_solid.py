@@ -19,7 +19,7 @@ defect and refill it); then:
 
 A candidate that left original surface behind (farther than 1 mm and outside the result) on more than
 0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. Of the rest the one that
-changed least wins, unless the other holds clearly more volume: that is the one that filled the hollow.
+changed least where it shows wins, unless the other holds clearly more volume: that is the one that filled the hollow.
 When every result is paper the report says so (thinWalls). Lengths are in mm at the working print height.
 """
 
@@ -42,6 +42,7 @@ MAX_VOXELS = 60_000_000  # chamber grid; the distance transforms take ~25 bytes 
 SKIN_MM = 1.0  # mean wall (2·volume/area) below this is a paper skin with a hollow to fill
 SAMPLES = 200_000
 SEED = 0
+VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
 
 Log = Callable[[str], None]
 
@@ -367,17 +368,40 @@ def _pieces(m) -> int:
     return int(len(np.unique(lab)))
 
 
+def _seen(V, F, pts, normals):
+    """Which surface points can be seen from outside: at least one of VIS_RAYS rays over the point's hemisphere
+    gets out (embree). The walls of a sealed void, or of a hollow behind a crack, are hidden. The rays come from
+    the C library's rand, so it is reset first: every candidate, and every run, is lit by the same rays."""
+    import ctypes
+    import ctypes.util
+    import numpy as np
+
+    try:
+        import igl.embree
+    except ImportError:
+        return np.ones(len(pts), dtype=bool)
+    try:
+        ctypes.CDLL(ctypes.util.find_library("c") or "ucrtbase").srand(SEED)
+    except (OSError, AttributeError):
+        pass
+    occluded = igl.embree.ambient_occlusion(V, F, pts + normals * 1e-3, normals, VIS_RAYS)
+    return occluded < 1.0
+
+
 def _measure(orig, orig_pts, m) -> dict[str, Any]:
-    """'changed': result surface more than 0.3 mm off the original. 'lost': original surface more than 1 mm
-    from the result and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
+    """'changed': result surface seen from outside that sits more than 0.3 mm off the original; surface moved out
+    of sight (the walls of a filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more
+    than 1 mm from the result and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
     import igl
     import numpy as np
     import trimesh
 
     V = np.asarray(m.vertices, np.float64)
     F = np.asarray(m.faces, np.int64)
-    pts, _ = trimesh.sample.sample_surface(m, SAMPLES, seed=SEED)
-    off = np.sqrt(igl.point_mesh_squared_distance(pts, orig.vertices, orig.faces)[0])
+    pts, fi = trimesh.sample.sample_surface(m, SAMPLES, seed=SEED)
+    moved = np.sqrt(igl.point_mesh_squared_distance(pts, orig.vertices, orig.faces)[0]) > 0.3
+    out = 1.0 if float(m.volume) >= 0 else -1.0  # normals are fixed on the winner only: aim the rays outward here
+    seen = _seen(V, F, pts, out * np.asarray(m.face_normals, np.float64)[fi])
     gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts, V, F)[0])
     far = gone > 0.3
     outside = np.ones(len(orig_pts), dtype=bool)
@@ -392,7 +416,8 @@ def _measure(orig, orig_pts, m) -> dict[str, Any]:
         "volumeCm3": round(float(m.volume) / 1000, 2) if watertight else None,
         "wallMm": None if wall is None else round(wall, 2),
         "faces": int(len(m.faces)),
-        "changedShare": round(float((off > 0.3).mean()), 4),
+        "changedShare": round(float(moved[seen].mean()) if seen.any() else 0.0, 4),
+        "changedHiddenShare": round(float((moved & ~seen).mean()), 4),
         "lostShare": round(float((lost > LOST_MM).mean()), 5),
         "lostMaxMm": round(float(lost.max()), 2),
     }
