@@ -233,13 +233,21 @@ class _Reference:
         spread_points = (self.tri[self.spread_face] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)
         self.by_centre = cKDTree(self.tri.mean(1))
         self.by_spread = cKDTree(spread_points)
-        self.by_vertex = None  # built the first time lost parts are looked for
+        # Each vertex stands for a third of the area of the faces around it: the mean over
+        # vertices then counts surface, not how densely the generator happened to mesh a spot.
+        self.vertex_area = np.zeros(len(self.ov))
+        for corner in range(3):
+            np.add.at(self.vertex_area, self.of[:, corner], area / 6)
 
     def compare(self, out_path: Path, shift: list[float], find_lost: bool = False):
         """How much the lighter model differs from the original, in shape and in shading.
 
-        Shape: pymeshlab Hausdorff both ways — new surface → old (did it bulge or sink) and old →
-        new (did a part go missing) — as % of the model's largest side.
+        Shape, as % of the model's largest side, both ways and the same every time for the same
+        model (no random samples, so a decision on it can't flip between runs):
+        - old → new (did a part go missing): every vertex of the original against the new surface;
+          the mean weighs each vertex by the surface it stands for.
+        - new → old (did it bulge or sink): the new model's vertices and fixed points spread over
+          its faces against the original surface.
         Shading: the angle between the normals the light uses on the new surface and on the old
         one nearby. Shape alone missed it when a cut model looked chrome; this catches that.
         With `find_lost`, also returns how far each original vertex is from the new surface (% of
@@ -248,7 +256,6 @@ class _Reference:
         import numpy as np
         import pymeshlab
         import trimesh
-        from scipy.spatial import cKDTree
 
         rv, rf, rn, _ = _shaded(out_path)
         rv = rv - np.asarray(shift)
@@ -257,32 +264,43 @@ class _Reference:
         ms = pymeshlab.MeshSet()
         ms.add_mesh(self.mesh)
         ms.add_mesh(pymeshlab.Mesh(rv, rf))
-        samples = 200_000
-        ways = [
-            ms.get_hausdorff_distance(sampledmesh=1, targetmesh=0, samplevert=False, sampleface=True, samplenum=samples),
-            ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=False, sampleface=True, samplenum=samples),
-        ]
-        lost = None
-        if find_lost:
-            # Every original vertex against the new surface. Meshlab hands the samples back in its
-            # own order, so they are matched to the vertices by position.
-            ms.get_hausdorff_distance(
-                sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(self.ov), savesample=True
-            )
-            saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
-            sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
-            if self.by_vertex is None:
-                self.by_vertex = cKDTree(self.ov)
-            _, which = self.by_vertex.query(sampled, workers=-1)
-            lost = np.zeros(len(self.ov))
-            lost[which] = np.linalg.norm(sampled - nearest, axis=1) / self.size * 100
+
+        # Old → new: every original vertex. Meshlab gives them back in vertex order.
+        ms.get_hausdorff_distance(
+            sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(self.ov), savesample=True
+        )
+        saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
+        sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
+        if sampled.shape != self.ov.shape or not np.allclose(sampled, self.ov, atol=1e-6 * self.size):
+            raise RuntimeError("meshlab changed the order of the original's vertices")
+        to_new = np.linalg.norm(sampled - nearest, axis=1)
+
+        # New → old: the new vertices plus points on its faces at fixed spots (same seed every run).
+        tri = rv[rf]
+        cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        area = np.linalg.norm(cross, axis=1)
+        fixed = np.random.default_rng(2)
+        on_faces = 200_000
+        pick = fixed.choice(len(rf), on_faces, p=area / area.sum())
+        a, b = fixed.random(on_faces), fixed.random(on_faces)
+        over = a + b > 1
+        a[over], b[over] = 1 - a[over], 1 - b[over]
+        cloud = np.vstack([rv, (tri[pick] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)])
+        ms.add_mesh(pymeshlab.Mesh(cloud))
+        to_old = ms.get_hausdorff_distance(
+            sampledmesh=ms.mesh_number() - 1, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud)
+        )
+
+        mean_to_new = float((to_new * self.vertex_area).sum() / self.vertex_area.sum())
+        shape = {
+            "meanPct": round(max(mean_to_new, to_old["mean"]) / self.size * 100, 3),
+            "maxPct": round(max(float(to_new.max()), to_old["max"]) / self.size * 100, 2),
+        }
+        lost = to_new / self.size * 100 if find_lost else None
 
         # Points spread over the new surface by area, with the normal the light sees there.
         rng = np.random.default_rng(0)
         count = 50_000
-        tri = rv[rf]
-        cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
-        area = np.linalg.norm(cross, axis=1)
         pick = rng.choice(len(rf), count, p=area / area.sum())
         u, v = rng.random(count), rng.random(count)
         over = u + v > 1
@@ -316,8 +334,7 @@ class _Reference:
         cos = np.einsum("nd,nd->n", seen, old) / (np.linalg.norm(seen, axis=1) * np.linalg.norm(old, axis=1)).clip(1e-12)
         angle = np.degrees(np.arccos(cos.clip(-1, 1)))
         deviation = {
-            "meanPct": round(max(w["mean"] for w in ways) / self.size * 100, 3),
-            "maxPct": round(max(w["max"] for w in ways) / self.size * 100, 2),
+            **shape,
             "normalMeanDeg": round(float(angle.mean()), 1),
             "normalP95Deg": round(float(np.percentile(angle, 95)), 1),
         }
