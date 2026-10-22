@@ -1,0 +1,7 @@
+# Outputs are made again by run.py / heat.py; only the inputs, the results table and the run logs are kept.
+out/
+.venv/
+__pycache__/
+view/*.glb
+!models/*.glb
+!logs/*.log

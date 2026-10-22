@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Print heat</title>
+<style>body{margin:0;background:#2a2a2e;color:#ddd;font:13px sans-serif}#bar{position:fixed;top:8px;left:8px;z-index:2}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"}}</script></head>
+<body><div id="bar"><select id="m"><option>trellis2_chest_low</option><option>tripo_spellbook</option><option value="trellis2_dragon" data-p="1">trellis2_dragon (pieces)</option></select>
+<label><input type="checkbox" id="o"> original (blue) instead</label> grey kept · yellow 0.3 mm · red ≥1 mm</div>
+<script type="module">
+import * as THREE from 'three';import {OrbitControls} from 'three/addons/controls/OrbitControls.js';import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.add(new THREE.HemisphereLight(0xffffff,0x444444,1.6));const d=new THREE.DirectionalLight(0xffffff,1.5);d.position.set(100,200,150);s.add(d);
+const c=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,1,5000);c.position.set(160,140,220);const ctl=new OrbitControls(c,r.domElement);ctl.target.set(0,60,0);
+let cur;const L=new GLTFLoader();window.load=()=>{const id=m.value+(m.selectedOptions[0].dataset.p?'_pieces':(o.checked?'_orig':'_heat'));L.load(id+'.glb',g=>{if(cur)s.remove(cur);cur=g.scene;if(m.selectedOptions[0].dataset.p)cur.scale.setScalar(1000);window.cur=cur;cur.traverse(n=>{if(n.isMesh){if(!n.geometry.attributes.normal)n.geometry.computeVertexNormals();window.attrs=Object.keys(n.geometry.attributes);n.material=new THREE.MeshStandardMaterial({vertexColors:!!n.geometry.attributes.color,color:/floating/.test(n.name+(n.parent&&n.parent.name))?0xff3b30:0xffffff,roughness:.8,side:THREE.DoubleSide});}});s.add(cur);window.box=new THREE.Box3().setFromObject(cur);});};r.setClearColor(0x2a2a2e);
+m.onchange=o.onchange=load;load();(function a(){requestAnimationFrame(a);if(r.domElement.width!==innerWidth*devicePixelRatio&&innerWidth){r.setPixelRatio(devicePixelRatio);r.setSize(innerWidth,innerHeight);c.aspect=innerWidth/innerHeight;c.updateProjectionMatrix();}ctl.update();r.render(s,c)})();
+window.view=(x,y,z)=>{c.position.set(x,y,z);};
+</script></body></html>

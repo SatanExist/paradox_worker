@@ -1,0 +1,44 @@
+# Dropped 2026-10-21 as duplicates of other lines: tripo_drill/camera/scorpion (same meshes as hunyuan31_*), hunyuan_lowpoly_knight (= hunyuan_lowpoly).
+# id	engine	kind	heightMm	source (relative to D:/AI_HUB)
+trellis2_statue	trellis2	figurine	120	POLY_LAB/public/showcase/trellis2/winged-statue-realistic-4k.glb
+trellis2_crown	trellis2	jewelry	60	POLY_LAB/public/showcase/trellis2/crown-medium.glb
+trellis2_knight	trellis2	figurine	120	POLY_LAB/public/showcase/trellis2/knight-realistic.glb
+trellis2_chest_low	trellis2	prop	80	POLY_LAB/public/showcase/trellis2/chest-low.glb
+trellis2_chest	trellis2	prop	80	print_corpus/models/trellis2_chest.glb (from a 2026-10-20 scratchpad)
+trellis2_aquarium	trellis2	scene	100	paradox_worker/preview_textures/tier_low_aquarium.png.glb
+trellis2_harbor	trellis2	scene	100	paradox_worker/preview_textures/tier_medium_harbor.png.glb
+trellis2_lattice	trellis2	openwork	100	paradox_worker/model-lattice-raw-quality.glb
+trellis2_armor	trellis2	figurine	120	paradox_worker/model-armor-clay-seed42.glb
+trellis2_dragon	trellis2	creature	100	paradox_worker/model-dragon.glb
+trellis2_bust	trellis2	bust	100	paradox_worker/preview_textures/t2_bust_ultra.glb
+hunyuan_lighthouse	hunyuan	building	120	POLY_LAB/public/showcase/hunyuan/lighthouse-hero.glb
+hunyuan_operative	hunyuan	figurine	150	POLY_LAB/public/showcase/hunyuan/operative-hero.glb
+hunyuan_magnum	hunyuan	weapon	100	POLY_LAB/public/showcase/hunyuan/magnum-hero.glb
+hunyuan_lowpoly	hunyuan	figurine	100	POLY_LAB/public/showcase/hunyuan/lowpoly-hero.glb
+hunyuan_crystals	hunyuan	prop	80	paradox_worker/preview_textures/hunyuan_expo/express_crystals_raw.glb
+hunyuan_truck	hunyuan	vehicle	80	paradox_worker/preview_textures/hunyuan_expo/express_truck_raw.glb
+hunyuan_necromutant	hunyuan	creature	150	paradox_worker/preview_textures/hunyuan_expo/necromutant_raw.glb
+hunyuan31_mech	hunyuan31	figurine	150	paradox_worker/preview_textures/h31_ultra_mech_draco.glb
+hunyuan31_scorpion	hunyuan31	creature	100	paradox_worker/preview_textures/h31_ultra_scorpion_draco.glb
+hunyuan31_drill	hunyuan31	tool	100	paradox_worker/preview_textures/h31_hd_drill.glb
+hunyuan31_camera	hunyuan31	prop	80	paradox_worker/preview_textures/h31_studio_camera.glb
+hunyuan31_watch	hunyuan31	jewelry	50	paradox_worker/preview_textures/h31_ultra_watch.glb
+hi3dgen_dog	hi3dgen	creature	100	POLY_LAB/public/showcase/hi3dgen/dog-painted.glb
+hi3dgen_dragon	hi3dgen	creature	100	POLY_LAB/public/showcase/hi3dgen/dragon-painted.glb
+hi3dgen_snowman	hi3dgen	figurine	80	POLY_LAB/public/showcase/hi3dgen/snowman-painted.glb
+hi3dgen_space_bust	hi3dgen	bust	100	paradox_worker/preview_textures/h0_space_bust.glb
+direct3ds2_knight	direct3ds2	figurine	120	paradox_worker/preview_textures/n3_direct3ds2_knight_1024.glb
+step1x_knight	step1x3d	figurine	120	paradox_worker/preview_textures/n4_step1x3d_knight.glb
+pixal3d_knight	pixal3d	figurine	120	paradox_worker/preview_textures/n2_pixal3d_knight_1024.glb
+triposr_knight	triposr	figurine	120	paradox_worker/preview_textures/f2_triposr_knight.glb
+rodin_computer	rodin	prop	80	POLY_LAB/public/showcase/rodin/computer-high.glb
+rodin_knight	rodin	figurine	120	POLY_LAB/public/showcase/rodin/knight-ultra.glb
+rodin_pump	rodin	prop	80	POLY_LAB/public/showcase/rodin/pump-medium.glb
+rodin_skeleton	rodin	figurine	120	POLY_LAB/public/showcase/rodin/skeleton-lowest.glb
+rodin_spider	rodin	creature	80	POLY_LAB/public/showcase/rodin/spider-low.glb
+meshy_pistol	meshy	weapon	100	POLY_LAB/public/showcase/meshy/pistol-2k.glb
+meshy_rover	meshy	vehicle	100	POLY_LAB/public/showcase/meshy/rover-4k.glb
+tripo_spellbook	tripo	prop	80	POLY_LAB/public/showcase/tripo_p1/spellbook.glb
+tripo_sword	tripo	weapon	150	POLY_LAB/public/showcase/tripo_p1/sword.glb
+tripo_blaster	tripo	weapon	100	POLY_LAB/public/showcase/tripo_p2/blaster.glb
+tripo_pack	tripo	prop	80	POLY_LAB/public/showcase/tripo_p2/pack.glb

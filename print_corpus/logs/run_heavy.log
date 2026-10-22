@@ -1,0 +1,11 @@
+recipe 3769d84: 27 to run
+[1/27] trellis2_statue            651s   5.4GB  solidify watertight=True parts=1 changed=0.0291 lost=0.0
+[2/27] trellis2_crown             387s  2.79GB  solidify watertight=True parts=1 changed=0.0219 lost=0.00028
+[3/27] trellis2_knight            434s  3.54GB  solidify watertight=True parts=1 changed=0.0185 lost=0.0
+[4/27] trellis2_chest             411s  4.53GB  solidify watertight=True parts=1 changed=0.0038 lost=0.0
+[5/27] trellis2_harbor           1800s  10.3GB  FAILED timeout
+[6/27] trellis2_lattice           517s  3.81GB  wrap     watertight=True parts=1 changed=0.085 lost=0.03841
+[7/27] trellis2_armor             325s  2.59GB  wrap     watertight=True parts=1 changed=0.0112 lost=0.0
+[8/27] trellis2_bust              551s  3.17GB  wrap     watertight=True parts=1 changed=0.0066 lost=2e-05
+[9/27] hunyuan_operative          406s  4.22GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[10/27] hunyuan_necromutant         80s  4.37GB  repair   watertight=True parts=1 changed=0.0 lost=0.0

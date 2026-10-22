@@ -1,0 +1,4 @@
+recipe e596348-dirty: 3 to run
+[1/3] trellis2_chest_low         359s  2.22GB  wrap     watertight=True parts=1 changed=0.0026 lost=0.0
+[2/3] tripo_spellbook            249s  1.13GB  wrap     watertight=True parts=1 changed=0.0071 lost=0.0
+[3/3] tripo_blaster              294s  1.33GB  wrap     watertight=True parts=1 changed=0.0064 lost=0.0

@@ -91,7 +91,7 @@ def _download(url: str) -> Path:
 
 def _run_local(job_id: str, operation: str, model_url: str, params: dict, output_key: str) -> None:
     from studio_bridge.r2_public import upload_public_file
-    from studio_bridge.tools_ops import run_operation
+    from studio_bridge.tools_ops import extra_key, run_operation
 
     def update(**fields: Any) -> None:
         with _local_lock:
@@ -99,15 +99,17 @@ def _run_local(job_id: str, operation: str, model_url: str, params: dict, output
 
     update(status="running")
     in_path = out_path = None
+    extra: dict[str, Path] = {}
     try:
         in_path = _download(model_url)
-        out_path, report = run_operation(operation, in_path, params)
+        out_path, report, extra = run_operation(operation, in_path, params)
         url = upload_public_file(out_path, output_key)
-        update(status="ready", modelUrl=url, report=report)
+        extra_urls = {name: upload_public_file(path, extra_key(output_key, name)) for name, path in extra.items()}
+        update(status="ready", modelUrl=url, extraUrls=extra_urls, report=report)
     except Exception as exc:  # the page shows this as the reason
         update(status="failed", error=str(exc)[:500])
     finally:
-        for path in (in_path, out_path):
+        for path in (in_path, out_path, *extra.values()):
             if path is not None:
                 path.unlink(missing_ok=True)
 
@@ -158,6 +160,7 @@ def get_tool_job(job_id: str) -> dict[str, Any]:
         output = raw.get("output") if isinstance(raw.get("output"), dict) else {}
         error = raw.get("error") or output.get("error")
         model_url = output.get("model_url")
+        extra_urls = output.get("extra_urls") if isinstance(output.get("extra_urls"), dict) else {}
         if status == "ready" and not model_url:
             status, error = "failed", error or "The tool finished without a model"
         return {
@@ -166,6 +169,7 @@ def get_tool_job(job_id: str) -> dict[str, Any]:
             "status": status,
             "runpodStatus": raw.get("status"),
             "modelUrl": model_url if isinstance(model_url, str) else None,
+            "extraUrls": {k: v for k, v in extra_urls.items() if isinstance(v, str)},
             "report": output.get("report") if isinstance(output.get("report"), dict) else None,
             "error": str(error)[:500] if error else None,
         }

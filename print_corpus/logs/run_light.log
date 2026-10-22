@@ -1,0 +1,15 @@
+recipe e596348: 14 to run
+[1/14] trellis2_chest_low         309s  2.46GB  wrap     watertight=True parts=1 changed=0.0026 lost=0.0
+[2/14] trellis2_aquarium          429s  2.85GB  wrap     watertight=True parts=1 changed=0.0001 lost=0.0
+[3/14] trellis2_dragon             13s  0.17GB  repair   watertight=True parts=3 changed=0.0 lost=0.0
+[4/14] hunyuan_lighthouse         115s  0.61GB  wrap     watertight=True parts=1 changed=0.0089 lost=0.0
+[5/14] hunyuan_lowpoly             49s  0.38GB  repair   watertight=True parts=1 changed=0.0091 lost=0.0
+[6/14] hunyuan_crystals            85s  0.56GB  repair   watertight=True parts=1 changed=0.0021 lost=0.0
+[7/14] hunyuan_truck              153s  0.97GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[8/14] step1x_knight               40s  0.74GB  repair   watertight=True parts=1 changed=0.004 lost=0.0
+[9/14] triposr_knight              48s   0.4GB  repair   watertight=True parts=1 changed=0.0 lost=0.0001
+[10/14] meshy_pistol                62s  0.48GB  wrap     watertight=True parts=1 changed=0.0058 lost=0.0
+[11/14] tripo_spellbook            196s  1.08GB  wrap     watertight=True parts=1 changed=0.0071 lost=0.0
+[12/14] tripo_sword                 26s  0.25GB  wrap     watertight=True parts=1 changed=0.0056 lost=0.0
+[13/14] tripo_blaster              306s  1.33GB  wrap     watertight=True parts=1 changed=0.0064 lost=0.0
+[14/14] tripo_pack                  39s  0.35GB  wrap     watertight=True parts=1 changed=0.0089 lost=0.0

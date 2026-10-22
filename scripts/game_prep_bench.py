@@ -68,7 +68,7 @@ def main() -> None:
     for model in models:
         for mode, params in MODES.items():
             t0 = time.time()
-            out, report = run_operation("game_prep", args.models / f"{model}.glb", params)
+            out, report, _ = run_operation("game_prep", args.models / f"{model}.glb", params)
             shutil.copyfile(out, args.out / f"{model}_{mode}.glb")
             try:
                 out.unlink(missing_ok=True)
