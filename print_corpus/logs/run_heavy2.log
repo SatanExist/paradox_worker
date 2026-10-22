@@ -10,3 +10,5 @@ recipe 3769d84: 17 to run
 [9/17] hi3dgen_space_bust          65s  2.31GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
 [10/17] direct3ds2_knight         1288s 14.45GB  repair   watertight=True parts=1 changed=0.0004 lost=0.00022
 [11/17] pixal3d_knight             783s  3.55GB  solidify watertight=True parts=1 changed=0.0128 lost=0.0
+[12/17] rodin_computer             186s  2.79GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[13/17] rodin_knight               718s  2.94GB  repair   watertight=True parts=4 changed=0.0005 lost=0.0
