@@ -1,0 +1,11 @@
+recipe ca68824-dirty: 15 to run
+[1/15] trellis2_chest_low         486s  2.23GB  solidify watertight=True parts=1 changed=0.0086 lost=0.0
+[2/15] trellis2_aquarium          408s  2.22GB  solidify watertight=True parts=1 changed=0.0001 lost=0.0
+[3/15] trellis2_dragon              8s  0.18GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[4/15] hunyuan_lighthouse         117s  0.61GB  wrap     watertight=True parts=1 changed=0.0054 lost=0.0
+[5/15] hunyuan_magnum              11s  0.31GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[6/15] hunyuan_lowpoly             47s  0.36GB  repair   watertight=True parts=1 changed=0.0081 lost=0.0
+[7/15] hunyuan_crystals            87s  0.57GB  repair   watertight=True parts=1 changed=0.0021 lost=0.0
+[8/15] hunyuan_truck              150s  0.85GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[9/15] step1x_knight               42s  0.72GB  repair   watertight=True parts=1 changed=0.0038 lost=0.0
+[10/15] triposr_knight              46s  0.39GB  repair   watertight=True parts=1 changed=0.0 lost=0.0001

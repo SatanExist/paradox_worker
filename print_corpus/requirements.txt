@@ -1,0 +1,11 @@
+# Same pins as Dockerfile.tools, plus psutil (run.py) and rtree (heat.py). Python 3.11.
+numpy<2.3
+scipy
+networkx
+trimesh==4.5.3
+pymeshlab==2023.12.post3
+libigl==2.6.3
+scikit-image==0.26.0
+cgal==6.0.1.post202410241521
+psutil
+rtree

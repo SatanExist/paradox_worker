@@ -1,0 +1,12 @@
+recipe 3769d84: 17 to run
+[1/17] hunyuan31_mech             610s  5.27GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[2/17] hunyuan31_scorpion         521s  4.37GB  wrap     watertight=True parts=1 changed=0.0267 lost=0.0
+[3/17] hunyuan31_drill            101s  4.44GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[4/17] hunyuan31_camera           330s  4.64GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
+[5/17] hunyuan31_watch            575s  3.41GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[6/17] hi3dgen_dog                 85s  2.47GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[7/17] hi3dgen_dragon              87s  3.23GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[8/17] hi3dgen_snowman            144s  1.19GB  repair   watertight=True parts=1 changed=0.0 lost=0.00049
+[9/17] hi3dgen_space_bust          65s  2.31GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[10/17] direct3ds2_knight         1288s 14.45GB  repair   watertight=True parts=1 changed=0.0004 lost=0.00022
+[11/17] pixal3d_knight             783s  3.55GB  solidify watertight=True parts=1 changed=0.0128 lost=0.0
