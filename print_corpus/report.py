@@ -4,6 +4,7 @@ usage:
   python report.py                 the latest recipe
   python report.py e596348         that recipe
   python report.py e596348 abc1234 before -> after, per model
+  python report.py --times 3769d84 where the time goes: each candidate, and the rest (local repair, measuring, export)
 """
 from __future__ import annotations
 
@@ -58,6 +59,17 @@ def show(rec: str) -> None:
     print(f"\npassed {ok} of {len(res)}")
 
 
+def times(rec: str) -> None:
+    res = [r for r in by_recipe(rec).values() if r.get("candidates")]
+    print(f"{'model':24} {'faces':>9} {'secs':>5} {'cands':>6} {'rest':>5}  picked    candidates")
+    for r in sorted(res, key=lambda r: -r["secs"]):
+        spent = sum(c["secs"] for c in r["candidates"])
+        cands = " ".join(f"{c['method']}={c['secs']:.0f}" for c in r["candidates"])
+        print(f"{r['id']:24} {r.get('inFaces', 0):>9} {r['secs']:>5} {spent:>6.0f} {r['secs'] - spent:>5.0f}  {r.get('method', '—'):9} {cands}")
+    lost = sum(c["secs"] for r in res for c in r["candidates"] if c["method"] != r.get("method"))
+    print(f"\nlosing candidates took {lost:.0f} s of {sum(r['secs'] for r in res)} s in all")
+
+
 def compare(a: str, b: str) -> None:
     ra, rb = by_recipe(a), by_recipe(b)
     print(f"{'model':24} {'verdict ' + a:28} {'verdict ' + b:28} {'changed':>17} {'secs':>11}")
@@ -69,7 +81,9 @@ def compare(a: str, b: str) -> None:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if len(args) == 2:
+    if args[:1] == ["--times"]:
+        times(args[1] if len(args) > 1 else rows()[-1]["recipe"])
+    elif len(args) == 2:
         compare(*args)
     else:
         show(args[0] if args else rows()[-1]["recipe"])

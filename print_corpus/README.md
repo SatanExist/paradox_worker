@@ -13,7 +13,7 @@ Plan and reasoning: `POLY_LAB/memory-bank/handoff-print.md` (start here) and
 - `run.py`: runs every model not yet run with the current recipe (the last paradox_worker commit that touched the print files, + `-dirty` when the print
   files have changes), one process each, low priority, 30 min limit, peak RAM over the process tree.
   Rows go to `results.jsonl` (kept in git), the output GLBs and logs to `out/` (not kept).
-- `report.py`: a table for one recipe, or two recipes side by side.
+- `report.py`: a table for one recipe, or two recipes side by side; `--times` shows where the time goes.
 - `heat.py <id>`: the result coloured by how far it moved from the original, into `view/`; open `view/index.html`
   over http (`python -m http.server 8765` in `view/`).
 - `logs/`: the stdout of every corpus run so far.
@@ -28,6 +28,7 @@ uv pip install --python .venv/Scripts/python.exe -r requirements.txt
 .venv/Scripts/python.exe run.py --min-faces=300001   # the heavy ones (27, hours, up to 14 GB)
 .venv/Scripts/python.exe report.py 3769d84           # one recipe
 .venv/Scripts/python.exe report.py ca68824-dirty 3769d84
+.venv/Scripts/python.exe report.py --times 3769d84   # time per candidate + the rest
 ```
 
 What counts as a pass: watertight, 1 part, lost ≤ 0.1%, result wall 2V/A ≥ 1 mm, and as little changed (where it can
