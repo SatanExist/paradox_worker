@@ -1,0 +1,7 @@
+recipe 3769d84: 6 to run
+[1/6] trellis2_crown             202s  2.22GB  solidify watertight=True parts=1 changed=0.0219 lost=0.00028
+[2/6] trellis2_armor             174s  2.23GB  wrap     watertight=True parts=1 changed=0.0112 lost=0.0
+[3/6] hunyuan31_mech             258s   5.0GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[4/6] hunyuan31_camera           149s  4.07GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
+[5/6] direct3ds2_knight          492s 19.84GB  repair   watertight=True parts=1 changed=0.0004 lost=0.00022
+[6/6] rodin_computer              24s  2.65GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
