@@ -1,0 +1,5 @@
+recipe 3769d84: 4 to run
+[1/4] rodin_pump                 157s  2.92GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
+[2/4] rodin_skeleton             102s  2.45GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[3/4] rodin_spider                23s   3.0GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[4/4] meshy_rover                590s  9.12GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
