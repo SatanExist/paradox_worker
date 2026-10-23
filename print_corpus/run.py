@@ -117,8 +117,9 @@ def run_one(m: dict, rec: str) -> dict:
         "volumeCm3": after.get("volumeCm3"), "faces": after.get("faces"),
         "method": solid.get("method") or ("voxel" if report.get("remesh") else "none"),
         "wallMm": solid.get("wallMm"), "afterWallMm": report.get("afterWallMm"), "cameClosed": solid.get("cameClosed"),
-        "candidates": [{k: c.get(k) for k in ("method", "parts", "volumeCm3", "changedShare", "changedHiddenShare", "lostShare", "secs")}
+        "candidates": [{k: c.get(k) for k in ("method", "parts", "volumeCm3", "changedShare", "changedHiddenShare", "lostShare", "secs", "stages")}
                        for c in solid.get("candidates", [])],
+        "timings": {**(report.get("timings") or {}), **(solid.get("stages") or {})},
         "steps": report["steps"],
         "floating": report.get("floating"),
     })

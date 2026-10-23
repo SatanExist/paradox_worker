@@ -126,9 +126,13 @@ def _close_holes_pymeshlab(mesh, max_hole_size: int):
 
 
 def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    import time
+
     import numpy as np
     import trimesh
 
+    t0 = time.time()
+    timings: dict[str, float] = {}
     mesh = _load(in_path)
     steps: list[str] = []
 
@@ -141,6 +145,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     mesh.remove_unreferenced_vertices()
     before = _print_checks(mesh)
     steps.append("welded")
+    timings["load"] = round(time.time() - t0, 1)
+    t = time.time()
 
     height_mm = params.get("heightMm")
     remesh = solid = None
@@ -173,6 +179,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                 steps.append(f"rebuilt as a closed solid ({remesh['voxelMm']:g} mm detail)")
     trimesh.repair.fix_normals(mesh)
     steps.append("normals fixed")
+    timings["solid"] = round(time.time() - t, 1)
+    t = time.time()
 
     # Pieces hanging in mid-air: the user chooses, the default is to remove them. Both files are made, so
     # the choice is instant; the main one follows params["floating"], the other goes out as "alternate".
@@ -184,6 +192,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         print(f"floating pieces not checked: {exc}")
         body, pieces, about = mesh, None, []
     keep = str(params.get("floating") or "remove") == "keep"
+    timings["floating"] = round(time.time() - t, 1)
+    t = time.time()
 
     # Scale and plate placement come from the body alone, so both files line up and the body sits on Y=0.
     s = 1.0
@@ -234,6 +244,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["solid"] = solid
     if remesh:
         report["remesh"] = remesh
+    timings["export"] = round(time.time() - t, 1)
+    report["timings"] = timings
     return report
 
 

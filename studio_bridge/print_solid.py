@@ -17,6 +17,11 @@ defect and refill it); then:
              fills thin openwork (beads, lace) solid, at the cost of rounding up to 0.5 mm. Only built for
              models that came in open.
 
+Candidates are built in the order they usually win, and the rest are skipped once one can't be beaten
+(kept everything, one part, changed under 0.1 % where it shows): on a real solid the repair, on a paper
+skin solidify and wrap, with the repair only when neither came out solid. On the corpus the repair never
+won on a paper skin and the wrap never won after a clean repair.
+
 A candidate that left original surface behind (farther than 1 mm and outside the result) on more than
 0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. Of the rest the one that
 changed least where it shows wins, unless the other holds clearly more volume: that is the one that filled the hollow.
@@ -43,6 +48,7 @@ SKIN_MM = 1.0  # mean wall (2·volume/area) below this is a paper skin with a ho
 SAMPLES = 200_000
 SEED = 0
 VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
+SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
 
 Log = Callable[[str], None]
 
@@ -310,7 +316,15 @@ def _thickness(m) -> float | None:
     return float(2 * abs(m.volume) / m.area)
 
 
-def _finish(m, log: Log):
+def _tick(shared: dict[str, Any], stage: str, since: float) -> float:
+    """Add the time since `since` to the stage of the candidate being built; returns the time now."""
+    now = time.time()
+    stages = shared.setdefault("stages", {})
+    stages[stage] = round(stages.get(stage, 0.0) + now - since, 1)
+    return now
+
+
+def _finish(m, log: Log, shared: dict[str, Any]):
     t = time.time()
     m = _drop_pockets(m)
     try:
@@ -318,9 +332,10 @@ def _finish(m, log: Log):
     except Exception as exc:  # non-orientable seams can still break it; the slicer copes with crossings
         log(f"  self-union failed, kept as is: {exc}")
     log(f"  self-union {time.time() - t:.0f}s")
-    t = time.time()
+    t = _tick(shared, "union", t)
     m, bridged = _bridge(m, log)
     log(f"  bridges {time.time() - t:.0f}s")
+    _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
 
 
@@ -330,11 +345,12 @@ def _shell(orig, shared: dict[str, Any], log: Log):
         t = time.time()
         shared["shell"] = _wrap(orig.vertices, orig.faces, WRAP_ALPHA_MM)
         log(f"  wrap {time.time() - t:.0f}s")
+        _tick(shared, "wrap", t)
     return shared["shell"].copy()
 
 
 def _repaired(orig, repaired, shared, log: Log):
-    return _finish(repaired.copy(), log)
+    return _finish(repaired.copy(), log, shared)
 
 
 def _solidified(orig, repaired, shared, log: Log):
@@ -342,18 +358,24 @@ def _solidified(orig, repaired, shared, log: Log):
     t = time.time()
     block, chamber = _chamber_block(orig, log)
     log(f"  chamber {time.time() - t:.0f}s")
+    _tick(shared, "chamber", t)
     if block is None:
         raise RuntimeError("no chamber behind the skin")
     shell = _shell(orig, shared, log)
     t = time.time()
     m = _drop_pockets(_union(shell, block))  # gaps the block didn't reach are sealed pockets: filled too
     log(f"  fill union {time.time() - t:.0f}s")
+    t = _tick(shared, "union", t)
     m, bridged = _bridge(m, log)
+    _tick(shared, "bridges", t)
     return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged}
 
 
 def _wrapped(orig, repaired, shared, log: Log):
-    m, bridged = _bridge(_shell(orig, shared, log), log)
+    shell = _shell(orig, shared, log)
+    t = time.time()
+    m, bridged = _bridge(shell, log)
+    _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
 
 
@@ -432,6 +454,11 @@ def _good(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [c for c in cands if c["watertight"] and (c["volumeCm3"] or 0) > 0 and c["lostShare"] <= LOST_MAX_SHARE and not _paper(c)]
 
 
+def _settled(cands: list[dict[str, Any]]) -> bool:
+    """One candidate already can't be beaten: kept everything, one part, solid, changed nearly nothing seen."""
+    return any(c["parts"] == 1 and c["changedShare"] <= SETTLED_CHANGE for c in _good(cands))
+
+
 def _pick(cands: list[dict[str, Any]]):
     closed = [c for c in cands if c["watertight"] and (c["volumeCm3"] or 0) > 0]
     if not closed:
@@ -462,19 +489,21 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
     orig = _weld(trimesh.Trimesh(np.asarray(mesh.vertices, np.float64) * mm_per_unit, np.asarray(mesh.faces), process=False))
     came_closed = bool(orig.is_watertight)
     orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+    stages: dict[str, float] = {"prepare": round(time.time() - t0, 1)}
 
     t1 = time.time()
     builders: list[tuple[str, Callable]] = []
     repaired = wall = None
+    paper = False
     try:
         repaired = _local_repair(orig.copy(), log)
         wall = _thickness(repaired)
         log(f" local repair {time.time() - t1:.0f}s, closed {repaired.is_watertight}, wall {wall if wall is None else round(wall, 2)} mm")
-        builders.append(("repair", _repaired))
-        if wall is None or wall < SKIN_MM:  # a paper skin, or unknown: the gate judges the result
-            builders.append(("solidify", _solidified))
+        paper = wall is None or wall < SKIN_MM  # a paper skin, or unknown: the gate judges the result
+        builders = [("solidify", _solidified)] if paper else [("repair", _repaired)]
     except Exception as exc:
         log(f" local repair failed: {exc}")
+    stages["localRepair"] = round(time.time() - t1, 1)
     if not came_closed or not builders:
         builders.append(("wrap", _wrapped))
     cands: list[dict[str, Any]] = []
@@ -483,18 +512,29 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
     def build(name: str, fn: Callable) -> None:
         t1 = time.time()
         log(f" {name}:")
+        shared["stages"] = {}
         try:
             m, extra = fn(orig, repaired, shared, log)
         except Exception as exc:
             log(f"  {name} failed: {exc}")
             return
+        t2 = time.time()
         c = {"method": name, **_measure(orig, orig_pts, m), **extra, "secs": round(time.time() - t1, 1)}
+        _tick(shared, "measure", t2)
+        c["stages"] = shared.pop("stages")
         log(f"  {name}: {c}")
         c["_mesh"] = m
         cands.append(c)
 
     for name, fn in builders:
+        if _settled(cands):
+            log(f" {name}: skipped, {cands[-1]['method']} can't be beaten")
+            continue
         build(name, fn)
+    # On a paper skin the repair stays paper; it is only worth building when nothing else came out solid.
+    if paper and repaired is not None and not _good(cands):
+        log(" no solid result: trying the repair after all")
+        build("repair", _repaired)
     # The wall guessed from the repaired mesh is only a guess: holes capped flat can make a paper skin
     # look solid. What counts is the results, so when none of them came out solid, fill the hollow anyway.
     if not _good(cands) and all(c["method"] != "solidify" for c in cands):
@@ -514,6 +554,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
         "resultWallMm": best["wallMm"],
         "thinWalls": _paper(best),  # every result was paper: say so instead of "ready"
         "candidates": [{k: v for k, v in c.items() if not k.startswith("_")} for c in cands],
+        "stages": stages,
         "secs": round(time.time() - t0, 1),
     }
     if note:
