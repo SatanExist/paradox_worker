@@ -1,0 +1,25 @@
+recipe b4874a9: 24 to run
+[1/24] trellis2_statue            290s  5.01GB  solidify watertight=True parts=1 changed=0.0291 lost=0.0
+[2/24] trellis2_crown             164s  2.81GB  solidify watertight=True parts=1 changed=0.0219 lost=0.00028
+[3/24] trellis2_knight            192s  3.24GB  solidify watertight=True parts=1 changed=0.0185 lost=0.0
+[4/24] trellis2_chest             206s  4.18GB  solidify watertight=True parts=1 changed=0.0038 lost=0.0
+[5/24] trellis2_harbor            964s 11.18GB  solidify watertight=True parts=1 changed=0.0147 lost=7e-05
+[6/24] trellis2_lattice           275s  3.82GB  wrap     watertight=True parts=1 changed=0.085 lost=0.03841
+[7/24] trellis2_armor             153s  2.16GB  wrap     watertight=True parts=1 changed=0.0112 lost=0.0
+[8/24] trellis2_bust              301s  2.81GB  wrap     watertight=True parts=1 changed=0.0066 lost=2e-05
+[9/24] hunyuan_operative          190s  3.76GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[10/24] hunyuan_necromutant         45s  4.38GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[11/24] hunyuan31_mech             148s  4.95GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[12/24] hunyuan31_scorpion         239s  4.44GB  wrap     watertight=True parts=1 changed=0.0267 lost=0.0
+[13/24] hunyuan31_drill             40s  4.17GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[14/24] hunyuan31_camera            89s  4.25GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
+[15/24] hunyuan31_watch            244s  4.97GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[16/24] hi3dgen_dog                 29s  2.18GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[17/24] hi3dgen_dragon              31s  2.92GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[18/24] hi3dgen_snowman             39s   1.2GB  repair   watertight=True parts=1 changed=0.0 lost=0.00049
+[19/24] hi3dgen_space_bust          23s  1.66GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[20/24] direct3ds2_knight          480s 19.83GB  repair   watertight=True parts=1 changed=0.0004 lost=0.00022
+[21/24] pixal3d_knight             342s  3.21GB  solidify watertight=True parts=1 changed=0.0128 lost=0.0
+[22/24] rodin_computer              25s   2.6GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[23/24] rodin_knight               212s  2.95GB  repair   watertight=True parts=4 changed=0.0005 lost=0.0
+[24/24] meshy_rover                573s  9.12GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
