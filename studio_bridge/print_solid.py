@@ -49,6 +49,7 @@ SAMPLES = 200_000
 SEED = 0
 VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
 SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
+HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
 
 Log = Callable[[str], None]
 
@@ -130,6 +131,45 @@ def _cut_around(m, bad, radius: float):
     return sel
 
 
+def _close_holes_near(ms) -> None:
+    """meshlab's close_holes on the current mesh, run only on a band of faces round the holes.
+
+    On the whole mesh the filter costs about a minute per million faces, though the holes are a few patches;
+    on a band of a few rings it gives the same triangles in seconds. The band's own cut edge stays open:
+    only holes whose rim faces are selected get closed. The refine length is fixed to what "3 %" means on
+    the whole mesh, so the patches come out the same as before."""
+    import numpy as np
+    import pymeshlab
+
+    cm = ms.current_mesh()
+    V, F = cm.vertex_matrix(), cm.face_matrix()
+    e = np.sort(F[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2).astype(np.int64), axis=1)
+    _, inv, cnt = np.unique(e[:, 0] * len(V) + e[:, 1], return_inverse=True, return_counts=True)
+    rim_v = np.zeros(len(V), dtype=bool)
+    rim_v[e[cnt[inv.ravel()] == 1].ravel()] = True
+    if not rim_v.any():
+        return
+    rim = rim_v[F].any(axis=1)
+    band = rim.copy()
+    for _ in range(HOLE_BAND_RINGS):
+        v = np.zeros(len(V), dtype=bool)
+        v[F[band].ravel()] = True
+        band |= v[F].any(axis=1)
+    used = np.unique(F[band])
+    remap = np.full(len(V), -1, dtype=np.int64)
+    remap[used] = np.arange(len(used))
+    edge = pymeshlab.PureValue(0.03 * float(np.linalg.norm(V.max(0) - V.min(0))))
+    part = pymeshlab.MeshSet()
+    part.add_mesh(pymeshlab.Mesh(V[used], remap[F[band]].astype(np.int32), f_scalar_array=rim[band].astype(np.float64)))
+    part.compute_selection_by_condition_per_face(condselect="fq > 0.5")
+    part.meshing_close_holes(maxholesize=100000, selected=True, refinehole=True, refineholeedgelen=edge, selfintersection=False)
+    pm = part.current_mesh()
+    PV, PF = pm.vertex_matrix(), pm.face_matrix()
+    # The band keeps its vertices in order; vertices the patches added come after them.
+    back = np.concatenate([used, len(V) + np.arange(len(PV) - len(used))])
+    ms.add_mesh(pymeshlab.Mesh(np.vstack([V, PV[len(used):]]), np.vstack([F[~band], back[PF]]).astype(np.int32)))
+
+
 def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
     """Keep the surface; cut a small patch round each defect and refill it, growing the patch each round."""
     import numpy as np
@@ -157,7 +197,7 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
         ms = _ms(m)
         ms.meshing_repair_non_manifold_edges(method=0)
         ms.meshing_repair_non_manifold_vertices()
-        ms.meshing_close_holes(maxholesize=100000, refinehole=True, selfintersection=False)
+        _close_holes_near(ms)
         m = _from_ms(ms)
     m = _reorient(m, log)
     trimesh.repair.fix_normals(m)
