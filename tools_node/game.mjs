@@ -24,7 +24,9 @@ const targetTris = Number(params.targetTris) || 20000;
 const textureSize = Number(params.textureSize) || 2048;
 const maxError = Number(params.maxErrorPct) > 0 ? Number(params.maxErrorPct) / 100 : null;
 // Points (float32 x,y,z) where an earlier cut lost detail: vertices there are kept (tools_ops.py).
-const keep = params.keepFile ? new Float32Array(readFileSync(params.keepFile).buffer.slice(0)) : null;
+// Copied into a buffer of its own: a small file's Buffer is a slice of Node's shared pool, and reading
+// its .buffer whole gave 16384 floats of whatever else was in the pool (no point ever matched).
+const keep = params.keepFile ? new Float32Array(new Uint8Array(readFileSync(params.keepFile)).buffer) : null;
 
 const TRIANGLES = 4;
 /** Pieces smaller than this share of the model are specks the generator left floating around it. */
@@ -205,8 +207,10 @@ function cut(prims, ratio, flags = []) {
   if (prims.length > 1) return cutTogether(prims, { targetTris: Math.floor(triangleCount(prims) * ratio), flags });
   for (const p of prims) {
     const target = Math.floor((p.indices.length / 3) * ratio) * 3;
-    [p.indices] = p.stride
-      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.budgetWeights, p.lock ?? null, target, Number.MAX_VALUE, flags)
+    // Plain simplify takes no locks: with points to keep and nothing else to weigh, one zero attribute.
+    const [attributes, stride, weights] = p.stride ? [p.attributes, p.stride, p.budgetWeights] : [new Float32Array(p.positions.length / 3), 1, [0]];
+    [p.indices] = p.stride || p.lock
+      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, attributes, stride, weights, p.lock ?? null, target, Number.MAX_VALUE, flags)
       : MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, Number.MAX_VALUE, flags);
   }
 }

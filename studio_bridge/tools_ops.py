@@ -511,27 +511,35 @@ class _Reference:
         return deviation, lost
 
 
-def _lost_detail(original, lost, target_tris: int):
-    """A few vertices to keep where a cut lost the most: the farthest of each lost spot.
+# Parts a cut to a budget lost: where an original vertex ends up over KEEP_LOST_PCT of the model's size
+# from the new surface (antennas, rocket tips, thin barrels). Up to KEEP_ROUNDS times a vertex is kept at
+# the worst spots and the model cut again with the same budget: fixing one spot can open another.
+# Mech at 10k: an antenna gone (5.17%) -> 0.93%, vertices over 0.5% off 8714 -> 2605; scorpion 7.85 -> 1.69%.
+KEEP_LOST_PCT = 0.5
+KEEP_ROUNDS = 3
 
-    Spots are where an original vertex ended up over 1% of the model's size from the new
-    surface — antennas, barrels, edges cut off. One vertex per spot, spaced at least 1% apart,
-    at most 2% of the triangle budget, so the budget is still met.
-    """
+
+def _lost_detail(original, lost, target_tris: int, kept):
+    """More vertices to keep where a cut lost the most: the farthest of each lost spot, spaced at least
+    1% of the model's size apart and from those already kept. All of them together stay within 2% of
+    the triangle budget, half of what is left going each round, so later rounds have room for what
+    they find."""
     import numpy as np
 
     ov = original[0]
     size = float((ov.max(0) - ov.min(0)).max()) or 1.0
     order = np.argsort(-lost)
-    order = order[lost[order] > 1.0][:20_000]
-    cap = max(20, target_tris // 50)
-    chosen: list[int] = []
+    order = order[lost[order] > KEEP_LOST_PCT][:50_000]
+    room = max(20, target_tris // 50) - len(kept)
+    chosen: list[int] = list(kept)
+    added = 0
     for v in order:
-        if len(chosen) >= cap:
+        if added >= max(1, room // 2) or room <= 0:
             break
         if not chosen or np.linalg.norm(ov[chosen] - ov[v], axis=1).min() > 0.01 * size:
             chosen.append(int(v))
-    return ov[chosen]
+            added += 1
+    return chosen[len(kept):]
 
 
 def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, Any]:
@@ -607,12 +615,15 @@ NOTICEABLE_OK_PCT = 5.5
 #   20k, watch 10k not. One threshold can't hold all six (mech 20k 8.82% fine, watch 10k 8.89% not,
 #   scorpion 20k 10.97% fine), so it errs on the side of looks: 8.85%, scorpion gets 35k.
 # With baking (bake: true) a normal map carries the shape the cut takes away, so the ladder starts lower.
-# PROVISIONAL (2026-10-26): the same thresholds, not yet marked by eye for baked cuts.
+# Baked cuts marked by eye (2026-10-26), regular: fine at camera 5k (1.13%), drill 5k (1.89%), watch 10k
+# (4.67%), mech 10k (6.64%), scorpion 20k (6.32%); crumpled at watch 5k (9.18%), mech 5k (14.95%),
+# scorpion 10k (13.84%). Any threshold from 6.7 to 9.1% splits them; 7% keeps to the safe side.
+# Background with baking is not marked yet: its plain threshold stands in.
 PURPOSES: dict[str, dict[str, Any]] = {
     "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS,
-                "bakeFloor": 5000, "bakeLadder": (5000, 10000, *AUTO_BUDGETS)},
+                "bakeFloor": 5000, "bakeOkPct": 7.0, "bakeLadder": (5000, 10000, *AUTO_BUDGETS)},
     "background": {"res": 128, "floor": 5000, "okPct": 8.85, "ladder": (5000, 10000, 20000, 35000, 50000, 100000),
-                   "bakeFloor": 2000, "bakeLadder": (2000, 5000, 10000, 20000, 35000, 50000, 100000)},
+                   "bakeFloor": 2000, "bakeOkPct": 8.85, "bakeLadder": (2000, 5000, 10000, 20000, 35000, 50000, 100000)},
 }
 PURPOSES["hero"] = PURPOSES["regular"]
 
@@ -652,11 +663,12 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
     return step
 
 
-def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any], bake: bool = False) -> dict[str, Any]:
-    """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct), by halving the
-    ladder: a few quick cuts (no second pass) looked at from the six views, a borderline one redone in
-    full. Bigger budgets look at least as good, so the search can skip. Returns the pick and every budget
-    tried, in order."""
+def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
+                 bake: bool = False, bake_ok_pct: float | None = None) -> dict[str, Any]:
+    """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct, or bake_ok_pct for a
+    baked cut: each was marked by eye on its own), by halving the ladder: a few quick cuts (no second pass)
+    looked at from the six views, a borderline one redone in full. Bigger budgets look at least as good,
+    so the search can skip. Returns the pick and every budget tried, in order."""
     faces = _shaded(in_path)[1]
     floor, ladder = (purpose["bakeFloor"], purpose["bakeLadder"]) if bake else (purpose["floor"], purpose["ladder"])
     if len(faces) <= floor:  # already light: nothing to cut
@@ -668,7 +680,8 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
         mid = (lo + hi) // 2
         step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake)
         seen = step["noticeablePct"]
-        if ok_pct < seen <= ok_pct * RECHECK_MARGIN:
+        limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct
+        if limit < seen <= limit * RECHECK_MARGIN:
             fd, name = tempfile.mkstemp(suffix=".glb")
             os.close(fd)
             full: dict[str, Any] = {}
@@ -681,12 +694,13 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
                     except OSError:
                         pass
             seen = step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
+            limit = bake_ok_pct if full["after"].get("bake", {}).get("used") and bake_ok_pct else ok_pct
         tried.append(step)
-        if seen <= ok_pct:
+        if seen <= limit:
             hi = mid
         else:
             lo = mid + 1
-    return {"picked": ladder[lo], "okPct": ok_pct, "tried": tried}
+    return {"picked": ladder[lo], "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), "tried": tried}
 
 
 def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
@@ -740,7 +754,8 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     texture_size = int(params.get("textureSize") or 2048)
     gltf = _glb_json(in_path) or {}
     bake = bool(params.get("bake")) and _blender() is not None and not (gltf.get("skins") or gltf.get("animations"))
-    auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake)
+    bake_ok_pct = float(params.get("maxNoticeablePct") or purpose["bakeOkPct"])
+    auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake, bake_ok_pct=bake_ok_pct)
     auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
     report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
@@ -781,32 +796,40 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     deviation, lost = reference.compare(out_path, result["shift"], find_lost=to_budget and not original[3])
     steps = list(result["steps"])
 
-    # To a budget a whole part can go (the error limit is off). When the worst spot stands out,
-    # keep a vertex at each place that went missing and cut again; take it only if it measures
-    # better: the worst spot clearly smaller, the shape on the whole no worse.
-    if lost is not None and deviation["maxPct"] > max(1.0, 4 * deviation["meanPct"]):
-        keep = _lost_detail(original, lost, job["targetTris"])
-        if len(keep):
-            fd, keep_name = tempfile.mkstemp(suffix=".f32")
-            os.close(fd)
-            fd, second_name = tempfile.mkstemp(suffix=".glb")
-            os.close(fd)
-            keep_path, second_path = Path(keep_name), Path(second_name)
+    # To a budget a whole part can go (the error limit is off): find what went missing, keep a vertex
+    # there, cut again, all in this one run. A round stays only if the shape came closer: the worst
+    # spot smaller or the whole closer, and the whole no more than 5% further off than the first cut.
+    first_mean, kept, tried = deviation["meanPct"], [], 0
+    while lost is not None and tried < KEEP_ROUNDS and (lost > KEEP_LOST_PCT).any():
+        more = _lost_detail(original, lost, job["targetTris"], kept)
+        if not more:
+            break
+        tried += 1
+        fd, keep_name = tempfile.mkstemp(suffix=".f32")
+        os.close(fd)
+        fd, second_name = tempfile.mkstemp(suffix=".glb")
+        os.close(fd)
+        keep_path, second_path = Path(keep_name), Path(second_name)
+        try:
+            keep_path.write_bytes(np.asarray(original[0][kept + more], dtype=np.float32).tobytes())
+            second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
+            again, again_lost = reference.compare(second_path, second["shift"], find_lost=True)
+            closer = again["maxPct"] < 0.97 * deviation["maxPct"] or again["meanPct"] < 0.97 * deviation["meanPct"]
+            if closer and again["maxPct"] <= deviation["maxPct"] and again["meanPct"] <= 1.05 * first_mean:
+                shutil.copyfile(second_path, out_path)
+                kept += more
+                result, deviation, lost = second, again, again_lost
+            else:
+                break
+        finally:
+            keep_path.unlink(missing_ok=True)
             try:
-                keep_path.write_bytes(np.asarray(keep, dtype=np.float32).tobytes())
-                second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
-                again, _ = reference.compare(second_path, second["shift"])
-                if again["maxPct"] < 0.9 * deviation["maxPct"] and again["meanPct"] <= 1.15 * deviation["meanPct"]:
-                    shutil.copyfile(second_path, out_path)
-                    result, deviation, steps = second, again, list(second["steps"])
-                else:
-                    steps.append(f"tried keeping {len(keep)} lost spots: no better, first cut kept")
-            finally:
-                keep_path.unlink(missing_ok=True)
-                try:
-                    second_path.unlink(missing_ok=True)
-                except OSError:  # Windows: trimesh may still hold it
-                    pass
+                second_path.unlink(missing_ok=True)
+            except OSError:  # Windows: trimesh may still hold it
+                pass
+    steps = list(result["steps"])
+    if kept:
+        steps.append(f"lost details found and kept: {len(kept)} spots in {tried} rounds, worst spot now {deviation['maxPct']:g}% off")
 
     if job.get("forBake"):
         baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
@@ -841,7 +864,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         after["look"] = {**look(in_path, out_path, result["shift"], Path(preview_name), res=purpose["res"]), "purpose": purpose_name}
         report["extraFiles"] = {"preview.png": preview_name}
         if not params.get("maxErrorPct"):
-            if after["look"]["noticeablePct"] > purpose["okPct"]:
+            if after["look"]["noticeablePct"] > purpose["bakeOkPct" if job.get("forBake") else "okPct"]:
                 steps.append(
                     f"looks noticeably different from the original ({after['look']['noticeablePct']:g}% of the picture): "
                     "the auto budget picks the fewest triangles that don't"
