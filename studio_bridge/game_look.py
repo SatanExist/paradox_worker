@@ -23,9 +23,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-RES = 384  # pixels per view side
+RES = 384  # pixels per view side for a model seen at ordinary size; game_prep passes others by purpose
 NOTICE = 0.10  # colour difference (0..1) that stands out at a glance, after the blur
-TEX = 512  # textures are compared at the size a view of this resolution shows them
+TEX = 512  # textures are compared at the size a 384 px view shows them; bigger views get bigger textures
 VIEWS = {  # where the camera looks from; the model is Y up
     "front": (0.0, 0.0, 1.0),
     "back": (0.0, 0.0, -1.0),
@@ -36,7 +36,7 @@ VIEWS = {  # where the camera looks from; the model is Y up
 }
 
 
-def _load(path: Path) -> dict[str, Any]:
+def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
     """Vertices, faces, the file's normals and UVs, per-face material, and per-face tangent frames."""
     import numpy as np
     import trimesh
@@ -56,8 +56,8 @@ def _load(path: Path) -> dict[str, Any]:
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
 
-    def image(tex):
-        return None if tex is None else np.asarray(tex.convert("RGB").resize((TEX, TEX), Image.BOX), np.float32) / 255
+    def image(t):
+        return None if t is None else np.asarray(t.convert("RGB").resize((tex, tex), Image.BOX), np.float32) / 255
 
     verts, faces, normals, uvs, owner, mats, offset = [], [], [], [], [], [], 0
     for node in scene.graph.nodes_geometry:
@@ -109,7 +109,7 @@ def _sample(img, uv):
     return img[y, x]
 
 
-def _draw(m: dict[str, Any], centre, radius: float, view) -> tuple[Any, dict[str, Any]]:
+def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tuple[Any, dict[str, Any]]:
     """One view: the outline and three pictures (everything, texture alone, light alone)."""
     import igl.embree
     import numpy as np
@@ -120,7 +120,7 @@ def _draw(m: dict[str, Any], centre, radius: float, view) -> tuple[Any, dict[str
     right = np.cross(d, up)
     right /= np.linalg.norm(right)
     up = np.cross(right, d)
-    s = (np.arange(RES) + 0.5) / RES * 2 - 1
+    s = (np.arange(res) + 0.5) / res * 2 - 1
     xs, ys = np.meshgrid(s, -s)
     origins = (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
     hit = igl.embree.line_mesh_intersection(origins, np.repeat(d[None], len(origins), 0), m["V"], m["F"])
@@ -173,24 +173,25 @@ def _draw(m: dict[str, Any], centre, radius: float, view) -> tuple[Any, dict[str
     ):
         img = np.zeros((len(origins), 3), np.float32)
         img[seen] = colour
-        pictures[key] = img.reshape(RES, RES, 3)
-    return seen.reshape(RES, RES), pictures
+        pictures[key] = img.reshape(res, res, 3)
+    return seen.reshape(res, res), pictures
 
 
-def compare(original: Path, result: Path, shift, preview: Path | None = None) -> dict[str, Any]:
+def compare(original: Path, result: Path, shift, preview: Path | None = None, res: int = RES) -> dict[str, Any]:
     """The look numbers (in %), and a picture original | result | difference per view when `preview`
     is given. `shift` is how far game.mjs moved the result; it is moved back over the original."""
     import numpy as np
     from scipy import ndimage
 
-    a, b = _load(Path(original)), _load(Path(result))
+    tex = TEX if res <= RES else 2 * TEX  # the blur that judges "at a glance" stays 5 screen pixels at any size
+    a, b = _load(Path(original), tex), _load(Path(result), tex)
     b["V"] = b["V"] - np.asarray(shift, float)
     lo, hi = a["V"].min(0), a["V"].max(0)
     centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
     per_view, rows = {}, []
     for name, view in VIEWS.items():
-        ma, pa = _draw(a, centre, radius, view)
-        mb, pb = _draw(b, centre, radius, view)
+        ma, pa = _draw(a, centre, radius, view, res)
+        mb, pb = _draw(b, centre, radius, view, res)
         both, union = ma & mb, ma | mb
         diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
         glance = np.where(ma ^ mb, 1.0, np.abs(pa["look"] - pb["look"]).mean(-1))

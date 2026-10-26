@@ -493,17 +493,31 @@ AUTO_FLOOR_TRIS = 20000
 AUTO_BUDGETS = (20000, 35000, 50000, 75000, 100000, 150000, 200000)
 NOTICEABLE_OK_PCT = 5.5
 
+# What the model is for decides how big it shows on screen, so how much of it can be seen: the look is
+# judged at that size (px per view side). "regular" is the calibration above. "hero" (a close-up: the main
+# character, a weapon in hand) and "background" (a prop far off) are drafts until marked by eye the same way.
+PURPOSES: dict[str, dict[str, Any]] = {
+    "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS},
+    "hero": {"res": 768, "floor": 20000, "okPct": 5.5, "ladder": (20000, 35000, 50000, 75000, 100000, 150000, 200000)},
+    "background": {"res": 128, "floor": 5000, "okPct": 5.5, "ladder": (5000, 10000, 20000, 35000, 50000, 100000)},
+}
 
-def _auto_budget(in_path: Path, texture_size: int, ok_pct: float) -> dict[str, Any]:
+
+def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    name = str(params.get("purpose") or "regular")
+    return (name, PURPOSES[name]) if name in PURPOSES else ("regular", PURPOSES["regular"])
+
+
+def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose: dict[str, Any]) -> dict[str, Any]:
     """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct), by halving the
     ladder: a few quick cuts (no second pass) looked at from the six views. Bigger budgets look at least
     as good, so the search can skip. Returns the pick and every budget tried, in order."""
     from studio_bridge.game_look import compare as look
 
     faces = _shaded(in_path)[1]
-    if len(faces) <= AUTO_FLOOR_TRIS:  # already light: nothing to cut
+    if len(faces) <= purpose["floor"]:  # already light: nothing to cut
         return {"picked": len(faces), "okPct": ok_pct, "tried": []}
-    ladder = [b for b in AUTO_BUDGETS if b < len(faces)] + [len(faces)]
+    ladder = [b for b in purpose["ladder"] if b < len(faces)] + [len(faces)]
     tried: list[dict[str, Any]] = []
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
     while lo < hi:
@@ -512,7 +526,7 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float) -> dict[str, A
         os.close(fd)
         try:
             cut = _game_mjs(in_path, Path(name), {"targetTris": ladder[mid], "textureSize": texture_size})
-            seen = look(in_path, Path(name), cut["shift"])
+            seen = look(in_path, Path(name), cut["shift"], res=purpose["res"])
         finally:
             try:
                 Path(name).unlink(missing_ok=True)
@@ -530,9 +544,11 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut."""
     if not params.get("autoBudget"):
         return _game_prep(in_path, out_path, params)
-    ok_pct = float(params.get("maxNoticeablePct") or NOTICEABLE_OK_PCT)
+    purpose_name, purpose = _purpose(params)
+    ok_pct = float(params.get("maxNoticeablePct") or purpose["okPct"])
     texture_size = int(params.get("textureSize") or 2048)
-    auto = _auto_budget(in_path, texture_size, ok_pct)
+    auto = _auto_budget(in_path, texture_size, ok_pct, purpose)
+    auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
     report = _game_prep(in_path, out_path, {**plain, "targetTris": auto["picked"]})
     report["after"]["autoBudget"] = auto
@@ -609,16 +625,17 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     fd, preview_name = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     try:
-        after["look"] = look(in_path, out_path, result["shift"], Path(preview_name))
+        purpose_name, purpose = _purpose(params)
+        after["look"] = {**look(in_path, out_path, result["shift"], Path(preview_name), res=purpose["res"]), "purpose": purpose_name}
         report["extraFiles"] = {"preview.png": preview_name}
         if not params.get("maxErrorPct"):
-            if after["look"]["noticeablePct"] > NOTICEABLE_OK_PCT:
+            if after["look"]["noticeablePct"] > purpose["okPct"]:
                 steps.append(
                     f"looks noticeably different from the original ({after['look']['noticeablePct']:g}% of the picture): "
                     "the auto budget picks the fewest triangles that don't"
                 )
-            elif after["triangles"] < AUTO_FLOOR_TRIS < result["before"]["triangles"]:
-                steps.append(f"under {AUTO_FLOOR_TRIS // 1000}k triangles detailed models tend to look crumpled up close")
+            elif after["triangles"] < purpose["floor"] < result["before"]["triangles"]:
+                steps.append(f"under {purpose['floor'] // 1000}k triangles detailed models tend to look crumpled at this size")
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
