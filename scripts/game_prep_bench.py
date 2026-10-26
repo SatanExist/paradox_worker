@@ -39,6 +39,7 @@ def side(report: dict, seconds: float) -> dict:
     return {
         "tris": after["triangles"],
         **after["deviation"],
+        **{k: v for k, v in (after.get("look") or {}).items() if k != "worstView"},
         "fileMb": after["fileMb"],
         "sec": round(seconds, 1),
         "steps": report["steps"],
@@ -68,8 +69,11 @@ def main() -> None:
     for model in models:
         for mode, params in MODES.items():
             t0 = time.time()
-            out, report, _ = run_operation("game_prep", args.models / f"{model}.glb", params)
+            out, report, extra = run_operation("game_prep", args.models / f"{model}.glb", params)
             shutil.copyfile(out, args.out / f"{model}_{mode}.glb")
+            if "preview.png" in extra:
+                shutil.copyfile(extra["preview.png"], args.out / f"{model}_{mode}.preview.png")
+                extra["preview.png"].unlink(missing_ok=True)
             try:
                 out.unlink(missing_ok=True)
             except OSError:  # Windows: run_operation's temp file is still open
@@ -94,7 +98,9 @@ def fmt(s: dict | None) -> str:
     if not s:
         return " " * 44
     shading = f"{s['normalMeanDeg']:>5.1f}/{s['normalP95Deg']:<5.1f}" if "normalMeanDeg" in s else " " * 11
-    return f"{s['tris']:>6} {s['meanPct']:.3f}/{s['maxPct']:<5.2f} {shading} {s.get('sec', 0):>5.1f}s"
+    look = (f" sil {s['silhouettePct']:>5.2f} look {s['lookPct']:>5.2f} tex {s['texturePct']:>5.2f} light {s['lightPct']:>5.2f}"
+            if "lookPct" in s else "")
+    return f"{s['tris']:>6} {s['meanPct']:.3f}/{s['maxPct']:<5.2f} {shading}{look} {s.get('sec', 0):>5.1f}s"
 
 
 def print_row(row: dict) -> None:

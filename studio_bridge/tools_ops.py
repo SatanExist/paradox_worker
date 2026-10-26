@@ -545,7 +545,20 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
         after["maxErrorPct"] = job["maxErrorPct"]
     if result["specks"]["pieces"]:
         after["specksRemoved"] = result["specks"]
-    return {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after}
+    report: dict[str, Any] = {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after}
+
+    # How it looks next to the original from six fixed views, and the picture of it for the page.
+    from studio_bridge.game_look import compare as look
+
+    fd, preview_name = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        after["look"] = look(in_path, out_path, result["shift"], Path(preview_name))
+        report["extraFiles"] = {"preview.png": preview_name}
+    except Exception as exc:  # a report extra: never worth failing the tool for
+        Path(preview_name).unlink(missing_ok=True)
+        steps.append(f"look not measured: {str(exc)[:120]}")
+    return report
 
 
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
@@ -555,8 +568,10 @@ OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = 
 
 
 def extra_key(output_key: str, name: str) -> str:
-    """Where an extra file goes: next to the main one, tools/abc.glb -> tools/abc-alternate.glb."""
-    return f"{output_key[:-4]}-{name}.glb" if output_key.endswith(".glb") else f"{output_key}-{name}"
+    """Where an extra file goes: next to the main one, tools/abc.glb -> tools/abc-alternate.glb; a name with
+    its own extension keeps it, tools/abc.glb + preview.png -> tools/abc-preview.png."""
+    ext = "" if "." in name else ".glb"
+    return f"{output_key[:-4]}-{name}{ext}" if output_key.endswith(".glb") else f"{output_key}-{name}"
 
 
 def run_operation(operation: str, in_path: Path, params: dict[str, Any]) -> tuple[Path, dict[str, Any], dict[str, Path]]:
