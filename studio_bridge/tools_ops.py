@@ -484,11 +484,14 @@ def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, A
     return result
 
 
-# The budgets the auto budget chooses from, and the share of the picture that may differ at a glance
-# (game_look.noticeablePct) for a cut to count as not noticeable. The threshold is set by eye on the bench
-# models: a person marks, per model, the first budget that looks fine; see scripts/game_prep_bench.py.
-AUTO_BUDGETS = (2000, 5000, 10000, 20000, 35000, 50000, 100000, 200000)
-NOTICEABLE_OK_PCT = 2.0
+# The auto budget, set by eye (2026-10-26): on the six bench models a person marked the first budget that
+# looks fine in a game. Below 20k every model looked crumpled however few pixels differed, so 20k is the
+# floor (a model already lighter is left as it is); above it, the budget grows until no more than 5.5% of the
+# picture differs at a glance (game_look.noticeablePct). That reproduces all six marks: camera, drill and
+# watch 20k, mech and scorpion 35k, the sword untouched. With normal-map baking the floor should come down.
+AUTO_FLOOR_TRIS = 20000
+AUTO_BUDGETS = (20000, 35000, 50000, 75000, 100000, 150000, 200000)
+NOTICEABLE_OK_PCT = 5.5
 
 
 def _auto_budget(in_path: Path, texture_size: int, ok_pct: float) -> dict[str, Any]:
@@ -498,6 +501,8 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float) -> dict[str, A
     from studio_bridge.game_look import compare as look
 
     faces = _shaded(in_path)[1]
+    if len(faces) <= AUTO_FLOOR_TRIS:  # already light: nothing to cut
+        return {"picked": len(faces), "okPct": ok_pct, "tried": []}
     ladder = [b for b in AUTO_BUDGETS if b < len(faces)] + [len(faces)]
     tried: list[dict[str, Any]] = []
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
@@ -606,11 +611,14 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     try:
         after["look"] = look(in_path, out_path, result["shift"], Path(preview_name))
         report["extraFiles"] = {"preview.png": preview_name}
-        if after["look"]["noticeablePct"] > NOTICEABLE_OK_PCT and not params.get("maxErrorPct"):
-            steps.append(
-                f"looks noticeably different from the original ({after['look']['noticeablePct']:g}% of the picture): "
-                "the auto budget picks the fewest triangles that don't"
-            )
+        if not params.get("maxErrorPct"):
+            if after["look"]["noticeablePct"] > NOTICEABLE_OK_PCT:
+                steps.append(
+                    f"looks noticeably different from the original ({after['look']['noticeablePct']:g}% of the picture): "
+                    "the auto budget picks the fewest triangles that don't"
+                )
+            elif after["triangles"] < AUTO_FLOOR_TRIS < result["before"]["triangles"]:
+                steps.append(f"under {AUTO_FLOOR_TRIS // 1000}k triangles detailed models tend to look crumpled up close")
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
