@@ -8,6 +8,10 @@ texture, normal map and metal/roughness, under one fixed light and sky, and comp
   lookPct        mean colour difference where both are drawn, everything on
   texturePct     the same with the texture alone (no light): UVs shifted, seams moved, blurred texture
   lightPct       the same with the light alone (no texture): normals and shape, the "crumpled" look
+  noticeablePct  share of the picture that differs at a glance: outline mismatches, and pixels whose
+                 colour differs by more than NOTICE after a 5 px blur (so texel noise doesn't count).
+                 Means spread a local flaw thin; this one keeps a crumpled lens visible. Mean over
+                 views, and noticeableMaxPct for the worst one.
 
 Every run draws the same rays, so a model always gets the same numbers. What it doesn't see: the
 viewer's reflections of a room (the sky here is simple), so a result can look shinier in the viewer
@@ -20,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 RES = 384  # pixels per view side
+NOTICE = 0.10  # colour difference (0..1) that stands out at a glance, after the blur
 TEX = 512  # textures are compared at the size a view of this resolution shows them
 VIEWS = {  # where the camera looks from; the model is Y up
     "front": (0.0, 0.0, 1.0),
@@ -176,6 +181,7 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None) ->
     """The look numbers (in %), and a picture original | result | difference per view when `preview`
     is given. `shift` is how far game.mjs moved the result; it is moved back over the original."""
     import numpy as np
+    from scipy import ndimage
 
     a, b = _load(Path(original)), _load(Path(result))
     b["V"] = b["V"] - np.asarray(shift, float)
@@ -185,9 +191,15 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None) ->
     for name, view in VIEWS.items():
         ma, pa = _draw(a, centre, radius, view)
         mb, pb = _draw(b, centre, radius, view)
-        both = ma & mb
+        both, union = ma & mb, ma | mb
         diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
-        per_view[name] = {"silhouette": float((ma ^ mb).sum() / max((ma | mb).sum(), 1)), **diff}
+        glance = np.where(ma ^ mb, 1.0, np.abs(pa["look"] - pb["look"]).mean(-1))
+        glance = ndimage.uniform_filter(glance, 5)
+        per_view[name] = {
+            "silhouette": float((ma ^ mb).sum() / max(union.sum(), 1)),
+            "noticeable": float((glance[union] > NOTICE).mean()) if union.any() else 0.0,
+            **diff,
+        }
         if preview is not None:
             heat = np.abs(pa["look"] - pb["look"]).mean(-1, keepdims=True)
             rows.append(np.hstack([pa["look"], pb["look"], np.concatenate([heat * 4, heat * 1.5, heat * 0.5], -1).clip(0, 1)]))
@@ -205,5 +217,7 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None) ->
         "lookPct": pct("look"),
         "texturePct": pct("texture"),
         "lightPct": pct("light"),
+        "noticeablePct": pct("noticeable"),
+        "noticeableMaxPct": round(100 * max(v["noticeable"] for v in per_view.values()), 2),
         "worstView": worst,
     }
