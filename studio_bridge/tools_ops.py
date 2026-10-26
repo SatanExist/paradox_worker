@@ -39,6 +39,55 @@ SOLID_STEPS = {
 }
 
 
+def _glb_json(path: Path) -> dict[str, Any]:
+    with open(path, "rb") as fh:
+        head = fh.read(20)
+        if len(head) < 20 or head[:4] != b"glTF":
+            raise ValueError("not a GLB file")
+        return json.loads(fh.read(struct.unpack("<I", head[12:16])[0]))
+
+
+def _world_node(path: Path):
+    """The transform of a root node named "world", which trimesh takes for its own base frame and drops
+    (TRELLIS, TripoSR, Step1X and Hi3DGen name their root so); None when there is none or it does nothing."""
+    import numpy as np
+    import trimesh
+
+    meta = _glb_json(path)
+    nodes = meta.get("nodes") or []
+    for node in nodes:
+        if node.get("name") != "world":
+            continue
+        if "matrix" in node:
+            m = np.asarray(node["matrix"], float).reshape(4, 4).T  # glTF stores columns
+        else:
+            m = trimesh.transformations.quaternion_matrix(np.roll(np.asarray(node.get("rotation", [0, 0, 0, 1]), float), 1))
+            m[:3, :3] = m[:3, :3] * np.asarray(node.get("scale", [1, 1, 1]), float)
+            m[:3, 3] = node.get("translation", [0, 0, 0])
+        return None if np.allclose(m, np.eye(4)) else m
+    return None
+
+
+OVERLAP_MAX_TRIS = 3_000_000  # above this the cut and the measuring setup run one after the other
+
+
+def _triangles_in_file(path: Path) -> int:
+    """Triangles the file declares (index counts in its JSON), without reading the geometry."""
+    meta = _glb_json(path)
+    accessors = meta.get("accessors") or []
+    total = 0
+    for mesh in meta.get("meshes") or []:
+        for prim in mesh.get("primitives") or []:
+            if prim.get("mode", 4) != 4:
+                continue
+            idx = prim.get("indices")
+            if idx is not None and idx < len(accessors):
+                total += accessors[idx].get("count", 0) // 3
+            elif "POSITION" in (prim.get("attributes") or {}):
+                total += accessors[prim["attributes"]["POSITION"]].get("count", 0) // 3
+    return total
+
+
 def _glb_extensions(path: Path) -> set[str]:
     with open(path, "rb") as fh:
         head = fh.read(20)
@@ -287,9 +336,12 @@ def _shaded(path: Path):
                 pass
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
+    world = _world_node(path)
     verts, faces, normals, offset, moved = [], [], [], 0, False
     for node in scene.graph.nodes_geometry:
         matrix, name = scene.graph[node]
+        if world is not None:
+            matrix = world @ matrix
         geom = scene.geometry.get(name)
         if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
             continue
@@ -592,14 +644,20 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     }
     if params.get("maxErrorPct"):
         job["maxErrorPct"] = float(params["maxErrorPct"])
-    # The cut runs in node while this process gets the original ready to measure against.
+    # The cut runs in node while this process gets the original ready to measure against; a huge model
+    # is done one after the other, so the two copies of it don't sit in memory at once.
     from concurrent.futures import ThreadPoolExecutor
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        cutting = pool.submit(_game_mjs, in_path, out_path, job)
+    if _triangles_in_file(in_path) > OVERLAP_MAX_TRIS:
+        result = _game_mjs(in_path, out_path, job)
         original = _shaded(in_path)
         reference = _Reference(original)
-        result = cutting.result()
+    else:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            cutting = pool.submit(_game_mjs, in_path, out_path, job)
+            original = _shaded(in_path)
+            reference = _Reference(original)
+            result = cutting.result()
     to_budget = "maxErrorPct" not in job
     deviation, lost = reference.compare(out_path, result["shift"], find_lost=to_budget and not original[3])
     steps = list(result["steps"])
@@ -643,8 +701,14 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         after["specksRemoved"] = result["specks"]
     report: dict[str, Any] = {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after}
 
-    # How it looks next to the original from six fixed views, and the picture of it for the page.
+    # How it looks next to the original from six fixed views, and the picture of it for the page. The
+    # shape measuring is done: let its copy of the original go first, or a huge model sits in memory twice.
+    import gc
+
     from studio_bridge.game_look import compare as look
+
+    reference = original = lost = None  # noqa: F841
+    gc.collect()
 
     fd, preview_name = tempfile.mkstemp(suffix=".png")
     os.close(fd)
@@ -658,7 +722,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                     f"looks noticeably different from the original ({after['look']['noticeablePct']:g}% of the picture): "
                     "the auto budget picks the fewest triangles that don't"
                 )
-            elif after["triangles"] < purpose["floor"] < result["before"]["triangles"]:
+            # The asked budget, not the count: a 20k cut can land a few triangles short of 20000.
+            elif after["targetTris"] < purpose["floor"] < result["before"]["triangles"]:
                 steps.append(f"under {purpose['floor'] // 1000}k triangles detailed models tend to look crumpled at this size")
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)

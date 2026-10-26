@@ -55,6 +55,9 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
                 pass
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
+    from studio_bridge.tools_ops import _world_node
+
+    world = _world_node(path)
 
     def image(t):
         return None if t is None else np.asarray(t.convert("RGB").resize((tex, tex), Image.BOX), np.float32) / 255
@@ -62,6 +65,8 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
     verts, faces, normals, uvs, owner, mats, offset = [], [], [], [], [], [], 0
     for node in scene.graph.nodes_geometry:
         matrix, name = scene.graph[node]
+        if world is not None:
+            matrix = world @ matrix
         geom = scene.geometry.get(name)
         if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
             continue

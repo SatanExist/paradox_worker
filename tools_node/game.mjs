@@ -266,6 +266,11 @@ const lowBefore = getBounds(scene).min;
 await doc.transform(center({ pivot: "below" }));
 const lowAfter = getBounds(scene).min;
 steps.push("placed on floor");
+// TRELLIS, TripoSR, Step1X and Hi3DGen name their root node "world", trimesh's own name for the base
+// frame: reading the file, trimesh drops that node's transform — the move to the floor done just above.
+for (const node of doc.getRoot().listNodes()) {
+  if (node.getName() === "world") node.setName("root");
+}
 
 await io.write(output, doc);
 const after = stats(doc, output);
