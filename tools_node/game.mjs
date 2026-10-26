@@ -77,10 +77,27 @@ function stats(doc, path) {
   };
 }
 
+/**
+ * Where a mesh sits in the model: the world matrix of the node that shows it biggest (a mesh can be
+ * shown by several nodes, or none). Column-major, as glTF keeps it.
+ */
+function placement(mesh) {
+  let best = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  let bestScale = -1;
+  for (const node of mesh.listParents()) {
+    if (node.propertyType !== "Node") continue;
+    const m = node.getWorldMatrix();
+    const scale = Math.max(Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
+    if (scale > bestScale) [best, bestScale] = [m, scale];
+  }
+  return best;
+}
+
 /** Each indexed triangle primitive with flat copies of its positions and of normals + UVs side by side. */
 function triangleMeshes(doc) {
   const out = [];
   for (const mesh of doc.getRoot().listMeshes()) {
+    const matrix = placement(mesh);
     for (const prim of mesh.listPrimitives()) {
       const position = prim.getAttribute("POSITION");
       const indices = prim.getIndices();
@@ -94,8 +111,10 @@ function triangleMeshes(doc) {
       const attributes = new Float32Array(count * stride);
       const weights = [];
       const budgetWeights = [];
+      const channels = {};
       let offset = 0;
       for (const [accessor, weight, budgetWeight] of parts) {
+        channels[accessor === prim.getAttribute("NORMAL") ? "normal" : "uv"] = offset;
         const size = accessor.getElementSize();
         const element = [];
         for (let i = 0; i < count; i++) {
@@ -116,6 +135,8 @@ function triangleMeshes(doc) {
         stride,
         weights,
         budgetWeights,
+        channels,
+        matrix,
         indices: Uint32Array.from(indices.getArray()),
         scale: MeshoptSimplifier.getScale(positions, 3),
       });
@@ -181,6 +202,7 @@ function keepPoints(prims) {
 }
 
 function cut(prims, ratio, flags = []) {
+  if (prims.length > 1) return cutTogether(prims, { targetTris: Math.floor(triangleCount(prims) * ratio), flags });
   for (const p of prims) {
     const target = Math.floor((p.indices.length / 3) * ratio) * 3;
     [p.indices] = p.stride
@@ -189,8 +211,67 @@ function cut(prims, ratio, flags = []) {
   }
 }
 
+/**
+ * Several parts are cut as one: a single simplification over all of them, placed where they sit in
+ * the model, so each collapse anywhere is weighed against every other and the triangles stay where
+ * they hold the most shape. Cut one by one to the same share, a small detailed part (a sword next to
+ * a drill) lost as big a share as a big smooth one. Normals, then UVs, side by side for every part
+ * (zeros where a part has none); vertices of different parts are never merged.
+ */
+function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget = true, flags = [] }) {
+  const LAYOUT = { normal: 0, uv: 3 };
+  const STRIDE = 5;
+  const offsets = [];
+  let vertices = 0;
+  for (const p of prims) {
+    offsets.push(vertices);
+    vertices += p.positions.length / 3;
+  }
+  const positions = new Float32Array(vertices * 3);
+  const attributes = new Float32Array(vertices * STRIDE);
+  const lock = prims.some((p) => p.lock) ? new Uint8Array(vertices) : null;
+  const indices = new Uint32Array(prims.reduce((n, p) => n + p.indices.length, 0));
+  let at = 0;
+  prims.forEach((p, k) => {
+    const m = p.matrix;
+    const base = offsets[k];
+    for (let v = 0; v < p.positions.length / 3; v++) {
+      const [x, y, z] = [p.positions[v * 3], p.positions[v * 3 + 1], p.positions[v * 3 + 2]];
+      positions[(base + v) * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
+      positions[(base + v) * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+      positions[(base + v) * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+      for (const [name, size] of [["normal", 3], ["uv", 2]]) {
+        if (p.channels[name] === undefined) continue;
+        for (let c = 0; c < size; c++) attributes[(base + v) * STRIDE + LAYOUT[name] + c] = p.attributes[v * p.stride + p.channels[name] + c];
+      }
+    }
+    if (lock && p.lock) lock.set(p.lock, base);
+    for (const i of p.indices) indices[at++] = i + base;
+  });
+  const weights = budget ? [BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, 0, 0] : [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT, UV_WEIGHT, UV_WEIGHT];
+  const [kept] = MeshoptSimplifier.simplifyWithAttributes(indices, positions, 3, attributes, STRIDE, weights, lock, targetTris * 3, error, flags);
+  // back to the parts: each triangle belongs to the part of its first vertex
+  const owner = (v) => {
+    let lo = 0;
+    let hi = offsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (offsets[mid] <= v) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const lists = prims.map(() => []);
+  for (let i = 0; i < kept.length; i += 3) {
+    const k = owner(kept[i]);
+    lists[k].push(kept[i] - offsets[k], kept[i + 1] - offsets[k], kept[i + 2] - offsets[k]);
+  }
+  prims.forEach((p, k) => (p.indices = Uint32Array.from(lists[k])));
+}
+
 /** As few triangles as keep the surface (normals and UVs counted) within `error` of the model's size. */
 function cutWithin(prims, error, modelScale) {
+  if (prims.length > 1) return cutTogether(prims, { error, budget: false });
   for (const p of prims) {
     const limit = (error * modelScale) / p.scale;
     [p.indices] = p.stride
@@ -251,10 +332,18 @@ if (triangleCount(prims) > targetTris) {
     steps.push("UV seams loosened to reach the budget");
   }
 }
+let emptied = 0;
 for (const p of prims) {
+  if (!p.indices.length) {
+    // cut away entirely: a primitive with no triangles is not valid glTF, readers refuse the file
+    p.prim.dispose();
+    emptied++;
+    continue;
+  }
   p.prim.setIndices(p.prim.getIndices().setArray(p.indices));
   compactPrimitive(p.prim);
 }
+if (emptied) steps.push(`${emptied} parts too small for the budget left out`);
 
 if (before.textureMaxPx > textureSize) {
   await doc.transform(textureCompress({ encoder: sharp, resize: [textureSize, textureSize] }));
