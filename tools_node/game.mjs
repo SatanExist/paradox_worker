@@ -309,6 +309,17 @@ await doc.transform(dedup(), weld());
 steps.push("welded");
 
 const prims = triangleMeshes(doc);
+if (params.forBake) {
+  // The textures will be baked afterwards onto new UVs, so the old seams need not hold: the
+  // triangles go where the shape is, joined across seams, with nothing but positions weighed.
+  for (const p of prims) {
+    const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
+    p.indices = p.indices.map((i) => remap[i]);
+    p.stride = 0;
+    p.channels = {};
+  }
+  steps.push("UV seams ignored: textures are baked afterwards");
+}
 // meshopt measures error against each primitive's own size; we speak of the whole model.
 const modelScale = Math.max(...prims.map((p) => p.scale), 1e-9);
 
@@ -324,7 +335,8 @@ if (keep) steps.push(`kept ${keepPoints(prims)} vertices where a first cut lost 
 if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.
-  cut(prims, targetTris / triangleCount(prims));
+  // Joined across seams (forBake), only Permissive gets far: without it meshopt stalled at 8x the budget.
+  cut(prims, targetTris / triangleCount(prims), params.forBake ? ["Permissive"] : []);
   steps.push(`triangles cut to ${targetTris}`);
   if (triangleCount(prims) > targetTris * 1.05) {
     // Only then let it collapse across seams: the budget is met, textures near seams may shift.

@@ -18,6 +18,7 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import struct
@@ -30,6 +31,7 @@ from studio_bridge.mesh_repair import load_glb_mesh, mesh_stats
 
 
 TOOLS_NODE = Path(os.getenv("TOOLS_NODE_DIR", Path(__file__).resolve().parents[1] / "tools_node"))
+TOOLS_BLENDER = Path(__file__).resolve().parents[1] / "tools_blender"
 PACKED = {"KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"}
 DEFAULT_PRINT_HEIGHT_MM = 120.0
 SOLID_STEPS = {
@@ -554,6 +556,40 @@ def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _blender() -> str | None:
+    """Blender for baking: BLENDER_BIN, else one on the PATH; None where there is none (the tools image)."""
+    return os.getenv("BLENDER_BIN") or shutil.which("blender")
+
+
+def _bake(in_path: Path, out_path: Path, shift: list[float], size: int) -> dict[str, Any]:
+    """Bake the original's look onto the cut in place (tools_blender/bake.py): new UVs, then base colour,
+    roughness, metalness and a normal map carrying the shape the cut took away. Deterministic: Cycles on
+    the CPU, fixed seed and samples (two runs, the same bytes)."""
+    plain = _unpacked(in_path)
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    os.close(fd)
+    baked = Path(name)
+    try:
+        done = subprocess.run(
+            [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
+             str(plain), str(out_path), str(baked), json.dumps({"size": size, "shift": shift})],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
+        if done.returncode != 0 or not lines:
+            raise RuntimeError(f"could not bake the textures: {(done.stderr or done.stdout).strip()[-300:]}")
+        shutil.copyfile(baked, out_path)
+        return json.loads(lines[-1])["bake"]
+    finally:
+        for path in {baked, plain} - {in_path}:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 # The auto budget, set by eye (2026-10-26): on the six bench models a person marked the first budget that
 # looks fine in a game. Below 20k every model looked crumpled however few pixels differed, so 20k is the
 # floor (a model already lighter is left as it is); above it, the budget grows until no more than 5.5% of the
@@ -570,9 +606,13 @@ NOTICEABLE_OK_PCT = 5.5
 # - "background" (a prop far off, judged at 128 px): camera and drill fine at 5k, mech, scorpion and watch at
 #   20k, watch 10k not. One threshold can't hold all six (mech 20k 8.82% fine, watch 10k 8.89% not,
 #   scorpion 20k 10.97% fine), so it errs on the side of looks: 8.85%, scorpion gets 35k.
+# With baking (bake: true) a normal map carries the shape the cut takes away, so the ladder starts lower.
+# PROVISIONAL (2026-10-26): the same thresholds, not yet marked by eye for baked cuts.
 PURPOSES: dict[str, dict[str, Any]] = {
-    "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS},
-    "background": {"res": 128, "floor": 5000, "okPct": 8.85, "ladder": (5000, 10000, 20000, 35000, 50000, 100000)},
+    "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS,
+                "bakeFloor": 5000, "bakeLadder": (5000, 10000, *AUTO_BUDGETS)},
+    "background": {"res": 128, "floor": 5000, "okPct": 8.85, "ladder": (5000, 10000, 20000, 35000, 50000, 100000),
+                   "bakeFloor": 2000, "bakeLadder": (2000, 5000, 10000, 20000, 35000, 50000, 100000)},
 }
 PURPOSES["hero"] = PURPOSES["regular"]
 
@@ -587,64 +627,123 @@ def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 RECHECK_MARGIN = 1.15
 
 
-def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any]) -> dict[str, Any]:
-    """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct), by halving the
-    ladder: a few quick cuts (no second pass) looked at from the six views, a borderline one redone in
-    full. Bigger budgets look at least as good, so the search can skip. Returns the pick and every budget
-    tried, in order."""
+def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool) -> dict[str, Any]:
+    """A quick cut (no second pass) looked at from the six views; with bake also the baked one, the
+    closer of the two counts."""
     from studio_bridge.game_look import compare as look
 
-    faces = _shaded(in_path)[1]
-    if len(faces) <= purpose["floor"]:  # already light: nothing to cut
-        return {"picked": len(faces), "okPct": ok_pct, "tried": []}
-    ladder = [b for b in purpose["ladder"] if b < len(faces)] + [len(faces)]
-    tried: list[dict[str, Any]] = []
-    lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
-    while lo < hi:
-        mid = (lo + hi) // 2
+    step: dict[str, Any] = {"targetTris": budget}
+    for kind in ("plain", "baked") if bake else ("plain",):
         fd, name = tempfile.mkstemp(suffix=".glb")
         os.close(fd)
         try:
-            cut = _game_mjs(in_path, Path(name), {"targetTris": ladder[mid], "textureSize": texture_size})
-            seen = look(in_path, Path(name), cut["shift"], res=purpose["res"])
+            job = {"targetTris": budget, "textureSize": texture_size, **({"forBake": True} if kind == "baked" else {})}
+            cut = _game_mjs(in_path, Path(name), job)
+            if kind == "baked":
+                _bake(in_path, Path(name), cut["shift"], texture_size)
+            seen = look(in_path, Path(name), cut["shift"], res=res)["noticeablePct"]
         finally:
             try:
                 Path(name).unlink(missing_ok=True)
             except OSError:  # Windows: still held
                 pass
-        step = {"targetTris": ladder[mid], "triangles": cut["after"]["triangles"], "noticeablePct": seen["noticeablePct"]}
-        if ok_pct < seen["noticeablePct"] <= ok_pct * RECHECK_MARGIN:
+        if "noticeablePct" not in step or seen < step["noticeablePct"]:
+            step.update({"triangles": cut["after"]["triangles"], "noticeablePct": seen, "baked": kind == "baked"})
+    return step
+
+
+def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any], bake: bool = False) -> dict[str, Any]:
+    """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct), by halving the
+    ladder: a few quick cuts (no second pass) looked at from the six views, a borderline one redone in
+    full. Bigger budgets look at least as good, so the search can skip. Returns the pick and every budget
+    tried, in order."""
+    faces = _shaded(in_path)[1]
+    floor, ladder = (purpose["bakeFloor"], purpose["bakeLadder"]) if bake else (purpose["floor"], purpose["ladder"])
+    if len(faces) <= floor:  # already light: nothing to cut
+        return {"picked": len(faces), "okPct": ok_pct, "tried": []}
+    ladder = [b for b in ladder if b < len(faces)] + [len(faces)]
+    tried: list[dict[str, Any]] = []
+    lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
+    while lo < hi:
+        mid = (lo + hi) // 2
+        step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake)
+        seen = step["noticeablePct"]
+        if ok_pct < seen <= ok_pct * RECHECK_MARGIN:
             fd, name = tempfile.mkstemp(suffix=".glb")
             os.close(fd)
+            full: dict[str, Any] = {}
             try:
-                full = _game_prep(in_path, Path(name), {"targetTris": ladder[mid], "textureSize": texture_size, "purpose": purpose_name})
+                full = _best_of(in_path, Path(name), {"targetTris": ladder[mid], "textureSize": texture_size, "purpose": purpose_name, "bake": bake})
             finally:
-                for extra in [name, *((full.get("extraFiles") or {}).values() if "full" in locals() else [])]:
+                for extra in [name, *(full.get("extraFiles") or {}).values()]:
                     try:
                         Path(extra).unlink(missing_ok=True)
                     except OSError:
                         pass
-            step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
-            seen = full["after"]["look"]
+            seen = step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
         tried.append(step)
-        if seen["noticeablePct"] <= ok_pct:
+        if seen <= ok_pct:
             hi = mid
         else:
             lo = mid + 1
     return {"picked": ladder[lo], "okPct": ok_pct, "tried": tried}
 
 
+def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    """With bake: the plain cut and the baked one, and the one that looks closer to the original is kept.
+    Baking wins where the plain cut had to tear the old UVs (mech, scorpion) or goes low (camera 5k:
+    3.44% -> 1.15% of the picture); a model whose own UVs survive a big budget can look better plain
+    (drill 20k: 0.45% plain, 1.8% baked: new UVs spend the texture less thriftily)."""
+    plain = {k: v for k, v in params.items() if k not in ("bake", "forBake")}
+    if not params.get("bake"):
+        return _game_prep(in_path, out_path, plain)
+    gltf = _glb_json(in_path) or {}
+    why_not = ("no Blender here" if not _blender()
+               else "rigged and animated models keep their own textures for now" if gltf.get("skins") or gltf.get("animations")
+               else None)
+    if why_not:
+        report = _game_prep(in_path, out_path, plain)
+        report["steps"].append(f"baking skipped: {why_not}")
+        return report
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    os.close(fd)
+    baked_path = Path(name)
+    try:
+        first = _game_prep(in_path, out_path, plain)
+        second = _game_prep(in_path, baked_path, {**plain, "forBake": True})
+        seen = [r["after"].get("look", {}).get("noticeablePct", math.inf) for r in (first, second)]
+        keep, drop = (second, first) if seen[1] < seen[0] else (first, second)
+        if keep is second:
+            shutil.copyfile(baked_path, out_path)
+        for extra in (drop.get("extraFiles") or {}).values():
+            Path(extra).unlink(missing_ok=True)
+        keep["after"]["bake"] = {"used": keep is second, "noticeablePct": {"plain": seen[0], "baked": seen[1]}}
+        keep["steps"].append(
+            f"kept the {'baked' if keep is second else 'plain'} version: it looks closer to the original "
+            f"({min(seen):g}% of the picture differs, the other {max(seen):g}%)"
+        )
+        return keep
+    finally:
+        try:
+            baked_path.unlink(missing_ok=True)
+        except OSError:  # Windows: trimesh may still hold it
+            pass
+
+
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
-    """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut."""
+    """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut.
+    With bake, each cut is also made baked, and the one that looks closer is kept."""
     if not params.get("autoBudget"):
-        return _game_prep(in_path, out_path, params)
+        return _best_of(in_path, out_path, params)
     purpose_name, purpose = _purpose(params)
     ok_pct = float(params.get("maxNoticeablePct") or purpose["okPct"])
     texture_size = int(params.get("textureSize") or 2048)
-    auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose)
+    gltf = _glb_json(in_path) or {}
+    bake = bool(params.get("bake")) and _blender() is not None and not (gltf.get("skins") or gltf.get("animations"))
+    auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake)
     auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
-    report = _game_prep(in_path, out_path, {**plain, "targetTris": auto["picked"]})
+    report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
     report["after"]["autoBudget"] = auto
     report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different")
     return report
@@ -662,6 +761,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     }
     if params.get("maxErrorPct"):
         job["maxErrorPct"] = float(params["maxErrorPct"])
+    if params.get("forBake"):
+        job["forBake"] = True
     # The cut runs in node while this process gets the original ready to measure against; a huge model
     # is done one after the other, so the two copies of it don't sit in memory at once.
     from concurrent.futures import ThreadPoolExecutor
@@ -707,6 +808,11 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                 except OSError:  # Windows: trimesh may still hold it
                     pass
 
+    if job.get("forBake"):
+        baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
+        steps.append(f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map ({baked['seconds']:g} s)")
+        result["after"] = {**result["after"], "textures": 2, "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
+
     after = {
         **result["after"],
         "targetTris": job["targetTris"],
@@ -741,8 +847,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                     "the auto budget picks the fewest triangles that don't"
                 )
             # The asked budget, not the count: a 20k cut can land a few triangles short of 20000.
-            elif after["targetTris"] < purpose["floor"] < result["before"]["triangles"]:
-                steps.append(f"under {purpose['floor'] // 1000}k triangles detailed models tend to look crumpled at this size")
+            elif after["targetTris"] < (floor := purpose["bakeFloor" if job.get("forBake") else "floor"]) < result["before"]["triangles"]:
+                steps.append(f"under {floor // 1000}k triangles detailed models tend to look crumpled at this size")
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
