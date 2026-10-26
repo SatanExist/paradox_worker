@@ -494,13 +494,17 @@ AUTO_BUDGETS = (20000, 35000, 50000, 75000, 100000, 150000, 200000)
 NOTICEABLE_OK_PCT = 5.5
 
 # What the model is for decides how big it shows on screen, so how much of it can be seen: the look is
-# judged at that size (px per view side). "regular" is the calibration above. "hero" (a close-up: the main
-# character, a weapon in hand) and "background" (a prop far off) are drafts until marked by eye the same way.
+# judged at that size (px per view side). Marked by eye on the bench models (2026-10-26):
+# - "regular" is the calibration above;
+# - "hero" (a close-up) got exactly the same marks as regular, so it is regular;
+# - "background" (a prop far off, judged at 128 px): camera and drill fine at 5k, mech, scorpion and watch at
+#   20k, watch 10k not. One threshold can't hold all six (mech 20k 8.82% fine, watch 10k 8.89% not,
+#   scorpion 20k 10.97% fine), so it errs on the side of looks: 8.85%, scorpion gets 35k.
 PURPOSES: dict[str, dict[str, Any]] = {
     "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS},
-    "hero": {"res": 768, "floor": 20000, "okPct": 5.5, "ladder": (20000, 35000, 50000, 75000, 100000, 150000, 200000)},
-    "background": {"res": 128, "floor": 5000, "okPct": 5.5, "ladder": (5000, 10000, 20000, 35000, 50000, 100000)},
+    "background": {"res": 128, "floor": 5000, "okPct": 8.85, "ladder": (5000, 10000, 20000, 35000, 50000, 100000)},
 }
+PURPOSES["hero"] = PURPOSES["regular"]
 
 
 def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -508,10 +512,16 @@ def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return (name, PURPOSES[name]) if name in PURPOSES else ("regular", PURPOSES["regular"])
 
 
-def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose: dict[str, Any]) -> dict[str, Any]:
+# A quick cut (no second pass) a little over the threshold is looked at again as the full game_prep makes
+# it: the marks were made on full cuts, and the second pass can bring a borderline cut back under.
+RECHECK_MARGIN = 1.15
+
+
+def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any]) -> dict[str, Any]:
     """The smallest budget whose cut looks like the original (noticeablePct ≤ ok_pct), by halving the
-    ladder: a few quick cuts (no second pass) looked at from the six views. Bigger budgets look at least
-    as good, so the search can skip. Returns the pick and every budget tried, in order."""
+    ladder: a few quick cuts (no second pass) looked at from the six views, a borderline one redone in
+    full. Bigger budgets look at least as good, so the search can skip. Returns the pick and every budget
+    tried, in order."""
     from studio_bridge.game_look import compare as look
 
     faces = _shaded(in_path)[1]
@@ -532,7 +542,21 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose: dict[
                 Path(name).unlink(missing_ok=True)
             except OSError:  # Windows: still held
                 pass
-        tried.append({"targetTris": ladder[mid], "triangles": cut["after"]["triangles"], "noticeablePct": seen["noticeablePct"]})
+        step = {"targetTris": ladder[mid], "triangles": cut["after"]["triangles"], "noticeablePct": seen["noticeablePct"]}
+        if ok_pct < seen["noticeablePct"] <= ok_pct * RECHECK_MARGIN:
+            fd, name = tempfile.mkstemp(suffix=".glb")
+            os.close(fd)
+            try:
+                full = _game_prep(in_path, Path(name), {"targetTris": ladder[mid], "textureSize": texture_size, "purpose": purpose_name})
+            finally:
+                for extra in [name, *((full.get("extraFiles") or {}).values() if "full" in locals() else [])]:
+                    try:
+                        Path(extra).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
+            seen = full["after"]["look"]
+        tried.append(step)
         if seen["noticeablePct"] <= ok_pct:
             hi = mid
         else:
@@ -547,7 +571,7 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     purpose_name, purpose = _purpose(params)
     ok_pct = float(params.get("maxNoticeablePct") or purpose["okPct"])
     texture_size = int(params.get("textureSize") or 2048)
-    auto = _auto_budget(in_path, texture_size, ok_pct, purpose)
+    auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose)
     auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
     report = _game_prep(in_path, out_path, {**plain, "targetTris": auto["picked"]})
