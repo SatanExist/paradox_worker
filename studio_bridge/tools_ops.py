@@ -569,11 +569,12 @@ def _blender() -> str | None:
     return os.getenv("BLENDER_BIN") or shutil.which("blender")
 
 
-def _bake(in_path: Path, out_path: Path, shift: list[float], size: int) -> dict[str, Any]:
+def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None) -> dict[str, Any]:
     """Bake the original's look onto the cut in place (tools_blender/bake.py): new UVs, then base colour,
     roughness, metalness and a normal map carrying the shape the cut took away. Deterministic: Cycles on
-    the CPU, fixed seed and samples (two runs, the same bytes)."""
-    plain = _unpacked(in_path)
+    the CPU, fixed seed and samples (two runs, the same bytes). `high`: the original already unpacked,
+    when the caller bakes several times."""
+    plain = high or _unpacked(in_path)
     fd, name = tempfile.mkstemp(suffix=".glb")
     os.close(fd)
     baked = Path(name)
@@ -591,7 +592,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int) -> dict[
         shutil.copyfile(baked, out_path)
         return json.loads(lines[-1])["bake"]
     finally:
-        for path in {baked, plain} - {in_path}:
+        for path in {baked, plain} - {in_path, high}:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -638,20 +639,23 @@ def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 RECHECK_MARGIN = 1.15
 
 
-def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool) -> dict[str, Any]:
-    """A quick cut (no second pass) looked at from the six views; with bake also the baked one, the
-    closer of the two counts."""
+# A quick bake is looked at with textures at game_look.TEX (512): baking it bigger shows nothing more.
+QUICK_BAKE_PX = 1024
+
+
+def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None) -> dict[str, Any]:
+    """A quick cut (no second pass) looked at from the six views, baked when baking is on."""
     from studio_bridge.game_look import compare as look
 
     step: dict[str, Any] = {"targetTris": budget}
-    for kind in ("plain", "baked") if bake else ("plain",):
+    for kind in ("baked",) if bake else ("plain",):
         fd, name = tempfile.mkstemp(suffix=".glb")
         os.close(fd)
         try:
             job = {"targetTris": budget, "textureSize": texture_size, **({"forBake": True} if kind == "baked" else {})}
             cut = _game_mjs(in_path, Path(name), job)
             if kind == "baked":
-                _bake(in_path, Path(name), cut["shift"], texture_size)
+                _bake(in_path, Path(name), cut["shift"], min(texture_size, QUICK_BAKE_PX), high)
             seen = look(in_path, Path(name), cut["shift"], res=res)["noticeablePct"]
         finally:
             try:
@@ -674,11 +678,24 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
     if len(faces) <= floor:  # already light: nothing to cut
         return {"picked": len(faces), "okPct": ok_pct, "tried": []}
     ladder = [b for b in ladder if b < len(faces)] + [len(faces)]
+    high = _unpacked(in_path) if bake else None  # unpacked once for every quick bake
+    try:
+        return _search(in_path, texture_size, ok_pct, purpose_name, purpose, bake, bake_ok_pct, ladder, high)
+    finally:
+        if high is not None and high != in_path:
+            try:
+                high.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
+            bake: bool, bake_ok_pct: float | None, ladder: list[int], high: Path | None) -> dict[str, Any]:
     tried: list[dict[str, Any]] = []
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
     while lo < hi:
         mid = (lo + hi) // 2
-        step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake)
+        step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high)
         seen = step["noticeablePct"]
         limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct
         if limit < seen <= limit * RECHECK_MARGIN:
@@ -704,44 +721,29 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
 
 
 def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
-    """With bake: the plain cut and the baked one, and the one that looks closer to the original is kept.
-    Baking wins where the plain cut had to tear the old UVs (mech, scorpion) or goes low (camera 5k:
-    3.44% -> 1.15% of the picture); a model whose own UVs survive a big budget can look better plain
-    (drill 20k: 0.45% plain, 1.8% baked: new UVs spend the texture less thriftily)."""
+    """With bake: the cut by shape alone, baked. Made side by side with the plain cut at first, the baked
+    one was closer to the original at every budget on all six bench models once its UVs were packed
+    tightly (16 of 16: camera 5k 3.44 -> 1.13%, drill 20k 0.45 -> 0.28%, mech 20k 12.98 -> 2.41%), so the
+    plain one is made only when baking can't be done or fails."""
     plain = {k: v for k, v in params.items() if k not in ("bake", "forBake")}
     if not params.get("bake"):
         return _game_prep(in_path, out_path, plain)
     gltf = _glb_json(in_path) or {}
     why_not = ("no Blender here" if not _blender()
                else "rigged and animated models keep their own textures for now" if gltf.get("skins") or gltf.get("animations")
+               else "nothing was cut" if _triangles_in_file(in_path) <= int(params.get("targetTris") or 20000)
                else None)
-    if why_not:
-        report = _game_prep(in_path, out_path, plain)
-        report["steps"].append(f"baking skipped: {why_not}")
-        return report
-    fd, name = tempfile.mkstemp(suffix=".glb")
-    os.close(fd)
-    baked_path = Path(name)
-    try:
-        first = _game_prep(in_path, out_path, plain)
-        second = _game_prep(in_path, baked_path, {**plain, "forBake": True})
-        seen = [r["after"].get("look", {}).get("noticeablePct", math.inf) for r in (first, second)]
-        keep, drop = (second, first) if seen[1] < seen[0] else (first, second)
-        if keep is second:
-            shutil.copyfile(baked_path, out_path)
-        for extra in (drop.get("extraFiles") or {}).values():
-            Path(extra).unlink(missing_ok=True)
-        keep["after"]["bake"] = {"used": keep is second, "noticeablePct": {"plain": seen[0], "baked": seen[1]}}
-        keep["steps"].append(
-            f"kept the {'baked' if keep is second else 'plain'} version: it looks closer to the original "
-            f"({min(seen):g}% of the picture differs, the other {max(seen):g}%)"
-        )
-        return keep
-    finally:
+    if not why_not:
         try:
-            baked_path.unlink(missing_ok=True)
-        except OSError:  # Windows: trimesh may still hold it
-            pass
+            report = _game_prep(in_path, out_path, {**plain, "forBake": True})
+            report["after"]["bake"] = {"used": True}
+            return report
+        except RuntimeError as exc:
+            why_not = str(exc)[:160]
+    report = _game_prep(in_path, out_path, plain)
+    report["after"]["bake"] = {"used": False, "why": why_not}
+    report["steps"].append(f"baking skipped: {why_not}")
+    return report
 
 
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
