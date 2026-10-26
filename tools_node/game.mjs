@@ -7,7 +7,7 @@
 // triangles as keep the surface within that share of the model's size, targetTris then
 // being the most it may keep.
 import { readFileSync, statSync } from "node:fs";
-import { ImageUtils, NodeIO } from "@gltf-transform/core";
+import { ImageUtils, Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { center, compactPrimitive, dedup, dequantize, getBounds, prune, textureCompress, weld } from "@gltf-transform/functions";
 import draco3d from "draco3dgltf";
@@ -211,6 +211,8 @@ const io = new NodeIO()
   });
 
 const doc = await io.read(input);
+// stdout carries the JSON result: gltf-transform's own notes ("prune: Removed …") would corrupt it.
+doc.setLogger(new Logger(Logger.Verbosity.ERROR));
 const before = stats(doc, input);
 const steps = [];
 

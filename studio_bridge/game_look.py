@@ -55,7 +55,7 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
                 pass
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
-    from studio_bridge.tools_ops import _world_node
+    from studio_bridge.tools_ops import _as_drawn, _world_node
 
     world = _world_node(path)
 
@@ -70,12 +70,13 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
         geom = scene.geometry.get(name)
         if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
             continue
-        n = np.asarray(geom.vertex_normals) @ matrix[:3, :3].T
-        verts.append(trimesh.transform_points(geom.vertices, matrix))
+        gv, gf, gn, corner = _as_drawn(geom)
+        n = gn @ matrix[:3, :3].T
+        verts.append(trimesh.transform_points(gv, matrix))
         normals.append(n / np.linalg.norm(n, axis=1, keepdims=True).clip(1e-12))
-        faces.append(np.asarray(geom.faces) + offset)
+        faces.append(gf + offset)
         uv = getattr(geom.visual, "uv", None)
-        uvs.append(np.asarray(uv, float) if uv is not None and len(uv) == len(geom.vertices) else np.zeros((len(geom.vertices), 2)))
+        uvs.append(np.asarray(uv, float)[corner] if uv is not None and len(uv) == len(geom.vertices) else np.zeros((len(gv), 2)))
         owner.append(np.full(len(geom.faces), len(mats)))
         mat = getattr(geom.visual, "material", None)
         factor = getattr(mat, "baseColorFactor", None)
@@ -88,7 +89,7 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
             "metal": 1.0 if metal is None else float(metal),
             "rough": 1.0 if rough is None else float(rough),
         })
-        offset += len(geom.vertices)
+        offset += len(gv)
     if not faces:
         raise ValueError("could not read the model's geometry")
     V, F = np.vstack(verts), np.vstack(faces)

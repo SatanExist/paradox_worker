@@ -316,6 +316,19 @@ def _export_print(parts: dict[str, Any], path: Path) -> None:
     scene.export(path, file_type="glb", include_normals=True)  # without normals three.js renders it black
 
 
+def _as_drawn(geom):
+    """Vertices, faces and normals of a trimesh geometry as a viewer draws them, plus which file vertex
+    each drawn vertex is (to carry UVs over). A file without normals is drawn flat, as glTF says; trimesh
+    would make up smooth ones that change with how the vertices happen to be welded."""
+    import numpy as np
+
+    if "vertex_normals" in geom._cache.cache:  # the file's own
+        return np.asarray(geom.vertices), np.asarray(geom.faces), np.asarray(geom.vertex_normals), np.arange(len(geom.vertices))
+    corner = np.asarray(geom.faces).reshape(-1)
+    flat = np.repeat(np.asarray(geom.face_normals), 3, axis=0)
+    return np.asarray(geom.vertices)[corner], np.arange(len(corner)).reshape(-1, 3), flat, corner
+
+
 def _shaded(path: Path):
     """Vertices, faces and the file's own vertex normals (what the light uses), in model space,
     and whether any node moves its mesh (then positions differ from the mesh's own).
@@ -346,11 +359,12 @@ def _shaded(path: Path):
         if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
             continue
         moved = moved or not np.allclose(matrix, np.eye(4))
-        turned = np.asarray(geom.vertex_normals) @ matrix[:3, :3].T
+        gv, gf, gn, _ = _as_drawn(geom)
+        turned = gn @ matrix[:3, :3].T
         normals.append(turned / np.linalg.norm(turned, axis=1, keepdims=True).clip(1e-12))
-        verts.append(trimesh.transform_points(geom.vertices, matrix))
-        faces.append(np.asarray(geom.faces) + offset)
-        offset += len(geom.vertices)
+        verts.append(trimesh.transform_points(gv, matrix))
+        faces.append(gf + offset)
+        offset += len(gv)
     if not faces:
         raise ValueError("could not read the model's geometry")
     return np.vstack(verts), np.vstack(faces), np.vstack(normals), moved
@@ -530,7 +544,11 @@ def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, A
     )
     if done.returncode != 0:
         raise RuntimeError(f"could not prepare the model: {done.stderr.strip()[-300:]}")
-    result = json.loads(done.stdout)
+    # The result is the last line; anything a library printed before it is not ours to parse.
+    lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
+    if not lines:
+        raise RuntimeError(f"could not prepare the model: no result ({done.stdout.strip()[-200:]})")
+    result = json.loads(lines[-1])
     if result["after"]["triangles"] == 0:
         raise ValueError("could not read the model's geometry")
     return result
