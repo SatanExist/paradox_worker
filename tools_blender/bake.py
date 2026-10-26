@@ -29,7 +29,12 @@ REACH = float(PARAMS.get("reach", 0.02))
 # generator's own, and fine engraving came out noisy at the final size.
 SUPER = int(PARAMS.get("supersample", 1))
 BAKE = SIZE * SUPER
-MARGIN = max(4, BAKE // 128)  # texels painted past island edges, so mip-maps don't bleed the background
+# Islands lie GAP texels apart and the bake paints MARGIN texels past their edges, filling the gaps so
+# mip-maps don't bleed the background in. The gap is per island: smart_project's own margin (32 px a side
+# at 2048) left 1-16% of the texture to the model once a cut had thousands of islands, and the more
+# triangles, the blurrier it got.
+GAP = max(2, BAKE // 512)
+MARGIN = 2 * GAP
 
 t0 = time.time()
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -84,7 +89,8 @@ for o in low:
     o.data.uv_layers.new(name="UVMap")
 bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
-bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=2 * MARGIN / BAKE, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+bpy.ops.uv.pack_islands(rotate=True, rotate_method="ANY", scale=True, margin_method="FRACTION", margin=GAP / BAKE, shape_method="CONCAVE")
 bpy.ops.object.mode_set(mode="OBJECT")
 
 
