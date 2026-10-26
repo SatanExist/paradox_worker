@@ -25,7 +25,7 @@ from faces import glb_faces
 
 HERE = Path(__file__).resolve().parent
 LAB = HERE.parent  # the corpus lives inside paradox_worker
-PRINT_FILES = ["studio_bridge/print_solid.py", "studio_bridge/print_remesh.py", "studio_bridge/tools_ops.py"]
+PRINT_FILES = ["studio_bridge/print_solid.py", "studio_bridge/print_remesh.py", "studio_bridge/tools_ops.py", "tools_node/simplify.mjs"]
 TIME_LIMIT_S = 30 * 60
 
 ONE = r"""
@@ -34,6 +34,7 @@ sys.path.insert(0, sys.argv[1])
 from pathlib import Path
 from studio_bridge.tools_ops import print_prep
 rep = print_prep(Path(sys.argv[2]), Path(sys.argv[3]), {"heightMm": float(sys.argv[4])})
+print("@@PREPPED", flush=True)  # the peak so far is the tool's; what follows is only this corpus's own check
 import trimesh
 out = trimesh.load(sys.argv[3], force="mesh"); out.apply_scale(1000)  # glTF is metres
 rep["afterWallMm"] = round(2 * abs(out.volume) / out.area, 2) if out.is_watertight and out.area > 0 else None
@@ -74,7 +75,7 @@ def run_one(m: dict, rec: str) -> dict:
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
         )
-        ps, peak, report = psutil.Process(proc.pid), 0, None
+        ps, peak, report, prep_peak = psutil.Process(proc.pid), 0, None, None
         import threading
 
         def watch():
@@ -100,12 +101,16 @@ def run_one(m: dict, rec: str) -> dict:
         for line in proc.stdout:
             if line.startswith("@@REPORT "):
                 report = json.loads(line[len("@@REPORT "):])
+            elif line.startswith("@@PREPPED"):
+                prep_peak = peak
             else:
                 lf.write(line)
                 lf.flush()
         proc.wait()
         timer.cancel()
-    row = {**m, "inFaces": glb_faces(HERE / "models" / f"{m['id']}.glb"), "recipe": rec, "secs": round(time.time() - t0), "peakGb": round(peak / 2**30, 2), "ok": report is not None}
+    row = {**m, "inFaces": glb_faces(HERE / "models" / f"{m['id']}.glb"), "recipe": rec, "secs": round(time.time() - t0), "ok": report is not None,
+           # peakGb: print_prep alone (what the worker needs); peakAllGb adds the corpus's reload of the result for its wall check
+           "peakGb": round((prep_peak if prep_peak is not None else peak) / 2**30, 2), "peakAllGb": round(peak / 2**30, 2)}
     if report is None:
         row["error"] = "timeout" if time.time() - t0 >= TIME_LIMIT_S else (log.read_text(encoding="utf-8").strip().splitlines() or ["crash"])[-1][:300]
         return row
@@ -122,6 +127,7 @@ def run_one(m: dict, rec: str) -> dict:
         "timings": {**(report.get("timings") or {}), **(solid.get("stages") or {})},
         "steps": report["steps"],
         "floating": report.get("floating"),
+        "fineDetail": report.get("fineDetail"),
     })
     pick = next((c for c in solid.get("candidates", []) if c.get("method") == row["method"]), {})
     row["changedShare"], row["lostShare"] = pick.get("changedShare"), pick.get("lostShare")

@@ -50,11 +50,27 @@ SEED = 0
 VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
 SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
 HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
+LEAN_FROM_FACES = 2_000_000  # meshes this big drop their cached tables after each stage (see _lean)
 
 Log = Callable[[str], None]
 
 
 # --- local repair ----------------------------------------------------------------------------------
+
+
+def _lean(m):
+    """On a big mesh, drop trimesh's cached tables (edges, face adjacency, ...) but keep the normals, then free what
+    the stage left. The tables are rebuilt on demand, so nothing changes, but on millions of faces each check left
+    gigabytes behind, and meshes hold reference cycles, so a finished stage's meshes went only when the cycle
+    collector got round to them: direct3ds2_knight 16.3 -> 11.2 GB, meshy_rover 9.1 -> 7.8 GB, same output bytes.
+    Below LEAN_FROM_FACES the memory is far from the limit and handing it back only cost time (+6-15 %)."""
+    import gc
+
+    if len(m.faces) < LEAN_FROM_FACES:
+        return m
+    m._cache.clear(exclude=("face_normals", "vertex_normals"))
+    gc.collect()
+    return m
 
 
 def _weld(m):
@@ -201,7 +217,7 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
         m = _from_ms(ms)
     m = _reorient(m, log)
     trimesh.repair.fix_normals(m)
-    return m
+    return _lean(m)
 
 
 # --- the exact chain -------------------------------------------------------------------------------
@@ -269,9 +285,9 @@ def _drop_pockets(m):
 
     parts = m.split(only_watertight=False)
     if len(parts) <= 1:
-        return m
+        return _lean(m)
     kept = [q for q in parts if q.volume > CRUMB_MM3]
-    return trimesh.util.concatenate(kept) if kept else m
+    return _lean(trimesh.util.concatenate(kept)) if kept else _lean(m)
 
 
 def _union(*meshes):
@@ -326,7 +342,7 @@ def _bridge(m, log: Log, reach: float = BRIDGE_REACH_MM):
 
     parts = sorted(m.split(only_watertight=False), key=lambda q: -len(q.faces))
     if len(parts) <= 1:
-        return m, 0
+        return _lean(m), 0
     main = parts[0]
     cent = main.triangles_center
     pieces, bridged = [main], 0
@@ -341,12 +357,16 @@ def _bridge(m, log: Log, reach: float = BRIDGE_REACH_MM):
         both = trimesh.util.concatenate([q, patch])
         pieces.append(_wrap(both.vertices, both.faces, alpha=max(0.4, 1.6 * gap)))
         bridged += 1
+    n_parts = len(parts)
+    del parts, cent  # the union below is the peak: nothing it doesn't need stays alive
+    _lean(m)
     out = _union(*pieces)
+    del pieces, main
     shells = out.split(only_watertight=False)
     if len(shells) > 1:
         out = trimesh.util.concatenate([s for s in shells if s.volume > CRUMB_MM3])  # pockets the union sealed
-    log(f"  bridges: {len(parts)} pieces, {bridged} bridged")
-    return out, bridged
+    log(f"  bridges: {n_parts} pieces, {bridged} bridged")
+    return _lean(out), bridged
 
 
 def _thickness(m) -> float | None:
@@ -472,10 +492,13 @@ def _measure(orig, orig_pts, m) -> dict[str, Any]:
     lost = gone * outside
     watertight = bool(m.is_watertight)
     wall = _thickness(m)
+    parts = _pieces(m)
+    volume = float(m.volume)
+    _lean(m)  # the candidate is kept until the pick: without its tables
     return {
         "watertight": watertight,
-        "parts": _pieces(m),
-        "volumeCm3": round(float(m.volume) / 1000, 2) if watertight else None,
+        "parts": parts,
+        "volumeCm3": round(volume / 1000, 2) if watertight else None,
         "wallMm": None if wall is None else round(wall, 2),
         "faces": int(len(m.faces)),
         "changedShare": round(float(moved[seen].mean()) if seen.any() else 0.0, 4),
@@ -519,8 +542,11 @@ def _pick(cands: list[dict[str, Any]]):
     return best, note
 
 
-def make_solid(mesh, mm_per_unit: float, log: Log = print):
+def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
     """One closed solid made from `mesh` (any units; `mm_per_unit` gives the print scale), and the report.
+    `full` is the model before its fine detail was merged (tools_ops): when the repair can't close the lighter
+    mesh, it is made again from that one before anything else is tried. On hunyuan_operative the self-union left
+    one edge with four faces on the lighter mesh, so the 0.5 mm wrap won where the repair used to change nothing.
     Raises when no candidate came out closed, so the caller can fall back."""
     import numpy as np
     import trimesh
@@ -529,6 +555,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
     orig = _weld(trimesh.Trimesh(np.asarray(mesh.vertices, np.float64) * mm_per_unit, np.asarray(mesh.faces), process=False))
     came_closed = bool(orig.is_watertight)
     orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+    _lean(orig)  # kept to the end for measuring, which needs only its vertices and faces
     stages: dict[str, float] = {"prepare": round(time.time() - t0, 1)}
 
     t1 = time.time()
@@ -538,6 +565,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
     try:
         repaired = _local_repair(orig.copy(), log)
         wall = _thickness(repaired)
+        _lean(repaired)
         log(f" local repair {time.time() - t1:.0f}s, closed {repaired.is_watertight}, wall {wall if wall is None else round(wall, 2)} mm")
         paper = wall is None or wall < SKIN_MM  # a paper skin, or unknown: the gate judges the result
         builders = [("solidify", _solidified)] if paper else [("repair", _repaired)]
@@ -566,11 +594,29 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
         c["_mesh"] = m
         cands.append(c)
 
+    from_full = False
     for name, fn in builders:
         if _settled(cands):
             log(f" {name}: skipped, {cands[-1]['method']} can't be beaten")
             continue
         build(name, fn)
+        if name == "repair" and full is not None and not any(c["method"] == "repair" and c["watertight"] for c in cands):
+            log(" repair didn't close the lighter mesh: again from the full one")
+            t1 = time.time()
+            orig = _weld(trimesh.Trimesh(np.asarray(full.vertices, np.float64) * mm_per_unit, np.asarray(full.faces), process=False))
+            orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+            _lean(orig)
+            cands[:] = [c for c in cands if c["method"] != "repair"]
+            try:
+                repaired = _local_repair(orig.copy(), log)
+                _lean(repaired)
+            except Exception as exc:
+                log(f" local repair failed: {exc}")
+                repaired = None
+            stages["fullRepair"] = round(time.time() - t1, 1)
+            if repaired is not None:
+                build("repair", _repaired)
+            from_full, full = True, None
     # On a paper skin the repair stays paper; it is only worth building when nothing else came out solid.
     if paper and repaired is not None and not _good(cands):
         log(" no solid result: trying the repair after all")
@@ -597,6 +643,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print):
         "stages": stages,
         "secs": round(time.time() - t0, 1),
     }
+    if from_full:
+        info["repairedFromFull"] = True
     if note:
         info["note"] = note
     return out, info
@@ -619,7 +667,7 @@ def split_floating(mesh, mm_per_unit: float):
     lab = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(F))
     n = int(lab.max()) + 1 if len(lab) else 0
     if n <= 1:
-        return mesh, None, []
+        return _lean(mesh), None, []
     tri = np.asarray(mesh.triangles, np.float64)
     vol = np.bincount(lab, np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6, n)
     body = int(np.argmax(vol))
@@ -639,7 +687,7 @@ def split_floating(mesh, mm_per_unit: float):
             continue
         floating.append(k)
     if not floating:
-        return mesh, None, []
+        return _lean(mesh), None, []
     about = []
     for k in floating:
         v = BV[np.unique(F[lab == k])]
@@ -657,4 +705,5 @@ def split_floating(mesh, mm_per_unit: float):
     parts.remove_unreferenced_vertices()
     keep = trimesh.Trimesh(BV, F[~away], process=False)
     keep.remove_unreferenced_vertices()
+    _lean(mesh)
     return keep, parts, about
