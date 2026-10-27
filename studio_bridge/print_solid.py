@@ -56,6 +56,9 @@ THICKNESS_SAMPLES = 100_000  # surface points the wall thickness is measured at
 THICKNESS_CONE_DEG = 20.0  # six rays round the inward normal at this angle, plus the normal itself
 THIN_SPOT_CELL_MM = 2.0  # thin points closer than this belong to the same spot
 THIN_SPOT_MIN_MM2 = 1.0  # smaller thin spots are tips and needle points, not walls: not reported
+THICKEN_SPACING_MM = 0.2  # where walls are thickened, the added material is centred on points this far apart
+THICKEN_MARGIN_MM = 0.05  # added walls are this much over the minimum: the balls leave shallow dips between them
+THICKEN_CLEAR_MM = 0.05  # a ball added out of sight may come this close past the seen surface, no closer
 
 
 @dataclass(frozen=True)
@@ -359,7 +362,7 @@ def _union(*meshes):
 
 
 def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
-    """CGAL Alpha Wrap: always a closed, manifold, self-intersection-free shell."""
+    """CGAL Alpha Wrap: always a closed, manifold, self-intersection-free shell. F None wraps the points alone."""
     import numpy as np
     import trimesh
     from CGAL.CGAL_Alpha_wrap_3 import Int_Vector, Point_3_Vector, Polygon_Vector, alpha_wrap_3
@@ -370,16 +373,19 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
     pts.reserve(len(V))
     for x, y, z in np.asarray(V, float).tolist():
         pts.append(Point_3(x, y, z))
-    polys = Polygon_Vector()
-    polys.reserve(len(F))
-    for a, b, c in np.asarray(F, np.int64).tolist():
-        iv = Int_Vector()
-        iv.append(a)
-        iv.append(b)
-        iv.append(c)
-        polys.append(iv)
     P = Polyhedron_3()
-    alpha_wrap_3(pts, polys, alpha, offset, P)
+    if F is None:
+        alpha_wrap_3(pts, alpha, offset, P)
+    else:
+        polys = Polygon_Vector()
+        polys.reserve(len(F))
+        for a, b, c in np.asarray(F, np.int64).tolist():
+            iv = Int_Vector()
+            iv.append(a)
+            iv.append(b)
+            iv.append(c)
+            polys.append(iv)
+        alpha_wrap_3(pts, polys, alpha, offset, P)
     fd, name = tempfile.mkstemp(suffix=".off")
     os.close(fd)
     try:
@@ -600,12 +606,14 @@ def _pick(cands: list[dict[str, Any]]):
     return best, note
 
 
-def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: Printer = PRINTERS[DEFAULT_PRINTER]):
+def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: Printer = PRINTERS[DEFAULT_PRINTER],
+               thicken_walls: bool = True, thicken_seen: bool = True):
     """One closed solid made from `mesh` (any units; `mm_per_unit` gives the print scale), and the report.
     `full` is the model before its fine detail was merged (tools_ops): when the repair can't close the lighter
     mesh, it is made again from that one before anything else is tried. On hunyuan_operative the self-union left
     one edge with four faces on the lighter mesh, so the 0.5 mm wrap won where the repair used to change nothing.
-    The thresholds are the printer's (see Printer). Raises when no candidate came out closed, so the caller can fall back."""
+    Then walls thinner than the printer holds are thickened (see thicken; `thicken_seen` False leaves thin
+    details seen from both sides as they are). The thresholds are the printer's (see Printer). Raises when no candidate came out closed, so the caller can fall back."""
     import numpy as np
     import trimesh
 
@@ -689,6 +697,17 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     if best is None:
         raise RuntimeError(note)
     out = best["_mesh"]
+    thickened = None
+    if thicken_walls:
+        t1 = time.time()
+        try:
+            out, thickened = thicken(out, printer, log, seen_too=thicken_seen)
+        except Exception as exc:  # the model stays as picked; its thin spots are still reported
+            log(f" thicken failed: {exc}")
+        if thickened:  # measured against the original like the candidates, so the report says what it cost
+            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer).items() if not k.startswith("_")})
+            log(f" thickened: {thickened}")
+        stages["thicken"] = round(time.time() - t1, 1)
     out.apply_scale(1.0 / mm_per_unit)
     trimesh.repair.fix_normals(out)
     info: dict[str, Any] = {
@@ -704,6 +723,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     }
     if from_full:
         info["repairedFromFull"] = True
+    if thickened:
+        info["thickened"] = thickened
     if note:
         info["note"] = note
     return out, info
@@ -800,6 +821,101 @@ def thin_spots(m, printer: Printer) -> dict[str, Any]:
             "thinnestMm": round(float(np.percentile(t[spot == k], 5)), 2),
         })
     return out
+
+
+# --- thickening ------------------------------------------------------------------------------------
+
+def _unref(V, F):
+    """The vertices F uses, and F renumbered to them."""
+    import numpy as np
+
+    used, inv = np.unique(F, return_inverse=True)
+    return np.ascontiguousarray(V[used]), inv.reshape(F.shape).astype(np.int64)
+
+
+def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
+    """Walls thinner than the printer holds made thick enough, keeping the surface you see.
+
+    At points 0.2 mm apart over the thin areas the wall is measured as in wall_thickness, and which of its two
+    sides can be seen from outside (_seen). Seen on one side only (a skin over a hollow, the outer wall of an
+    open chest): material is added behind it, a ball of the printer's wall touching the seen side from inside,
+    so that side stays where it was. Seen on both sides (a blade, a fin, filigree) or on neither: a ball about
+    the middle, so both sides move out by half the shortfall; `seen_too` False leaves the ones seen on both
+    sides as they are. A ball meant to stay out of sight that would reach the seen surface is left out (see
+    below), so that spot stays thin and is reported. The balls become one solid by an Alpha Wrap of their
+    centres at their radius (closed and free of crossings by construction), fused with the model by Manifold;
+    voids the new walls sealed are filled. Walls under 0.4 mm: trellis2_chest 49 % of the surface -> 0.2 %,
+    tripo_blaster 76 % -> 0.2 %; seen surface out by more than 0.1 mm: 1.4 % on the chest, while the blaster's
+    sheets seen from both sides grew on both. `m` is closed, in mm. Returns (mesh, info), info None when
+    nothing was thin."""
+    import igl
+    import igl.embree
+    import numpy as np
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    t0 = time.time()
+    lo = printer.min_wall_mm
+    pts, thick = wall_thickness(m)
+    if not (thick < lo).any():
+        return m, None
+    # the faces round the thin points, then points dense enough there to lay the new walls on
+    near = cKDTree(pts[thick < lo]).query(m.triangles_center, distance_upper_bound=1.0)[0] < np.inf
+    area = trimesh.Trimesh(m.vertices, m.faces[near], process=False)
+    dense, fi = trimesh.sample.sample_surface(area, int(area.area / THICKEN_SPACING_MM**2), seed=SEED)
+    out_n = 1.0 if float(m.volume) >= 0 else -1.0
+    n = out_n * np.asarray(area.face_normals, np.float64)[fi]
+    del area
+    V = np.asarray(m.vertices, np.float64)
+    F = np.asarray(m.faces, np.int64)
+    ei = igl.embree.EmbreeIntersector()
+    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(F, np.int32), True)
+    start = (dense - n * 1e-3).astype(np.float32)
+    d32 = (-n).astype(np.float32)
+    hit = np.full(len(dense), -1)
+    across = np.full(len(dense), np.inf)
+    for i in range(len(dense)):  # straight across first: only the near-thin points get the full seven rays
+        f, t, _, _ = ei.intersectRay_first(start[i], d32[i])
+        if f >= 0:
+            hit[i], across[i] = f, t + 1e-3
+    maybe = across < 1.5 * lo
+    across[maybe] = _ray_thickness(m, dense[maybe], -n[maybe])
+    thin = (across < lo) & (hit >= 0)
+    p, n, t, hit = dense[thin], n[thin], across[thin], hit[thin]
+    del dense, start, d32, across
+    seen_p = _seen(V, F, p, n)
+    seen_q = _seen(V, F, p - n * t[:, None], out_n * np.asarray(m.face_normals, np.float64)[hit])
+    r = lo / 2 + THICKEN_MARGIN_MM
+    behind = seen_p & ~seen_q  # the other side's points (hidden, facing a seen one) are covered by these
+    both = seen_p & seen_q & seen_too
+    neither = ~seen_p & ~seen_q
+    centres = np.vstack([p[behind] - n[behind] * r, p[both | neither] - n[both | neither] * (t[both | neither] / 2)[:, None]])
+    grow_seen = np.concatenate([np.zeros(int(behind.sum()), bool), both[both | neither]])
+    del p, n, t
+    # A ball meant to stay out of sight must not reach the seen surface: in a groove narrower than the ball it
+    # would bulge through the far side, and the bottom of a deep groove can pass for hidden (all 32 rays
+    # blocked) while it shows. On trellis2_chest those balls pushed 27 % of the seen surface out by ~0.2 mm.
+    face_seen = _seen(V, F, m.triangles_center, out_n * np.asarray(m.face_normals, np.float64))
+    clear = np.ones(len(centres), bool)
+    if face_seen.any():
+        SV, SF = _unref(V, F[face_seen])
+        clear = np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - THICKEN_CLEAR_MM
+    keep = clear | grow_seen
+    info: dict[str, Any] = {"toMm": round(2 * r, 2), "behindSeen": int(behind.sum()), "bothSeen": int(both.sum()),
+                            "notThickened": int((~keep).sum()) + (0 if seen_too else int((seen_p & seen_q).sum()))}
+    centres = centres[keep]
+    if not len(centres):
+        return m, None
+    t1 = time.time()
+    slab = _wrap(centres, None, r, r)
+    log(f"  thicken: {len(centres)} centres, slab {len(slab.faces)} faces, wrap {time.time() - t1:.0f}s")
+    out = _manifold_union([m, slab])
+    if out is None:
+        out = _union(m, slab)
+    out = _drop_pockets(out)  # gaps between a skin and its core that the new walls closed: filled
+    info["addedCm3"] = round((float(out.volume) - float(m.volume)) / 1000, 2)
+    info["secs"] = round(time.time() - t0, 1)
+    return out, info
 
 
 # --- floating pieces -------------------------------------------------------------------------------

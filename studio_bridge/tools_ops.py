@@ -11,7 +11,9 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               (print_remesh) is the fallback; optionally scale to a height in mm, stand the model
               on the plate (Y up, base at 0). Pieces hanging in mid-air are reported and removed unless
               params["floating"] is "keep"; the other choice is written too, as the "alternate" file.
-              Walls thinner than the printer holds are reported as spots ("thinSpots"). params["printer"]
+              Walls thinner than the printer holds are thickened from inside; thin details seen from both
+              sides grow on both, unless params["thinDetails"] is "keep". What is still thin is reported as
+              spots ("thinSpots"). params["printer"]
               is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
 """
 
@@ -245,12 +247,19 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             steps.append(f"detail finer than {fine['limitMm']:g} mm merged: {fine['faces'][0]:,} → {fine['faces'][1]:,} triangles")
 
         # The checks above left trimesh's edge tables on the mesh, alive through the whole solid step.
-        mesh, solid = make_solid(_lean(mesh), mm_per_unit, full=_lean(full) if fine and full is not None else None, printer=printer)
+        mesh, solid = make_solid(_lean(mesh), mm_per_unit, full=_lean(full) if fine and full is not None else None, printer=printer,
+                                 thicken_seen=str(params.get("thinDetails") or "thicken") != "keep")
         full = None
         if solid.get("repairedFromFull"):
             steps.append("the repair needed the full detail: done on the model as it came")
         solid["atHeightMm"] = work_mm
         steps.append(SOLID_STEPS.get(solid["method"], "made one closed solid"))
+        th = solid.get("thickened")
+        if th:
+            text = f"thin walls thickened to {th['toMm']:g} mm from inside ({th['addedCm3']:g} cm³ added)"
+            if th["bothSeen"]:
+                text += "; thin details seen from both sides grew a little on both"
+            steps.append(text)
         if solid.get("thinWalls"):
             steps.append(f"walls stay thin (about {solid['resultWallMm']:g} mm): it may print as a fragile shell")
     except Exception as exc:  # the old path: close holes, and rebuild from voxels when that falls short

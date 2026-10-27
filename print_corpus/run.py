@@ -134,6 +134,10 @@ def run_one(m: dict, rec: str, printer: str = "fdm") -> dict:
     })
     pick = next((c for c in solid.get("candidates", []) if c.get("method") == row["method"]), {})
     row["changedShare"], row["lostShare"] = pick.get("changedShare"), pick.get("lostShare")
+    if solid.get("thickened"):  # the walls were thickened after the pick: what prints is that one
+        row["thickened"] = solid["thickened"]
+        row["pickedChangedShare"], row["pickedLostShare"] = row["changedShare"], row["lostShare"]
+        row["changedShare"], row["lostShare"] = solid["thickened"]["changedShare"], solid["thickened"]["lostShare"]
     return row
 
 
