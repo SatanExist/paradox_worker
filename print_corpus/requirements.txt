@@ -7,5 +7,6 @@ pymeshlab==2023.12.post3
 libigl==2.6.3
 scikit-image==0.26.0
 cgal==6.0.1.post202410241521
+manifold3d==3.5.4
 psutil
 rtree

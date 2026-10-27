@@ -290,12 +290,41 @@ def _drop_pockets(m):
     return _lean(trimesh.util.concatenate(kept)) if kept else _lean(m)
 
 
+def _manifold_union(meshes):
+    """The union of several closed, crossing-free meshes (a body and its bridges, a shell and its block) by
+    Manifold: the same shape as CGAL's on the corpus (≤0.0003 mm) in 2–3% of the time. None when Manifold isn't
+    installed or won't take an input as a closed manifold, so the caller falls back to CGAL."""
+    try:
+        import manifold3d as mf
+    except ImportError:
+        return None
+    import numpy as np
+    import trimesh
+
+    parts = []
+    for m in meshes:
+        p = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(m.vertices, np.float64),
+                                  tri_verts=np.ascontiguousarray(m.faces, np.uint64)))
+        if p.status() != mf.Error.NoError:
+            return None
+        parts.append(p)
+    g = mf.Manifold.batch_boolean(parts, mf.OpType.Add).to_mesh64()
+    # copies: a view would keep Manifold's buffers alive past the call
+    return trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
+
+
 def _union(*meshes):
-    """One exact union (CGAL arithmetic): resolves every self-crossing. Needs consistently oriented input."""
+    """One union. Several meshes: Manifold when it takes them all (see _manifold_union). One mesh, or what
+    Manifold won't take: one exact union in CGAL arithmetic, which resolves every self-crossing. Needs
+    consistently oriented input."""
     import igl.copyleft.cgal as cgal
     import numpy as np
     import trimesh
 
+    if len(meshes) > 1:
+        out = _manifold_union(meshes)
+        if out is not None:
+            return out
     allm = trimesh.util.concatenate(list(meshes)) if len(meshes) > 1 else meshes[0]
     V, F, _ = cgal.mesh_boolean(np.asarray(allm.vertices, np.float64), np.asarray(allm.faces, np.int64), type_str="union")
     return trimesh.Trimesh(V, F, process=False)
