@@ -511,6 +511,173 @@ class _Reference:
         return deviation, lost
 
 
+# What no one can see from outside: the body under armour plates, the inner sheet of a thin plate, shells
+# inside shells. Generators leave a lot of it (the TRELLIS knight: over a quarter of its 670k triangles),
+# and a cut spends triangles on it, then pushes it out through the plates over it: cut to 100k, 13% of the
+# knight's triangles pierced another (0.2% in the original), spikes and dents up close; cut to 20k, 52%.
+# Left out before the cut (99.6k triangles): 4.4% and 41%, the look at 100k 2.72 -> 0.76%, and the triangles
+# go where they show. Also gone: a bottle's insides that broke through its glass when cut (look 35.8 -> 0%).
+# A face is seen when, from one of HIDDEN_DIRECTIONS fixed directions on its front side, a ray from far off
+# meets it first at its centre. Some faces show only through a narrow slit at angles between those, so
+# everything within HIDDEN_RINGS rings of a seen face stays too. Drawn as a viewer does (back faces not
+# drawn), 100 views of the knight at 100k: see-through pixels 245 before, 168 with 3 rings (one slit by the
+# fist opened: 66 px from above), 104 with 5 (that one 1 px); 512 more directions near the seen ones, 97,
+# at three times the time. A huge model gets fewer directions to stay within time; a model that moves
+# keeps everything (a bend can open what rest hides).
+HIDDEN_DIRECTIONS = 128
+HIDDEN_DIRECTIONS_HUGE = 64
+HIDDEN_HUGE_TRIS = 1_500_000
+HIDDEN_RINGS = 5
+HIDDEN_MIN_SHARE = 0.005  # less than this left out isn't worth a step
+HIDDEN_RAYS_PER_CALL = 3_000_000  # rays cast together (a few hundred MB at most)
+_HIDDEN: dict[tuple, dict[str, Any]] = {}  # per job: the original's file → what of it is hidden, how tangled
+
+# Spikes up close: triangles of a cut piercing other triangles of it (tangledPct, % of its triangles, over
+# the original's own). The six-view look missed them: the knight at 100k looked 2.7% off, yet clay up close
+# its plates were torn. Eye-marked baked cuts sit at 0.2-3.4% over originals with none (camera, drill,
+# watch, mech, scorpion, 5k-20k, crumpled or fine). The knight baked, marked by eye (2026-10-27): 20k at 30%
+# spotted (black blotches where the bake met the wrong layer), 35k at 10.8% and 50k at 4.5% fine; cut plain
+# to 100k at 13.2% fine as textured, 30k at 41% "crumpled, with holes" bare in Mixamo. Over this, the auto
+# budget takes the next rung. One model's marks: provisional.
+TANGLED_OK_PCT = 15.0
+
+
+def _job_cache(in_path: Path) -> dict[str, Any]:
+    stat = in_path.stat()
+    return _HIDDEN.setdefault((str(in_path), stat.st_mtime_ns, stat.st_size), {})
+
+
+def _tangled(V, F) -> float:
+    """% of the triangles that pierce another one of the same model."""
+    import numpy as np
+    import pymeshlab
+
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(np.asarray(V, np.float64), np.asarray(F, np.int32)))
+    ms.meshing_merge_close_vertices(threshold=pymeshlab.PercentageValue(0.0001))  # UV seams split corners
+    count = ms.current_mesh().face_number()
+    ms.compute_selection_by_self_intersections_per_face()
+    return round(100 * ms.current_mesh().selected_face_number() / max(count, 1), 2)
+
+
+def _tangled_over(in_path: Path, cut_path: Path) -> dict[str, float]:
+    """How tangled a cut is, and its original (the part a cut keeps; worked out once per job)."""
+    cache = _job_cache(in_path)
+    if "tangled" not in cache:
+        original = _shaded(in_path)
+        cache["tangled"] = _tangled(*_visible(original, _hidden(in_path, original))[:2])
+    return {"tangledPct": _tangled(*_shaded(cut_path)[:2]), "originalTangledPct": cache["tangled"]}
+
+
+def _sphere(k: int):
+    """k directions spread evenly over the sphere (a Fibonacci spiral: the same every run)."""
+    import numpy as np
+
+    i = np.arange(k) + 0.5
+    phi = np.arccos(1 - 2 * i / k)
+    theta = np.pi * (1 + 5**0.5) * i
+    return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], 1)
+
+
+def _seen_faces(V, F, directions: int):
+    """Which faces a ray from far off meets first at their centre, from one of `directions` directions on
+    their front side."""
+    import igl.embree
+    import numpy as np
+
+    centre = V[F].mean(1)
+    normal = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    area2 = np.linalg.norm(normal, axis=1)
+    normal = normal / area2[:, None].clip(1e-30)
+    span = float(np.linalg.norm(V.max(0) - V.min(0)))
+    seen = area2 <= 0  # degenerate: draws as nothing, kept as it was
+    # Several directions per call: each call builds its own search tree over the whole model (most of the
+    # time on a 1.5M-triangle one). Seen is "from any direction", so batching changes nothing in the result.
+    batch: list[tuple[Any, Any]] = []
+
+    def cast():
+        todo = np.concatenate([t for t, _ in batch])
+        ray = np.concatenate([np.repeat(d[None], len(t), 0) for t, d in batch])
+        hit = igl.embree.line_mesh_intersection(centre[todo] + ray * 2 * span, -ray, V, F)
+        face = hit[:, 0].astype(np.int64)
+        ok = face == todo
+        other = ~ok & (face >= 0)  # met first on a twin of the same spot (a duplicate face): seen too
+        if other.any():
+            w = np.stack([1 - hit[other, 1] - hit[other, 2], hit[other, 1], hit[other, 2]], 1)
+            at = (V[F[face[other]]] * w[:, :, None]).sum(1)
+            ok[other] = np.linalg.norm(at - centre[todo[other]], axis=1) < span * 1e-5
+        seen[todo[ok]] = True
+        batch.clear()
+
+    for d in _sphere(directions):
+        todo = np.flatnonzero(~seen & (normal @ d > 0.02))
+        if len(todo):
+            batch.append((todo, d))
+        if sum(len(t) for t, _ in batch) >= HIDDEN_RAYS_PER_CALL:
+            cast()
+    if batch:
+        cast()
+    return seen
+
+
+def _hidden(in_path: Path, original=None) -> dict[str, Any] | None:
+    """What of the original no one sees, worked out once per job: the points (model space) whose every face
+    is hidden, written for game.mjs to leave out triangles with all three corners on them, and which faces
+    of `original` (`_shaded`) stay. None for a model that moves or with next to nothing hidden."""
+    import numpy as np
+    from scipy import sparse
+
+    cache = _job_cache(in_path)
+    if "found" in cache:
+        return cache["found"]
+    found = None
+    if not _animated(in_path):
+        original = original or _shaded(in_path)
+        V, F = original[0], np.asarray(original[1], np.int64)
+        seen = _seen_faces(V, F, HIDDEN_DIRECTIONS_HUGE if len(F) > HIDDEN_HUGE_TRIS else HIDDEN_DIRECTIONS)
+        # Rings over shared positions: a UV seam splits a vertex, not the surface.
+        _, spot = np.unique(V, axis=0, return_inverse=True)
+        spot = spot.reshape(-1)
+        touches = sparse.csr_matrix((np.ones(F.size, np.float32), (np.repeat(np.arange(len(F)), 3), spot[F].reshape(-1))), shape=(len(F), spot.max() + 1))
+
+        def grown(faces, rings):
+            for _ in range(rings):
+                faces = faces | ((touches @ ((touches.T @ faces.astype(np.float32)) > 0).astype(np.float32)) > 0)
+            return faces
+
+        seen = grown(seen, HIDDEN_RINGS)
+        shown = (touches.T @ seen.astype(np.float32)) > 0
+        stays = ~(~shown[spot[F]]).all(1)
+        if (~stays).mean() >= HIDDEN_MIN_SHARE:
+            first = np.zeros(spot.max() + 1, np.int64)
+            first[spot[::-1]] = np.arange(len(spot))[::-1]
+            fd, name = tempfile.mkstemp(suffix=".f32")
+            os.close(fd)
+            Path(name).write_bytes(np.asarray(V[first[~shown]], np.float32).tobytes())
+            found = {"file": name, "stays": stays, "faces": int((~stays).sum())}
+    cache["found"] = found
+    return found
+
+
+def _forget_hidden(in_path: Path) -> None:
+    for key in [k for k in _HIDDEN if k[0] == str(in_path)]:
+        found = _HIDDEN.pop(key).get("found")
+        if found:
+            Path(found["file"]).unlink(missing_ok=True)
+
+
+def _visible(original, found):
+    """The original without the faces game.mjs leaves out, vertices renumbered: what a cut is measured against."""
+    import numpy as np
+
+    if not found:
+        return original
+    V, F, N, moved = original
+    F = np.asarray(F)[found["stays"]]
+    used, F = np.unique(F, return_inverse=True)
+    return V[used], F.reshape(-1, 3), N[used], moved
+
+
 # Parts a cut to a budget lost: where an original vertex ends up over KEEP_LOST_PCT of the model's size
 # from the new surface (antennas, rocket tips, thin barrels). Up to KEEP_ROUNDS times a vertex is kept at
 # the worst spots and the model cut again with the same budget: fixing one spot can open another.
@@ -755,18 +922,25 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
         os.close(fd)
         try:
             job = {"targetTris": budget, "textureSize": texture_size, **({"forBake": True} if kind == "baked" else {})}
+            if found := _hidden(in_path):
+                job["dropFile"] = found["file"]
             cut = _game_mjs(in_path, Path(name), job)
             if kind == "baked":
                 _bake(in_path, Path(name), cut["shift"], min(texture_size, QUICK_BAKE_PX), high)
             seen = look(in_path, Path(name), cut["shift"], res=res)["noticeablePct"]
+            tangles = _tangled_over(in_path, Path(name))
         finally:
             try:
                 Path(name).unlink(missing_ok=True)
             except OSError:  # Windows: still held
                 pass
         if "noticeablePct" not in step or seen < step["noticeablePct"]:
-            step.update({"triangles": cut["after"]["triangles"], "noticeablePct": seen, "baked": kind == "baked"})
+            step.update({"triangles": cut["after"]["triangles"], "noticeablePct": seen, "baked": kind == "baked", **tangles})
     return step
+
+
+def _too_tangled(measured: dict[str, Any]) -> bool:
+    return measured.get("tangledPct", 0) - measured.get("originalTangledPct", 0) > TANGLED_OK_PCT
 
 
 def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
@@ -775,7 +949,10 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
     baked cut: each was marked by eye on its own), by halving the ladder: a few quick cuts (no second pass)
     looked at from the six views, a borderline one redone in full. Bigger budgets look at least as good,
     so the search can skip. Returns the pick and every budget tried, in order."""
-    faces = _shaded(in_path)[1]
+    original = _shaded(in_path)
+    faces = original[1]
+    _hidden(in_path, original)  # once for every quick cut
+    original = None
     floor, ladder = (purpose["bakeFloor"], purpose["bakeLadder"]) if bake else (purpose["floor"], purpose["ladder"])
     if len(faces) <= floor:  # already light: nothing to cut
         return {"picked": len(faces), "okPct": ok_pct, "tried": []}
@@ -814,8 +991,9 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
                         pass
             seen = step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
             limit = bake_ok_pct if full["after"].get("bake", {}).get("used") and bake_ok_pct else ok_pct
+            step.update({k: full["after"][k] for k in ("tangledPct", "originalTangledPct") if k in full["after"]})
         tried.append(step)
-        if seen <= limit:
+        if seen <= limit and not _too_tangled(step):
             hi = mid
         else:
             lo = mid + 1
@@ -879,6 +1057,13 @@ def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut.
     With bake, each cut is also made baked, and the one that looks closer is kept."""
+    try:
+        return _game_prep_job(in_path, out_path, params)
+    finally:
+        _forget_hidden(in_path)  # what's hidden was worked out once for every cut of this job
+
+
+def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     if not params.get("autoBudget"):
         return _best_of(in_path, out_path, params)
     purpose_name, purpose = _purpose(params)
@@ -927,18 +1112,24 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         job["forBake"] = True
     if params.get("regularize") in ("light", "full"):
         job["regularize"] = params["regularize"]
-    # The cut runs in node while this process gets the original ready to measure against; a huge model
-    # is done one after the other, so the two copies of it don't sit in memory at once.
+    # What no one sees is found first: the cut leaves it out, and the cut is measured against the rest.
+    # Then the cut runs in node while this process gets the original ready to measure against; a huge
+    # model is done one after the other, so the two copies of it don't sit in memory at once.
     from concurrent.futures import ThreadPoolExecutor
 
+    original = _shaded(in_path)
+    found = _hidden(in_path, original)
+    if found:
+        job["dropFile"] = found["file"]
     if _triangles_in_file(in_path) > OVERLAP_MAX_TRIS:
+        original = None
         result = _game_mjs(in_path, out_path, job)
-        original = _shaded(in_path)
+        original = _visible(_shaded(in_path), found)
         reference = _Reference(original)
     else:
+        original = _visible(original, found)
         with ThreadPoolExecutor(max_workers=1) as pool:
             cutting = pool.submit(_game_mjs, in_path, out_path, job)
-            original = _shaded(in_path)
             reference = _Reference(original)
             result = cutting.result()
     to_budget = "maxErrorPct" not in job
@@ -1076,6 +1267,13 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
+    try:
+        after.update(_tangled_over(in_path, out_path))
+        if _too_tangled(after) and not params.get("maxErrorPct"):
+            steps.append(f"pierces itself in {after['tangledPct']:g}% of its triangles, the original in {after['originalTangledPct']:g}%: "
+                         "spikes and dents up close; the auto budget picks more triangles")
+    except Exception as exc:  # as above
+        steps.append(f"spikes not measured: {str(exc)[:120]}")
     return report
 
 

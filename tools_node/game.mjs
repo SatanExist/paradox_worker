@@ -32,6 +32,9 @@ const EVEN = { light: ["RegularizeLight"], full: ["Regularize"] }[params.regular
 // Copied into a buffer of its own: a small file's Buffer is a slice of Node's shared pool, and reading
 // its .buffer whole gave 16384 floats of whatever else was in the pool (no point ever matched).
 const keep = params.keepFile ? new Float32Array(new Uint8Array(readFileSync(params.keepFile)).buffer) : null;
+// Points (float32 x,y,z, model space) no one can see from outside (tools_ops.py): a triangle with all
+// three corners on them is left out before the cut.
+const hidden = params.dropFile ? new Float32Array(new Uint8Array(readFileSync(params.dropFile)).buffer) : null;
 
 const TRIANGLES = 4;
 /** Pieces smaller than this share of the model are specks the generator left floating around it. */
@@ -273,6 +276,50 @@ function keepPoints(prims) {
   return kept;
 }
 
+/**
+ * Leave out triangles whose three corners are all hidden points. Matched where the model puts them, within
+ * a hair: Python worked model space out in its own order of float operations. Returns how many went.
+ */
+function dropHidden(prims) {
+  let span = 0;
+  for (let i = 0; i < hidden.length; i++) span = Math.max(span, Math.abs(hidden[i]));
+  const hair = Math.max(span, 1e-9) * 1e-7;
+  const cellSize = 4 * hair;
+  const cellKey = (ix, iy, iz) => (ix * 73856093) ^ (iy * 19349663) ^ (iz * 83492791);
+  const grid = new Map();
+  for (let i = 0; i < hidden.length; i += 3) {
+    const k = cellKey(Math.floor(hidden[i] / cellSize), Math.floor(hidden[i + 1] / cellSize), Math.floor(hidden[i + 2] / cellSize));
+    const list = grid.get(k);
+    if (list) list.push(i);
+    else grid.set(k, [i]);
+  }
+  const isHidden = (x, y, z) => {
+    for (let ix = Math.floor((x - hair) / cellSize); ix <= Math.floor((x + hair) / cellSize); ix++)
+      for (let iy = Math.floor((y - hair) / cellSize); iy <= Math.floor((y + hair) / cellSize); iy++)
+        for (let iz = Math.floor((z - hair) / cellSize); iz <= Math.floor((z + hair) / cellSize); iz++)
+          for (const i of grid.get(cellKey(ix, iy, iz)) ?? [])
+            if (Math.abs(hidden[i] - x) <= hair && Math.abs(hidden[i + 1] - y) <= hair && Math.abs(hidden[i + 2] - z) <= hair) return true;
+    return false;
+  };
+  let dropped = 0;
+  for (const p of prims) {
+    const m = p.matrix;
+    const count = p.positions.length / 3;
+    const off = new Uint8Array(count);
+    for (let v = 0; v < count; v++) {
+      const [x, y, z] = [p.positions[v * 3], p.positions[v * 3 + 1], p.positions[v * 3 + 2]];
+      off[v] = isHidden(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]) ? 1 : 0;
+    }
+    const stay = [];
+    for (let i = 0; i < p.indices.length; i += 3) {
+      if (off[p.indices[i]] && off[p.indices[i + 1]] && off[p.indices[i + 2]]) dropped++;
+      else stay.push(p.indices[i], p.indices[i + 1], p.indices[i + 2]);
+    }
+    p.indices = Uint32Array.from(stay);
+  }
+  return dropped;
+}
+
 function cut(prims, ratio, flags = []) {
   if (prims.length > 1) return cutTogether(prims, { targetTris: Math.floor(triangleCount(prims) * ratio), flags });
   for (const p of prims) {
@@ -386,6 +433,10 @@ await doc.transform(dedup(), weld());
 steps.push("welded");
 
 const prims = triangleMeshes(doc);
+if (hidden) {
+  const dropped = dropHidden(prims);
+  if (dropped) steps.push(`left out ${dropped} triangles no one can see from outside (under plates, inside shells)`);
+}
 if (params.forBake) {
   // The textures will be baked afterwards onto new UVs, so the old seams need not hold: the
   // triangles go where the shape is, joined across seams, with nothing but positions weighed.
