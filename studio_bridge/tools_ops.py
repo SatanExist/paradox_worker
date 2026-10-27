@@ -10,7 +10,9 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               fill a hollow skin, or a 0.5 mm wrap, whichever lost nothing and filled more); the voxel rebuild
               (print_remesh) is the fallback; optionally scale to a height in mm, stand the model
               on the plate (Y up, base at 0). Pieces hanging in mid-air are reported and removed unless
-              params["floating"] is "keep"; the other choice is written too, as the "alternate" file
+              params["floating"] is "keep"; the other choice is written too, as the "alternate" file.
+              Walls thinner than the printer holds are reported as spots ("thinSpots"). params["printer"]
+              is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
 """
 
 from __future__ import annotations
@@ -221,7 +223,10 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     t = time.time()
 
     height_mm = params.get("heightMm")
-    remesh = solid = fine = None
+    from studio_bridge.print_solid import DEFAULT_PRINTER, PRINTERS
+
+    printer = PRINTERS.get(str(params.get("printer") or DEFAULT_PRINTER), PRINTERS[DEFAULT_PRINTER])
+    remesh = solid = fine = thin = None
     # The solid is made at a print scale: the tolerances (a 3 mm ball, 0.5 mm wrap, 1 mm loss) are physical.
     # Without a height the model is taken as a typical figurine; very small or large prints are worked at
     # the nearest sane size, so the tolerances scale with them.
@@ -240,7 +245,7 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             steps.append(f"detail finer than {fine['limitMm']:g} mm merged: {fine['faces'][0]:,} → {fine['faces'][1]:,} triangles")
 
         # The checks above left trimesh's edge tables on the mesh, alive through the whole solid step.
-        mesh, solid = make_solid(_lean(mesh), mm_per_unit, full=_lean(full) if fine and full is not None else None)
+        mesh, solid = make_solid(_lean(mesh), mm_per_unit, full=_lean(full) if fine and full is not None else None, printer=printer)
         full = None
         if solid.get("repairedFromFull"):
             steps.append("the repair needed the full detail: done on the model as it came")
@@ -271,7 +276,7 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     from studio_bridge.print_solid import split_floating
 
     try:
-        body, pieces, about = split_floating(mesh, mm_per_unit)
+        body, pieces, about = split_floating(mesh, mm_per_unit, printer)
     except Exception as exc:  # a report extra: never worth failing the print for
         print(f"floating pieces not checked: {exc}")
         body, pieces, about = mesh, None, []
@@ -291,6 +296,27 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             m.apply_scale(s)
             m.apply_translation(shift)
     steps.append("placed on plate")
+
+    # Walls thinner than the printer holds, measured at the size it prints at (the file is in metres when a
+    # height was asked for, else in its own units at the working scale). Positions as the floating pieces'.
+    from studio_bridge.print_solid import thin_spots
+
+    to_mm = 1000.0 if height_mm else mm_per_unit
+    try:
+        thin = thin_spots(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False), printer)
+        for spot in thin["spots"]:
+            spot["centerMm"] = [round(v / to_mm * 1000.0, 1) for v in spot["centerMm"]]
+            spot["sizeMm"] = [round(v / to_mm * 1000.0, 1) for v in spot["sizeMm"]]
+        if thin["spots"]:
+            worst = min(spot["thinnestMm"] for spot in thin["spots"])
+            n = len(thin["spots"])
+            how = "won't print there" if worst < printer.min_print_mm else "may break there"
+            steps.append(f"thin spots: {n} place{'s' if n != 1 else ''} with walls under {printer.min_wall_mm:g} mm "
+                         f"(thinnest {'under 0.05' if worst < 0.05 else f'{worst:g}'} mm): it {how}")
+    except Exception as exc:  # a report extra: never worth failing the print for
+        print(f"wall thickness not checked: {exc}")
+    timings["thickness"] = round(time.time() - t, 1)
+    t = time.time()
 
     floating = None
     if pieces is not None:
@@ -326,6 +352,9 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["extraFiles"] = {"alternate": str(alt)}
     if solid:
         report["solid"] = solid
+    if thin is not None:
+        report["thinSpots"] = thin
+    report["printer"] = printer.name
     if remesh:
         report["remesh"] = remesh
     timings["export"] = round(time.time() - t, 1)

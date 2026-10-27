@@ -128,6 +128,7 @@ def run_one(m: dict, rec: str) -> dict:
         "steps": report["steps"],
         "floating": report.get("floating"),
         "fineDetail": report.get("fineDetail"),
+        "thinSpots": report.get("thinSpots"),
     })
     pick = next((c for c in solid.get("candidates", []) if c.get("method") == row["method"]), {})
     row["changedShare"], row["lostShare"] = pick.get("changedShare"), pick.get("lostShare")

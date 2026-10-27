@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+from dataclasses import dataclass
 from typing import Any, Callable
 
 BALL_MM = 3.0  # a chamber is space a ball this size can't reach from outside
@@ -51,6 +52,33 @@ VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidd
 SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
 HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
 LEAN_FROM_FACES = 2_000_000  # meshes this big drop their cached tables after each stage (see _lean)
+THICKNESS_SAMPLES = 100_000  # surface points the wall thickness is measured at
+THICKNESS_CONE_DEG = 20.0  # six rays round the inward normal at this angle, plus the normal itself
+THIN_SPOT_CELL_MM = 2.0  # thin points closer than this belong to the same spot
+THIN_SPOT_MIN_MM2 = 1.0  # smaller thin spots are tips and needle points, not walls: not reported
+
+
+@dataclass(frozen=True)
+class Printer:
+    """What a kind of printer can print: every physical threshold of the print prep comes from here."""
+    name: str
+    layer_mm: float  # first layer: a piece no higher than this above the plate starts on it
+    min_wall_mm: float  # thinner than this a wall or a strand is fragile
+    min_print_mm: float  # thinner than this it doesn't print at all (one nozzle line, the finest resin detail)
+    skin_mm: float  # mean wall (2·volume/area) below this is a paper skin with a hollow to fill
+    wrap_alpha_mm: float  # the wrap rounds openings and grooves up to this
+    lost_mm: float  # original surface farther than this from the result is lost
+    bridge_reach_mm: float  # pieces floating farther than this from the body are left as they are
+
+
+# fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
+# resin: 0.05 mm layers, walls from 0.4 mm (Formlabs' guide for supported walls), detail from 0.2 mm, kept closer.
+PRINTERS = {
+    "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
+                   bridge_reach_mm=BRIDGE_REACH_MM),
+    "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0),
+}
+DEFAULT_PRINTER = "fdm"
 
 Log = Callable[[str], None]
 
@@ -422,7 +450,7 @@ def _finish(m, log: Log, shared: dict[str, Any]):
         log(f"  self-union failed, kept as is: {exc}")
     log(f"  self-union {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
-    m, bridged = _bridge(m, log)
+    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
     log(f"  bridges {time.time() - t:.0f}s")
     _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
@@ -432,7 +460,7 @@ def _shell(orig, shared: dict[str, Any], log: Log):
     """The wrap of the original: built once, used by both wrap and solidify."""
     if "shell" not in shared:
         t = time.time()
-        shared["shell"] = _wrap(orig.vertices, orig.faces, WRAP_ALPHA_MM)
+        shared["shell"] = _wrap(orig.vertices, orig.faces, shared["printer"].wrap_alpha_mm)
         log(f"  wrap {time.time() - t:.0f}s")
         _tick(shared, "wrap", t)
     return shared["shell"].copy()
@@ -455,7 +483,7 @@ def _solidified(orig, repaired, shared, log: Log):
     m = _drop_pockets(_union(shell, block))  # gaps the block didn't reach are sealed pockets: filled too
     log(f"  fill union {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
-    m, bridged = _bridge(m, log)
+    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
     _tick(shared, "bridges", t)
     return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged}
 
@@ -463,7 +491,7 @@ def _solidified(orig, repaired, shared, log: Log):
 def _wrapped(orig, repaired, shared, log: Log):
     shell = _shell(orig, shared, log)
     t = time.time()
-    m, bridged = _bridge(shell, log)
+    m, bridged = _bridge(shell, log, shared["printer"].bridge_reach_mm)
     _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
 
@@ -499,7 +527,7 @@ def _seen(V, F, pts, normals):
     return occluded < 1.0
 
 
-def _measure(orig, orig_pts, m) -> dict[str, Any]:
+def _measure(orig, orig_pts, m, printer: Printer) -> dict[str, Any]:
     """'changed': result surface seen from outside that sits more than 0.3 mm off the original; surface moved out
     of sight (the walls of a filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more
     than 1 mm from the result and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
@@ -532,13 +560,14 @@ def _measure(orig, orig_pts, m) -> dict[str, Any]:
         "faces": int(len(m.faces)),
         "changedShare": round(float(moved[seen].mean()) if seen.any() else 0.0, 4),
         "changedHiddenShare": round(float((moved & ~seen).mean()), 4),
-        "lostShare": round(float((lost > LOST_MM).mean()), 5),
+        "lostShare": round(float((lost > printer.lost_mm).mean()), 5),
         "lostMaxMm": round(float(lost.max()), 2),
+        "_paper": wall is not None and wall < printer.skin_mm,
     }
 
 
 def _paper(c: dict[str, Any]) -> bool:
-    return c["wallMm"] is not None and c["wallMm"] < SKIN_MM
+    return c["_paper"]
 
 
 def _good(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -571,12 +600,12 @@ def _pick(cands: list[dict[str, Any]]):
     return best, note
 
 
-def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
+def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: Printer = PRINTERS[DEFAULT_PRINTER]):
     """One closed solid made from `mesh` (any units; `mm_per_unit` gives the print scale), and the report.
     `full` is the model before its fine detail was merged (tools_ops): when the repair can't close the lighter
     mesh, it is made again from that one before anything else is tried. On hunyuan_operative the self-union left
     one edge with four faces on the lighter mesh, so the 0.5 mm wrap won where the repair used to change nothing.
-    Raises when no candidate came out closed, so the caller can fall back."""
+    The thresholds are the printer's (see Printer). Raises when no candidate came out closed, so the caller can fall back."""
     import numpy as np
     import trimesh
 
@@ -596,7 +625,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
         wall = _thickness(repaired)
         _lean(repaired)
         log(f" local repair {time.time() - t1:.0f}s, closed {repaired.is_watertight}, wall {wall if wall is None else round(wall, 2)} mm")
-        paper = wall is None or wall < SKIN_MM  # a paper skin, or unknown: the gate judges the result
+        paper = wall is None or wall < printer.skin_mm  # a paper skin, or unknown: the gate judges the result
         builders = [("solidify", _solidified)] if paper else [("repair", _repaired)]
     except Exception as exc:
         log(f" local repair failed: {exc}")
@@ -604,7 +633,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
     if not came_closed or not builders:
         builders.append(("wrap", _wrapped))
     cands: list[dict[str, Any]] = []
-    shared: dict[str, Any] = {}
+    shared: dict[str, Any] = {"printer": printer}
 
     def build(name: str, fn: Callable) -> None:
         t1 = time.time()
@@ -616,7 +645,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
             log(f"  {name} failed: {exc}")
             return
         t2 = time.time()
-        c = {"method": name, **_measure(orig, orig_pts, m), **extra, "secs": round(time.time() - t1, 1)}
+        c = {"method": name, **_measure(orig, orig_pts, m, printer), **extra, "secs": round(time.time() - t1, 1)}
         _tick(shared, "measure", t2)
         c["stages"] = shared.pop("stages")
         log(f"  {name}: {c}")
@@ -664,6 +693,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
     trimesh.repair.fix_normals(out)
     info: dict[str, Any] = {
         "method": best["method"],
+        "printer": printer.name,
         "cameClosed": came_closed,
         "wallMm": None if wall is None else round(wall, 2),
         "resultWallMm": best["wallMm"],
@@ -679,13 +709,129 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None):
     return out, info
 
 
+# --- wall thickness --------------------------------------------------------------------------------
+
+def wall_thickness(m, seed: int = SEED):
+    """Wall thickness at surface points: from each point, seven rays into the solid (the inward normal and six
+    at 20° round it, always the same six), and the median distance to the wall opposite, the slanted ones
+    taken along the normal. A thin plate measures its thickness, a strand its diameter, while a sharp corner
+    of a thick block stays thick: the ray goes straight across. `m` is closed, in mm.
+    Returns (points, thickness mm); inf where no ray found the other side."""
+    import numpy as np
+    import trimesh
+
+    pts, fi = trimesh.sample.sample_surface(m, THICKNESS_SAMPLES, seed=seed)
+    inward = -np.asarray(m.face_normals, np.float64)[fi] * (1.0 if float(m.volume) >= 0 else -1.0)
+    return pts, _ray_thickness(m, pts, inward)
+
+
+def _ray_thickness(m, pts, inward):
+    """Thickness at `pts` going along unit `inward` (see wall_thickness)."""
+    import igl.embree
+    import numpy as np
+
+    helper = np.where(np.abs(inward[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]])
+    u = np.cross(inward, helper)
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    w = np.cross(inward, u)
+    a = np.radians(THICKNESS_CONE_DEG)
+    dirs = [inward] + [np.cos(a) * inward + np.sin(a) * (np.cos(k * np.pi / 3) * u + np.sin(k * np.pi / 3) * w) for k in range(6)]
+    along = [1.0] + [float(np.cos(a))] * 6
+    ei = igl.embree.EmbreeIntersector()
+    ei.init(np.asfortranarray(m.vertices, np.float32), np.asfortranarray(m.faces, np.int32), True)
+    start = (pts + inward * 1e-3).astype(np.float32)  # just inside, so the ray doesn't hit its own face
+    dist = np.full((len(pts), len(dirs)), np.inf)
+    for j, (d, cos) in enumerate(zip(dirs, along)):
+        d32 = d.astype(np.float32)
+        for i in range(len(pts)):
+            f, t, _, _ = ei.intersectRay_first(start[i], d32[i])
+            if f >= 0:
+                dist[i, j] = (t + 1e-3) * cos
+    return np.median(dist, axis=1)
+
+
+def thin_spots(m, printer: Printer) -> dict[str, Any]:
+    """Where the walls are thinner than the printer holds (Printer.min_wall_mm, "fragile") or prints at all
+    (min_print_mm, "won't print"): the shares of the surface, and the spots (thin points within 2 mm of each
+    other, from 1 mm² up), biggest first, each with where it is, its size, its area and its thinnest wall.
+    The mean wall (2·V/A) can't see these: a solid knight with 0.3 mm fingers has a mean wall of 3 mm, and on
+    trellis2_chest a 0.22 mm skin hangs 0.9 mm off the filled core. `m` is closed, in mm; positions in its frame."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    pts, thick = wall_thickness(m)
+    thin = thick < printer.min_wall_mm
+    out: dict[str, Any] = {"minWallMm": printer.min_wall_mm, "minPrintMm": printer.min_print_mm,
+                           "share": round(float(thin.mean()), 4), "unprintableShare": round(float((thick < printer.min_print_mm).mean()), 4),
+                           "spots": []}
+    if not thin.any():
+        return out
+    p, t = pts[thin], thick[thin]
+    cell = np.floor(p / THIN_SPOT_CELL_MM).astype(np.int64)
+    keys, of = np.unique(cell, axis=0, return_inverse=True)
+    of = of.ravel()
+    code = lambda c: (c[:, 0] * 1_000_003 + c[:, 1]) * 1_000_033 + c[:, 2]  # noqa: E731
+    order = np.argsort(code(keys))
+    sorted_codes = code(keys)[order]
+    rows, cols = [], []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                nb = code(keys + [dx, dy, dz])
+                at = np.searchsorted(sorted_codes, nb)
+                ok = (at < len(keys)) & (sorted_codes[np.minimum(at, len(keys) - 1)] == nb)
+                rows.append(np.nonzero(ok)[0])
+                cols.append(order[at[ok]])
+    r, c = np.concatenate(rows), np.concatenate(cols)
+    _, lab = connected_components(coo_matrix((np.ones(len(r)), (r, c)), shape=(len(keys),) * 2), directed=False)
+    spot = lab[of]
+    per_point = float(m.area) / len(pts)
+    sizes = np.bincount(spot)
+    for k in np.argsort(-sizes, kind="stable")[:5]:
+        if sizes[k] * per_point < THIN_SPOT_MIN_MM2:
+            break
+        q = p[spot == k]
+        lo, hi = q.min(0), q.max(0)
+        out["spots"].append({
+            "areaMm2": round(float(len(q) * per_point), 1),
+            "centerMm": [round(float(v), 1) for v in (lo + hi) / 2],
+            "sizeMm": [round(float(v), 1) for v in hi - lo],
+            "thinnestMm": round(float(np.percentile(t[spot == k], 5)), 2),
+        })
+    return out
+
+
 # --- floating pieces -------------------------------------------------------------------------------
 
-def split_floating(mesh, mm_per_unit: float):
+def _rests_on_plate(tri, base: float, mm_per_unit: float, layer_mm: float) -> bool:
+    """A separate piece prints as its own part only when it starts on the plate and stands there: some of it lies
+    within the first layer, and its centre of mass is over that footprint. Otherwise it starts in mid-air or
+    leans out past its footing, so it needs supports, and on the shelf it falls over. On rodin_knight three
+    0.5 mm strands by the feet, 0.06–0.6 mm above the plate, used to count as parts lying there."""
+    import numpy as np
+    from scipy.spatial import Delaunay, QhullError
+
+    pts = tri.reshape(-1, 3)
+    foot = pts[(pts[:, 1] - base) * mm_per_unit <= layer_mm][:, [0, 2]]
+    if len(foot) < 3:
+        return False
+    vols = np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6
+    if vols.sum() <= 0:
+        return False
+    com = (vols[:, None] * tri.sum(1) / 4).sum(0) / vols.sum()
+    try:
+        return bool(Delaunay(np.unique(foot, axis=0)).find_simplex(com[[0, 2]][None])[0] >= 0)
+    except (QhullError, ValueError):  # all on one line: it would roll
+        return False
+
+
+def split_floating(mesh, mm_per_unit: float, printer: Printer = PRINTERS[DEFAULT_PRINTER]):
     """Pieces hanging in mid-air, apart from the body: a slicer prints them on supports or as spaghetti.
-    The body is the biggest shell; a piece that rests on the plate (a sword lying by the feet) or sits inside
-    the body stays with it. Those within 1.5 mm were already bridged, so these are farther off. The caller
-    decides whether they go (the user picks; the default is to remove them).
+    The body is the biggest shell; a piece that rests on the plate (a sword lying by the feet, see
+    _rests_on_plate) or sits inside the body stays with it. Those within the bridge reach were already
+    bridged, so these are farther off. The caller decides whether they go (the user picks; the default is
+    to remove them).
     Returns (body, pieces, about) with about = one dict per piece, biggest first; pieces is None when there
     are none. Y is up."""
     import igl
@@ -710,7 +856,7 @@ def split_floating(mesh, mm_per_unit: float):
             continue
         f = F[lab == k]
         v = BV[np.unique(f)]
-        if (v[:, 1].min() - base) * mm_per_unit < 1.0:  # stands on the plate: a separate part, not debris
+        if _rests_on_plate(BV[f], base, mm_per_unit, printer.layer_mm):  # a separate part, not debris
             continue
         if igl.winding_number(BV, bF, v[:1])[0] > 0.5:  # inside the body
             continue
