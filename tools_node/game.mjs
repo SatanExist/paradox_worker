@@ -9,9 +9,9 @@
 import { readFileSync, statSync } from "node:fs";
 import { ImageUtils, Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { center, compactPrimitive, dedup, dequantize, getBounds, prune, textureCompress, weld } from "@gltf-transform/functions";
+import { center, compactPrimitive, dedup, dequantize, getBounds, prune, reorder, textureCompress, weld } from "@gltf-transform/functions";
 import draco3d from "draco3dgltf";
-import { MeshoptDecoder, MeshoptSimplifier } from "meshoptimizer";
+import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from "meshoptimizer";
 import sharp from "sharp";
 
 const [input, output, rawParams] = process.argv.slice(2);
@@ -87,6 +87,31 @@ function stats(doc, path) {
     textureMb: Math.round((textureBytes / 1048576) * 100) / 100,
     fileMb: path ? Math.round((statSync(path).size / 1048576) * 100) / 100 : undefined,
   };
+}
+
+/**
+ * How often the GPU shades a vertex again (ACMR: vertex cache misses per triangle), drawn through a cache
+ * of the last 16 vertices, primitive by primitive. Near 0.5 is as good as a mesh gets, 3 is no reuse at all.
+ */
+function vertexCacheMisses(doc) {
+  let misses = 0;
+  let triangles = 0;
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const indices = prim.getIndices();
+      if (prim.getMode() !== TRIANGLES || !indices) continue;
+      const cache = new Int32Array(16).fill(-1);
+      let head = 0;
+      for (const v of indices.getArray()) {
+        if (cache.includes(v)) continue;
+        cache[head] = v;
+        head = (head + 1) % 16;
+        misses++;
+      }
+      triangles += indices.getCount() / 3;
+    }
+  }
+  return triangles ? Math.round((misses / triangles) * 1000) / 1000 : 0;
 }
 
 /**
@@ -512,8 +537,16 @@ for (const node of doc.getRoot().listNodes()) {
   if (node.getName() === "world") node.setName("root");
 }
 
+// Drawing order: triangles that share vertices one after another, vertices in the order they are first
+// used, so the GPU shades each vertex about once and reads memory in a row. The shape doesn't change.
+const cacheBefore = vertexCacheMisses(doc);
+await MeshoptEncoder.ready;
+await doc.transform(reorder({ encoder: MeshoptEncoder, target: "performance" }));
+const vertexCache = { before: cacheBefore, after: vertexCacheMisses(doc) };
+steps.push(`triangles put in the order a GPU draws fastest (vertex cache misses per triangle ${vertexCache.before} -> ${vertexCache.after})`);
+
 await io.write(output, doc);
-const after = stats(doc, output);
+const after = { ...stats(doc, output), vertexCache };
 process.stdout.write(
   JSON.stringify({
     steps,

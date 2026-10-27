@@ -429,6 +429,15 @@ class _Reference:
 
         rv, rf, rn, _ = _shaded(out_path)
         rv = rv - np.asarray(shift)
+        # The points spread over the new faces are picked by face number and corner: put faces and corners
+        # in an order of their own (by where they are), so the same surface measures the same whatever order
+        # game.mjs drew it in. Put in GPU order, the Pixal3D knight came out 3.68 -> 3.95% off. Corners at
+        # one spot (split by a UV seam) rank the same.
+        rank = np.unique(rv[rf.reshape(-1)], axis=0, return_inverse=True)[1].reshape(-1, 3)
+        turn = (np.arange(3)[None] + rank.argmin(1)[:, None]) % 3  # the lowest corner first, winding kept
+        rf = np.take_along_axis(rf, turn, 1)
+        rank = np.take_along_axis(rank, turn, 1)
+        rf = rf[np.lexsort(rank.T[::-1])]
         # A fresh set each time (meshlab crashes when meshes are taken out of one), with the
         # original's ready-made copy.
         ms = pymeshlab.MeshSet()
@@ -923,6 +932,9 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
         if grafted.returncode != 0:
             raise RuntimeError(f"could not put the baked textures on the model: {grafted.stderr.strip()[-300:]}")
         shutil.copyfile(baked, out_path)
+        lines = [line for line in grafted.stdout.splitlines() if line.startswith("{")]
+        if lines:
+            info["vertexCacheMisses"] = json.loads(lines[-1])["graft"].get("vertexCacheMisses")
         return info
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1291,6 +1303,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
                      else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map ({baked['seconds']:g} s)")
         result["after"] = {**result["after"], "textures": len(_glb_json(out_path).get("textures", [])), "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
+        if baked.get("vertexCacheMisses") and result["after"].get("vertexCache"):  # the bake's seams, ordered again
+            result["after"]["vertexCache"] = {**result["after"]["vertexCache"], "after": baked["vertexCacheMisses"]}
 
     after = {
         **result["after"],

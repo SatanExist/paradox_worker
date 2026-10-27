@@ -8,7 +8,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { prune } from "@gltf-transform/functions";
+import { prune, reorder } from "@gltf-transform/functions";
+import { MeshoptEncoder } from "meshoptimizer";
 
 const [lowPath, bakeDir, outPath] = process.argv.slice(2);
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -176,5 +177,27 @@ for (const mesh of doc.getRoot().listMeshes()) {
   }
 }
 await doc.transform(prune());
+// The new seams split vertices: put the drawing order right again, as game.mjs does, and say how it came out
+// (vertex cache misses per triangle through a cache of 16).
+await MeshoptEncoder.ready;
+await doc.transform(reorder({ encoder: MeshoptEncoder, target: "performance" }));
+let misses = 0;
+let triangles = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    const order = prim.getIndices();
+    if (prim.getMode() !== TRIANGLES || !order) continue;
+    const cache = new Int32Array(16).fill(-1);
+    let head = 0;
+    for (const v of order.getArray()) {
+      if (cache.includes(v)) continue;
+      cache[head] = v;
+      head = (head + 1) % 16;
+      misses++;
+    }
+    triangles += order.getCount() / 3;
+  }
+}
 await io.write(outPath, doc);
-process.stdout.write(JSON.stringify({ graft: { corners, vertices, dropped } }));
+const vertexCacheMisses = triangles ? Math.round((misses / triangles) * 1000) / 1000 : 0;
+process.stdout.write(JSON.stringify({ graft: { corners, vertices, dropped, vertexCacheMisses } }));
