@@ -1,0 +1,6 @@
+recipe fe3a5fe-dirty: 5 to run
+[1/5] hunyuan_operative           98s  4.23GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[2/5] hunyuan31_camera            86s  2.17GB  repair   watertight=True parts=1 changed=0.0001 lost=0.0
+[3/5] hi3dgen_dog                 42s   1.9GB  repair   watertight=True parts=1 changed=0.0 lost=0.0
+[4/5] rodin_knight               300s  2.73GB  repair   watertight=True parts=4 changed=0.0006 lost=0.0
+[5/5] tripo_spellbook            457s  3.65GB  solidify watertight=True parts=1 changed=0.022 lost=0.0
