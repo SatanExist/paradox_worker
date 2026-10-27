@@ -372,6 +372,25 @@ def _shaded(path: Path):
     return np.vstack(verts), np.vstack(faces), np.vstack(normals), moved
 
 
+def _spread(area, count: int, phase: float = 0.5):
+    """`count` points spread evenly over triangles of these areas: the k-th stands for the k-th equal share of
+    the total area (at `phase` of it), placed inside its triangle by a fixed pattern (the R2 sequence). Random
+    points (a fixed seed, but random) made a measure jumpy: a cut a hair different, or the same cut with its
+    faces in another order, met other points, and a round of the cut flipped between kept and dropped (the
+    dragon 18.5 <-> 19.5%). Even ones move little when the surface moves little. Returns the triangle each
+    point is on and its barycentric weights, shaped to multiply the corners."""
+    import numpy as np
+
+    total = np.cumsum(area)
+    pick = np.searchsorted(total, (np.arange(count) + phase) / count * total[-1], side="right").clip(0, len(area) - 1)
+    g = 1.32471795724474602596  # the plastic number: R2's two steps are 1/g and 1/g**2
+    u = (phase + np.arange(count) / g) % 1.0
+    v = (phase + np.arange(count) / g**2) % 1.0
+    over = u + v > 1
+    u[over], v[over] = 1 - u[over], 1 - v[over]
+    return pick, np.stack([1 - u - v, u, v], axis=1)[:, :, None]
+
+
 class _Reference:
     """The original, ready to measure lighter versions against, built once per job.
 
@@ -454,17 +473,12 @@ class _Reference:
             raise RuntimeError("meshlab changed the order of the original's vertices")
         to_new = np.linalg.norm(sampled - nearest, axis=1)
 
-        # New → old: the new vertices plus points on its faces at fixed spots (same seed every run).
+        # New → old: the new vertices plus points spread evenly over its faces.
         tri = rv[rf]
         cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         area = np.linalg.norm(cross, axis=1)
-        fixed = np.random.default_rng(2)
-        on_faces = 200_000
-        pick = fixed.choice(len(rf), on_faces, p=area / area.sum())
-        a, b = fixed.random(on_faces), fixed.random(on_faces)
-        over = a + b > 1
-        a[over], b[over] = 1 - a[over], 1 - b[over]
-        cloud = np.vstack([rv, (tri[pick] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)])
+        pick, bary = _spread(area, 200_000)
+        cloud = np.vstack([rv, (tri[pick] * bary).sum(1)])
         ms.add_mesh(pymeshlab.Mesh(cloud))
         to_old = ms.get_hausdorff_distance(
             sampledmesh=ms.mesh_number() - 1, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud)
@@ -474,17 +488,16 @@ class _Reference:
         shape = {
             "meanPct": round(max(mean_to_new, to_old["mean"]) / self.size * 100, 3),
             "maxPct": round(max(float(to_new.max()), to_old["max"]) / self.size * 100, 2),
+            # The worst original vertex off the new surface: exact, every vertex, no points picked. The max
+            # above is partly the farthest of 200k points, and moves about 1% with where they fall (the dragon
+            # 3.69-3.81); decisions go by this one.
+            "missingMaxPct": round(float(to_new.max()) / self.size * 100, 3),
         }
         lost = to_new / self.size * 100 if find_lost else None
 
         # Points spread over the new surface by area, with the normal the light sees there.
-        rng = np.random.default_rng(0)
         count = 50_000
-        pick = rng.choice(len(rf), count, p=area / area.sum())
-        u, v = rng.random(count), rng.random(count)
-        over = u + v > 1
-        u[over], v[over] = 1 - u[over], 1 - v[over]
-        bary = np.stack([1 - u - v, u, v], axis=1)[:, :, None]
+        pick, bary = _spread(area, count)
         points = (tri[pick] * bary).sum(1)
         seen = (rn[rf[pick]] * bary).sum(1)
         facing = cross[pick] / area[pick, None].clip(1e-30)
@@ -750,6 +763,19 @@ def _visible(original, found):
     F = np.asarray(F)[found["stays"]]
     used, F = np.unique(F, return_inverse=True)
     return V[used], F.reshape(-1, 3), N[used], moved
+
+
+def _looks_closer(in_path: Path, new: tuple[Path, list[float]], old: tuple[Path, list[float]], looked: dict[str, float]) -> bool:
+    """Whether a cut looks closer to the original than another, by its light and shape alone (lightPct of
+    the six views: the same for a cut to be baked, whose textures don't hold yet). For the rounds where the
+    shape measures pull two ways: the dragon's second round brought the whole 7% closer and its worst spot
+    8% further, turned down; where it was kept, the dragon looked 17.3% off instead of 19.5%."""
+    from studio_bridge.game_look import compare as look
+
+    for path, shift in (new, old):
+        if str(path) not in looked:
+            looked[str(path)] = look(in_path, path, shift)["lightPct"]
+    return looked[str(new[0])] < looked[str(old[0])]
 
 
 # Parts a cut to a budget lost: where an original vertex ends up over KEEP_LOST_PCT of the model's size
@@ -1216,7 +1242,9 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     # To a budget a whole part can go (the error limit is off): find what went missing, keep a vertex
     # there, cut again, all in this one run. A round stays only if the shape came closer: the worst
     # spot smaller or the whole closer, and the whole no more than 5% further off than the first cut.
-    first_mean, kept, tried = deviation["meanPct"], [], 0
+    # Worst spots by the exact missingMaxPct, so a round is kept or not for what it changed. A round closer
+    # one way and further the other (the whole closer, its worst spot further) is kept if it looks closer.
+    first_mean, kept, tried, looked = deviation["meanPct"], [], 0, {}
     while lost is not None and tried < KEEP_ROUNDS and (lost > KEEP_LOST_PCT).any():
         more = _lost_detail(original, lost, job["targetTris"], kept)
         if not more:
@@ -1231,11 +1259,15 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             keep_path.write_bytes(np.asarray(original[0][kept + more], dtype=np.float32).tobytes())
             second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
             again, again_lost = reference.compare(second_path, second["shift"], find_lost=True)
-            closer = again["maxPct"] < 0.97 * deviation["maxPct"] or again["meanPct"] < 0.97 * deviation["meanPct"]
-            if closer and again["maxPct"] <= deviation["maxPct"] and again["meanPct"] <= 1.05 * first_mean:
+            closer = again["missingMaxPct"] < 0.97 * deviation["missingMaxPct"] or again["meanPct"] < 0.97 * deviation["meanPct"]
+            plainly = again["missingMaxPct"] <= deviation["missingMaxPct"] and again["meanPct"] <= deviation["meanPct"]
+            if closer and again["meanPct"] <= 1.05 * first_mean and (
+                plainly or _looks_closer(in_path, (second_path, second["shift"]), (out_path, result["shift"]), looked)
+            ):
                 shutil.copyfile(second_path, out_path)
                 kept += more
                 result, deviation, lost = second, again, again_lost
+                looked.pop(str(out_path), None)  # out_path holds another cut now
             else:
                 break
         finally:
