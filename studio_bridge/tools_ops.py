@@ -529,7 +529,12 @@ HIDDEN_DIRECTIONS_HUGE = 64
 HIDDEN_HUGE_TRIS = 1_500_000
 HIDDEN_RINGS = 5
 HIDDEN_MIN_SHARE = 0.005  # less than this left out isn't worth a step
-HIDDEN_RAYS_PER_CALL = 3_000_000  # rays cast together (a few hundred MB at most)
+HIDDEN_RAYS_PER_CALL = 1_500_000  # rays a process casts at once (a few hundred MB at most)
+# libigl's caster keeps Python's lock: one core, ~0.7M rays a second (the necromutant's search took 112 s,
+# threads changed nothing). Shared out over processes instead, past a size where starting them pays:
+# 8 of them, 112 -> 24 s, the same faces seen; the dog 43 -> 13 s.
+HIDDEN_PROCESSES = 8
+HIDDEN_PROCESSES_FROM_TRIS = 200_000
 _HIDDEN: dict[tuple, dict[str, Any]] = {}  # per job: the original's file → what of it is hidden, how tangled
 
 # Spikes up close: triangles of a cut piercing other triangles of it (tangledPct, % of its triangles, over
@@ -560,13 +565,22 @@ def _tangled(V, F) -> float:
     return round(100 * ms.current_mesh().selected_face_number() / max(count, 1), 2)
 
 
-def _tangled_over(in_path: Path, cut_path: Path) -> dict[str, float]:
-    """How tangled a cut is, and its original (the part a cut keeps; worked out once per job)."""
+def _original_tangled(in_path: Path) -> float:
+    """How tangled the part of the original a cut keeps is, worked out once per job."""
     cache = _job_cache(in_path)
     if "tangled" not in cache:
         original = _shaded(in_path)
         cache["tangled"] = _tangled(*_visible(original, _hidden(in_path, original))[:2])
-    return {"tangledPct": _tangled(*_shaded(cut_path)[:2]), "originalTangledPct": cache["tangled"]}
+    return cache["tangled"]
+
+
+def _tangled_over(in_path: Path, cut_path: Path) -> dict[str, float]:
+    """How tangled a cut is, and, when that's over the limit, its original: only then can the original's
+    own tangles change the verdict (8 s on a 1.5M-triangle model, spared for most)."""
+    measured = {"tangledPct": _tangled(*_shaded(cut_path)[:2])}
+    if measured["tangledPct"] > TANGLED_OK_PCT:
+        measured["originalTangledPct"] = _original_tangled(in_path)
+    return measured
 
 
 def _sphere(k: int):
@@ -579,41 +593,92 @@ def _sphere(k: int):
     return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], 1)
 
 
-def _seen_faces(V, F, directions: int):
-    """Which faces a ray from far off meets first at their centre, from one of `directions` directions on
-    their front side."""
+_RAYS: dict[str, Any] = {}  # the mesh a ray-casting process casts against, and its face centres
+
+
+def _rays_start(V, F) -> None:
+    import numpy as np
+
+    _RAYS.clear()
+    if len(F):
+        _RAYS.update(V=V, F=F, centre=V[F].mean(1), span=float(np.linalg.norm(V.max(0) - V.min(0))))
+
+
+def _rays_seen(asked):
+    """Of the faces asked, each with a direction, (face numbers, direction) pairs, the ones met first at
+    their centre from that direction: one cast, one search tree. Sent numbers, not rays, so a process
+    gets a few MB a call."""
     import igl.embree
     import numpy as np
 
-    centre = V[F].mean(1)
+    V, F, centre, span = _RAYS["V"], _RAYS["F"], _RAYS["centre"], _RAYS["span"]
+    todo = np.concatenate([t for t, _ in asked])
+    ray = np.concatenate([np.repeat(d[None], len(t), 0) for t, d in asked])
+    hit = igl.embree.line_mesh_intersection(centre[todo] + ray * 2 * span, -ray, V, F)
+    face = hit[:, 0].astype(np.int64)
+    ok = face == todo
+    other = ~ok & (face >= 0)  # met first on a twin of the same spot (a duplicate face): seen too
+    if other.any():
+        w = np.stack([1 - hit[other, 1] - hit[other, 2], hit[other, 1], hit[other, 2]], 1)
+        at = (V[F[face[other]]] * w[:, :, None]).sum(1)
+        ok[other] = np.linalg.norm(at - centre[todo[other]], axis=1) < span * 1e-5
+    return todo[ok]
+
+
+def _seen_faces(V, F, directions: int):
+    """Which faces a ray from far off meets first at their centre, from one of `directions` directions on
+    their front side."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    import numpy as np
+
+    # The cores this process may use (a container can see the whole machine's), fewer for a huge model:
+    # each process holds its own copy of it.
+    cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    most = HIDDEN_PROCESSES if len(F) <= HIDDEN_HUGE_TRIS else HIDDEN_PROCESSES // 2
+    workers = min(most, cores) if len(F) >= HIDDEN_PROCESSES_FROM_TRIS else 1
+    pool = None
+    if workers > 1:
+        try:  # spawn: the same everywhere, and no forking of a process that has threads
+            pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"), initializer=_rays_start, initargs=(V, F))
+        except (OSError, ValueError):
+            pool = None
+    try:
+        return _seen_faces_with(V, F, directions, pool, workers)
+    finally:
+        _rays_start((), ())  # let the mesh go
+        if pool is not None:
+            pool.shutdown()
+
+
+def _seen_faces_with(V, F, directions: int, pool, workers: int):
+    import numpy as np
+
+    _rays_start(V, F)
     normal = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
     area2 = np.linalg.norm(normal, axis=1)
     normal = normal / area2[:, None].clip(1e-30)
-    span = float(np.linalg.norm(V.max(0) - V.min(0)))
     seen = area2 <= 0  # degenerate: draws as nothing, kept as it was
     # Several directions per call: each call builds its own search tree over the whole model (most of the
     # time on a 1.5M-triangle one). Seen is "from any direction", so batching changes nothing in the result.
     batch: list[tuple[Any, Any]] = []
 
     def cast():
-        todo = np.concatenate([t for t, _ in batch])
-        ray = np.concatenate([np.repeat(d[None], len(t), 0) for t, d in batch])
-        hit = igl.embree.line_mesh_intersection(centre[todo] + ray * 2 * span, -ray, V, F)
-        face = hit[:, 0].astype(np.int64)
-        ok = face == todo
-        other = ~ok & (face >= 0)  # met first on a twin of the same spot (a duplicate face): seen too
-        if other.any():
-            w = np.stack([1 - hit[other, 1] - hit[other, 2], hit[other, 1], hit[other, 2]], 1)
-            at = (V[F[face[other]]] * w[:, :, None]).sum(1)
-            ok[other] = np.linalg.norm(at - centre[todo[other]], axis=1) < span * 1e-5
-        seen[todo[ok]] = True
+        if pool is None:
+            seen[_rays_seen(batch)] = True
+        else:  # each process a share of every direction's faces
+            split = [(np.array_split(t, workers), d) for t, d in batch]
+            shares = [[(parts[w], d) for parts, d in split if len(parts[w])] for w in range(workers)]
+            for found in pool.map(_rays_seen, [s for s in shares if s]):
+                seen[found] = True
         batch.clear()
 
     for d in _sphere(directions):
         todo = np.flatnonzero(~seen & (normal @ d > 0.02))
         if len(todo):
             batch.append((todo, d))
-        if sum(len(t) for t, _ in batch) >= HIDDEN_RAYS_PER_CALL:
+        if sum(len(t) for t, _ in batch) >= HIDDEN_RAYS_PER_CALL * workers:
             cast()
     if batch:
         cast()
