@@ -1,15 +1,17 @@
 """Bake a heavy model's look onto its light game version, in Blender (headless).
 
-  blender -b --factory-startup -P tools_blender/bake.py -- <high.glb> <low.glb> <out.glb> '{"size":2048}'
+  blender -b --factory-startup -P tools_blender/bake.py -- <high.glb> <low.glb> <out dir> '{"size":2048}'
 
-The light version gets new UVs of its own (its cut ignored the old seams) and one material whose
-textures are baked from the heavy one, ray by ray: base colour, roughness, metalness and a tangent
-normal map that carries the shape the cut took away. Same files and settings give the same pixels:
-Cycles on the CPU with a fixed seed and sample count. Prints a JSON line on stdout.
+The light version gets new UVs of its own (its cut ignored the old seams) and textures baked from the
+heavy one, ray by ray: base colour, roughness, metalness and a tangent normal map that carries the shape
+the cut took away. Writes the maps (PNG) and the light model's triangle corners with their new UVs and
+normals into <out dir>, for tools_node/graft.mjs to put into the light model. Same files and settings
+give the same pixels: Cycles on the CPU with a fixed seed and sample count. Prints a JSON line on stdout.
 """
 
 import json
 import math
+import os
 import sys
 import time
 
@@ -43,7 +45,10 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 def imported(path):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
-    return [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+    # Meshes of the model only: for a rigged model the importer adds a sphere to draw the bones with, in a
+    # collection it keeps out of renders (glTF_not_exported).
+    return [o for o in bpy.data.objects if o not in before and o.type == "MESH" and o.data.polygons
+            and not o.hide_render and not any(c.hide_render for c in o.users_collection)]
 
 
 high = imported(HIGH)
@@ -56,6 +61,15 @@ bpy.context.view_layer.update()
 low = imported(LOW)
 if not high or not low:
     raise SystemExit("no meshes to bake")
+
+# Rigged and morphing models are baked as they stand at rest: bones in their bind pose, shape keys off.
+armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+for arm in armatures:
+    arm.data.pose_position = "REST"
+for o in high + low:
+    o.show_only_shape_key = bool(o.data.shape_keys)
+    o.active_shape_key_index = 0
+bpy.context.view_layer.update()
 
 corners = [o.matrix_world @ Vector(c) for o in high for c in o.bound_box]
 extent = max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)) or 1.0
@@ -188,29 +202,31 @@ mr.pixels.foreach_set(packed.ravel())
 for img in (maps["baseColor"], mr, maps["normal"]):
     img.pack()
 
-# The final material: the baked maps on a plain Principled BSDF, as the glTF exporter reads it.
-nodes.clear()
-tree = target.node_tree
-out = nodes.new("ShaderNodeOutputMaterial")
-bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
-base = nodes.new("ShaderNodeTexImage")
-base.image = maps["baseColor"]
-tree.links.new(base.outputs["Color"], bsdf.inputs["Base Color"])
-mr_node = nodes.new("ShaderNodeTexImage")
-mr_node.image = mr
-split = nodes.new("ShaderNodeSeparateColor")
-tree.links.new(mr_node.outputs["Color"], split.inputs["Color"])
-tree.links.new(split.outputs["Green"], bsdf.inputs["Roughness"])
-tree.links.new(split.outputs["Blue"], bsdf.inputs["Metallic"])
-nrm = nodes.new("ShaderNodeTexImage")
-nrm.image = maps["normal"]
-nmap = nodes.new("ShaderNodeNormalMap")
-tree.links.new(nrm.outputs["Color"], nmap.inputs["Color"])
-tree.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-
-bpy.ops.object.select_all(action="DESELECT")
+# Out go the baked maps and, for every light mesh, each triangle corner as Blender holds it: position,
+# normal (the smooth ones the normal map was baked against) and new UV. tools_node/graft.mjs puts them
+# into the light model itself; exporting from Blender instead redid rigs: CesiumMan stood 57% off.
+for name, img in (("baseColor", maps["baseColor"]), ("metallicRoughness", mr), ("normal", maps["normal"])):
+    img.filepath_raw = os.path.join(OUT, name + ".png")
+    img.file_format = "PNG"
+    img.save()
+meshes = []
+corners = []
 for o in low:
-    o.select_set(True)
-bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", use_selection=True, export_image_format="AUTO", export_tangents=False, export_yup=True)
+    mesh = o.data
+    if any(len(poly.vertices) != 3 for poly in mesh.polygons):
+        raise SystemExit("the light model came in with faces that aren't triangles")
+    n = len(mesh.loops)
+    co = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co)
+    loop_vertex = np.empty(n, dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loop_vertex)
+    normals = np.empty(n * 3, dtype=np.float32)
+    mesh.corner_normals.foreach_get("vector", normals)
+    uv = np.empty(n * 2, dtype=np.float32)
+    mesh.uv_layers.active.data.foreach_get("uv", uv)
+    corners.append(np.hstack([co.reshape(-1, 3)[loop_vertex], normals.reshape(-1, 3), uv.reshape(-1, 2)]).astype(np.float32))
+    meshes.append({"name": mesh.name, "corners": n})
+np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
+with open(os.path.join(OUT, "corners.json"), "w") as fh:
+    json.dump(meshes, fh)
 print(json.dumps({"bake": {"size": SIZE, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "seconds": round(time.time() - t0, 1), "passes": timings}}))

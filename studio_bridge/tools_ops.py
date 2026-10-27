@@ -570,18 +570,20 @@ def _blender() -> str | None:
 
 
 def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None) -> dict[str, Any]:
-    """Bake the original's look onto the cut in place (tools_blender/bake.py): new UVs, then base colour,
-    roughness, metalness and a normal map carrying the shape the cut took away. Deterministic: Cycles on
-    the CPU, fixed seed and samples (two runs, the same bytes). `high`: the original already unpacked,
-    when the caller bakes several times."""
+    """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
+    bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
+    tools_node/graft.mjs puts them into the cut itself, so its nodes, skins, clips and morph targets stay
+    as they were. Deterministic: Cycles on the CPU, fixed seed and samples (two runs, the same bytes).
+    `high`: the original already unpacked, when the caller bakes several times."""
     plain = high or _unpacked(in_path)
+    work = Path(tempfile.mkdtemp(prefix="bake-"))
     fd, name = tempfile.mkstemp(suffix=".glb")
     os.close(fd)
     baked = Path(name)
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(plain), str(out_path), str(baked), json.dumps({"size": size, "shift": shift})],
+             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -589,9 +591,19 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
         lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
         if done.returncode != 0 or not lines:
             raise RuntimeError(f"could not bake the textures: {(done.stderr or done.stdout).strip()[-300:]}")
+        info = json.loads(lines[-1])["bake"]
+        grafted = subprocess.run(
+            [shutil.which("node") or "node", str(TOOLS_NODE / "graft.mjs"), str(out_path), str(work), str(baked)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if grafted.returncode != 0:
+            raise RuntimeError(f"could not put the baked textures on the model: {grafted.stderr.strip()[-300:]}")
         shutil.copyfile(baked, out_path)
-        return json.loads(lines[-1])["bake"]
+        return info
     finally:
+        shutil.rmtree(work, ignore_errors=True)
         for path in {baked, plain} - {in_path, high}:
             try:
                 path.unlink(missing_ok=True)
@@ -720,26 +732,52 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
     return {"picked": ladder[lo], "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), "tried": tried}
 
 
+# A model this light is cut both ways, plain and baked, and the closer kept: it takes seconds, and on
+# tiny ones baking can lose (RiggedFigure, 256 triangles cut to 128: 27% noticeable plain, 40% baked).
+BOTH_UNDER_TRIS = 100_000
+
+
 def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     """With bake: the cut by shape alone, baked. Made side by side with the plain cut at first, the baked
     one was closer to the original at every budget on all six bench models once its UVs were packed
-    tightly (16 of 16: camera 5k 3.44 -> 1.13%, drill 20k 0.45 -> 0.28%, mech 20k 12.98 -> 2.41%), so the
-    plain one is made only when baking can't be done or fails."""
+    tightly (16 of 16: camera 5k 3.44 -> 1.13%, drill 20k 0.45 -> 0.28%, mech 20k 12.98 -> 2.41%), so on
+    a heavy model the plain one is made only when baking can't be done or fails; a light one gets both."""
     plain = {k: v for k, v in params.items() if k not in ("bake", "forBake")}
     if not params.get("bake"):
         return _game_prep(in_path, out_path, plain)
-    gltf = _glb_json(in_path) or {}
+    triangles = _triangles_in_file(in_path)
     why_not = ("no Blender here" if not _blender()
-               else "rigged and animated models keep their own textures for now" if gltf.get("skins") or gltf.get("animations")
-               else "nothing was cut" if _triangles_in_file(in_path) <= int(params.get("targetTris") or 20000)
+               else "nothing was cut" if triangles <= int(params.get("targetTris") or 20000)
                else None)
     if not why_not:
+        fd, name = tempfile.mkstemp(suffix=".glb")
+        os.close(fd)
+        baked_path = Path(name)
         try:
-            report = _game_prep(in_path, out_path, {**plain, "forBake": True})
-            report["after"]["bake"] = {"used": True}
-            return report
+            baked = _game_prep(in_path, baked_path, {**plain, "forBake": True})
+            if triangles <= BOTH_UNDER_TRIS:
+                first = _game_prep(in_path, out_path, plain)
+                seen = [r["after"].get("look", {}).get("noticeablePct", math.inf) for r in (first, baked)]
+                if seen[0] <= seen[1]:
+                    for extra in (baked.get("extraFiles") or {}).values():
+                        Path(extra).unlink(missing_ok=True)
+                    first["after"]["bake"] = {"used": False, "noticeablePct": {"plain": seen[0], "baked": seen[1]}}
+                    first["steps"].append(f"kept the plain cut: it looks closer to the original ({seen[0]:g}% of the picture differs, baked {seen[1]:g}%)")
+                    return first
+                for extra in (first.get("extraFiles") or {}).values():
+                    Path(extra).unlink(missing_ok=True)
+                baked["after"]["bake"] = {"used": True, "noticeablePct": {"plain": seen[0], "baked": seen[1]}}
+            else:
+                baked["after"]["bake"] = {"used": True}
+            shutil.copyfile(baked_path, out_path)
+            return baked
         except RuntimeError as exc:
             why_not = str(exc)[:160]
+        finally:
+            try:
+                baked_path.unlink(missing_ok=True)
+            except OSError:  # Windows: trimesh may still hold it
+                pass
     report = _game_prep(in_path, out_path, plain)
     report["after"]["bake"] = {"used": False, "why": why_not}
     report["steps"].append(f"baking skipped: {why_not}")
@@ -754,8 +792,7 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     purpose_name, purpose = _purpose(params)
     ok_pct = float(params.get("maxNoticeablePct") or purpose["okPct"])
     texture_size = int(params.get("textureSize") or 2048)
-    gltf = _glb_json(in_path) or {}
-    bake = bool(params.get("bake")) and _blender() is not None and not (gltf.get("skins") or gltf.get("animations"))
+    bake = bool(params.get("bake")) and _blender() is not None
     bake_ok_pct = float(params.get("maxNoticeablePct") or purpose["bakeOkPct"])
     auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake, bake_ok_pct=bake_ok_pct)
     auto["purpose"] = purpose_name

@@ -44,6 +44,8 @@ const NORMAL_WEIGHT = 0.5;
 const UV_WEIGHT = 1.0;
 /** To a budget: enough normal weight to keep the shading, UVs left to the locked seams. */
 const BUDGET_NORMAL_WEIGHT = 0.2;
+/** How much a rigged vertex's pull (skinPull) counts, in both modes: of 0.5, 1, 2 and 4, 1 bent best over the clips. */
+const SKIN_WEIGHT = 1.0;
 
 /** What a game dev looks at: triangles drawn, vertices, materials, how big the textures are. */
 function stats(doc, path) {
@@ -100,7 +102,63 @@ function placement(mesh) {
   return best;
 }
 
-/** Each indexed triangle primitive with flat copies of its positions and of normals + UVs side by side. */
+/** Column-major affine 4x4 inverse's translation: where the matrix's origin maps back to. */
+function originOfInverse(m) {
+  const [a, b, c, d, e, f, g, h, i] = [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g) || 1e-30;
+  const inv = [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
+    (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
+    (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det];
+  const [tx, ty, tz] = [m[12], m[13], m[14]];
+  return [-(inv[0] * tx + inv[1] * ty + inv[2] * tz), -(inv[3] * tx + inv[4] * ty + inv[5] * tz), -(inv[6] * tx + inv[7] * ty + inv[8] * tz)];
+}
+
+/**
+ * Where the bones pull each vertex of a rigged primitive: its joints' bind positions averaged by its
+ * weights, over the mesh's size. On one bone, one value; blended over a joint, in between. Weighed in
+ * the cut it keeps vertices that bend differently from merging: cut by shape alone, CesiumMan at 2000
+ * triangles stood within 0.3% of the original at rest but 2.3% off in its walk, the fox 1.0% -> 5.7%.
+ * Null for a primitive without a skin.
+ */
+function skinPull(prim, mesh, positions) {
+  const node = mesh.listParents().find((n) => n.propertyType === "Node" && n.getSkin());
+  const skin = node?.getSkin();
+  if (!skin) return null;
+  const sets = [0, 1, 2].map((k) => [prim.getAttribute(`JOINTS_${k}`), prim.getAttribute(`WEIGHTS_${k}`)]).filter(([j, w]) => j && w);
+  if (!sets.length) return null;
+  // A joint's bind position in the mesh's own space: the inverse bind matrix maps the mesh to the joint.
+  const ibm = skin.getInverseBindMatrices();
+  const joints = skin.listJoints().map((joint, j) => {
+    if (ibm) return originOfInverse(ibm.getElement(j, []));
+    const w = joint.getWorldMatrix();
+    return [w[12], w[13], w[14]];
+  });
+  const size = MeshoptSimplifier.getScale(positions, 3) || 1;
+  const count = positions.length / 3;
+  const pull = new Float32Array(count * 3);
+  const js = [];
+  const ws = [];
+  for (let v = 0; v < count; v++) {
+    let total = 0;
+    const at = [0, 0, 0];
+    for (const [jointsAccessor, weightsAccessor] of sets) {
+      jointsAccessor.getElement(v, js);
+      weightsAccessor.getElement(v, ws);
+      for (let k = 0; k < js.length; k++) {
+        if (!ws[k] || !joints[js[k]]) continue;
+        for (let c = 0; c < 3; c++) at[c] += ws[k] * joints[js[k]][c];
+        total += ws[k];
+      }
+    }
+    for (let c = 0; c < 3; c++) pull[v * 3 + c] = total ? at[c] / total / size : 0;
+  }
+  return pull;
+}
+
+/**
+ * Each indexed triangle primitive with flat copies of its positions and of normals + UVs (+ skin pull
+ * for a rigged one) side by side.
+ */
 function triangleMeshes(doc) {
   const out = [];
   for (const mesh of doc.getRoot().listMeshes()) {
@@ -110,31 +168,38 @@ function triangleMeshes(doc) {
       const indices = prim.getIndices();
       if (prim.getMode() !== TRIANGLES || !position || !indices) continue;
       const count = position.getCount();
+      const positions = Float32Array.from(position.getArray());
+      const read = (accessor) => {
+        if (!accessor) return null;
+        const size = accessor.getElementSize();
+        const data = new Float32Array(count * size);
+        const element = [];
+        for (let i = 0; i < count; i++) {
+          accessor.getElement(i, element);
+          for (let k = 0; k < size; k++) data[i * size + k] = element[k];
+        }
+        return data;
+      };
       const parts = [
-        [prim.getAttribute("NORMAL"), NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT],
-        [prim.getAttribute("TEXCOORD_0"), UV_WEIGHT, 0],
-      ].filter(([accessor]) => accessor);
-      const stride = parts.reduce((n, [accessor]) => n + accessor.getElementSize(), 0);
+        ["normal", read(prim.getAttribute("NORMAL")), 3, NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT],
+        ["uv", read(prim.getAttribute("TEXCOORD_0")), 2, UV_WEIGHT, 0],
+        ["skin", skinPull(prim, mesh, positions), 3, SKIN_WEIGHT, SKIN_WEIGHT],
+      ].filter(([, data]) => data);
+      const stride = parts.reduce((n, [, , size]) => n + size, 0);
       const attributes = new Float32Array(count * stride);
       const weights = [];
       const budgetWeights = [];
       const channels = {};
       let offset = 0;
-      for (const [accessor, weight, budgetWeight] of parts) {
-        channels[accessor === prim.getAttribute("NORMAL") ? "normal" : "uv"] = offset;
-        const size = accessor.getElementSize();
-        const element = [];
-        for (let i = 0; i < count; i++) {
-          accessor.getElement(i, element);
-          for (let k = 0; k < size; k++) attributes[i * stride + offset + k] = element[k];
-        }
+      for (const [name, data, size, weight, budgetWeight] of parts) {
+        channels[name] = offset;
+        for (let i = 0; i < count; i++) for (let k = 0; k < size; k++) attributes[i * stride + offset + k] = data[i * size + k];
         for (let k = 0; k < size; k++) {
           weights.push(weight);
           budgetWeights.push(budgetWeight);
         }
         offset += size;
       }
-      const positions = Float32Array.from(position.getArray());
       out.push({
         prim,
         positions,
@@ -228,8 +293,8 @@ function cut(prims, ratio, flags = []) {
  * (zeros where a part has none); vertices of different parts are never merged.
  */
 function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget = true, flags = [] }) {
-  const LAYOUT = { normal: 0, uv: 3 };
-  const STRIDE = 5;
+  const LAYOUT = { normal: 0, uv: 3, skin: 5 };
+  const STRIDE = 8;
   const offsets = [];
   let vertices = 0;
   for (const p of prims) {
@@ -249,7 +314,7 @@ function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget =
       positions[(base + v) * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
       positions[(base + v) * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
       positions[(base + v) * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
-      for (const [name, size] of [["normal", 3], ["uv", 2]]) {
+      for (const [name, size] of [["normal", 3], ["uv", 2], ["skin", 3]]) {
         if (p.channels[name] === undefined) continue;
         for (let c = 0; c < size; c++) attributes[(base + v) * STRIDE + LAYOUT[name] + c] = p.attributes[v * p.stride + p.channels[name] + c];
       }
@@ -257,7 +322,10 @@ function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget =
     if (lock && p.lock) lock.set(p.lock, base);
     for (const i of p.indices) indices[at++] = i + base;
   });
-  const weights = budget ? [BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, 0, 0] : [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT, UV_WEIGHT, UV_WEIGHT];
+  const skin = [SKIN_WEIGHT, SKIN_WEIGHT, SKIN_WEIGHT];
+  const weights = budget
+    ? [BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, 0, 0, ...skin]
+    : [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT, UV_WEIGHT, UV_WEIGHT, ...skin];
   const [kept] = MeshoptSimplifier.simplifyWithAttributes(indices, positions, 3, attributes, STRIDE, weights, lock, targetTris * 3, error, flags);
   // back to the parts: each triangle belongs to the part of its first vertex
   const owner = (v) => {
@@ -324,8 +392,17 @@ if (params.forBake) {
   for (const p of prims) {
     const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
     p.indices = p.indices.map((i) => remap[i]);
-    p.stride = 0;
-    p.channels = {};
+    if (p.channels.skin === undefined) {
+      p.stride = 0;
+      p.channels = {};
+      continue;
+    }
+    // A rigged part keeps only its skin pull: where the bones bend it still matters, the old UVs don't.
+    const count = p.positions.length / 3;
+    const pull = new Float32Array(count * 3);
+    for (let v = 0; v < count; v++) for (let c = 0; c < 3; c++) pull[v * 3 + c] = p.attributes[v * p.stride + p.channels.skin + c];
+    [p.attributes, p.stride, p.channels] = [pull, 3, { skin: 0 }];
+    p.weights = p.budgetWeights = [SKIN_WEIGHT, SKIN_WEIGHT, SKIN_WEIGHT];
   }
   steps.push("UV seams ignored: textures are baked afterwards");
 }
