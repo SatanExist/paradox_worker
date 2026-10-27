@@ -307,12 +307,12 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         for spot in thin["spots"]:
             spot["centerMm"] = [round(v / to_mm * 1000.0, 1) for v in spot["centerMm"]]
             spot["sizeMm"] = [round(v / to_mm * 1000.0, 1) for v in spot["sizeMm"]]
-        if thin["spots"]:
-            worst = min(spot["thinnestMm"] for spot in thin["spots"])
-            n = len(thin["spots"])
-            how = "won't print there" if worst < printer.min_print_mm else "may break there"
-            steps.append(f"thin spots: {n} place{'s' if n != 1 else ''} with walls under {printer.min_wall_mm:g} mm "
-                         f"(thinnest {'under 0.05' if worst < 0.05 else f'{worst:g}'} mm): it {how}")
+        if thin["spots"]:  # how much, not just whether: a 0.05 % fin edge and a 50 % paper skin read differently
+            pct = lambda x: f"{x * 100:.2g} %"  # noqa: E731
+            text = f"thin walls: {pct(thin['share'])} of the surface is under {printer.min_wall_mm:g} mm and may break"
+            if thin["unprintableShare"] > 0:
+                text += f"; {pct(thin['unprintableShare'])} is under {printer.min_print_mm:g} mm and won't print"
+            steps.append(text)
     except Exception as exc:  # a report extra: never worth failing the print for
         print(f"wall thickness not checked: {exc}")
     timings["thickness"] = round(time.time() - t, 1)

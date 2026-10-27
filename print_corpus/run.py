@@ -6,6 +6,7 @@ usage:
   python run.py --again ...     re-run even if this recipe already has a row
   python run.py --max-faces=200000   only models up to that many triangles (the light ones)
   python run.py --min-faces=300001   only models from that many triangles (the heavy ones)
+  python run.py --printer=resin  another printer profile (default fdm); its rows are tagged <recipe>+resin
 
 Each model runs in its own process at low priority (so the PC stays usable), with a time limit.
 Rows go to results.jsonl, tagged with the recipe = the last paradox_worker commit that touched the print files (+ "-dirty" when it has
@@ -33,7 +34,7 @@ import sys, json
 sys.path.insert(0, sys.argv[1])
 from pathlib import Path
 from studio_bridge.tools_ops import print_prep
-rep = print_prep(Path(sys.argv[2]), Path(sys.argv[3]), {"heightMm": float(sys.argv[4])})
+rep = print_prep(Path(sys.argv[2]), Path(sys.argv[3]), {"heightMm": float(sys.argv[4]), "printer": sys.argv[5]})
 print("@@PREPPED", flush=True)  # the peak so far is the tool's; what follows is only this corpus's own check
 import trimesh
 out = trimesh.load(sys.argv[3], force="mesh"); out.apply_scale(1000)  # glTF is metres
@@ -65,13 +66,14 @@ def done_ids(rec: str) -> set[str]:
     return {r["id"] for r in map(json.loads, path.read_text(encoding="utf-8").splitlines()) if r.get("recipe") == rec}
 
 
-def run_one(m: dict, rec: str) -> dict:
-    out = HERE / "out" / f"{m['id']}.glb"
-    log = HERE / "out" / f"{m['id']}.log"
+def run_one(m: dict, rec: str, printer: str = "fdm") -> dict:
+    tag = "" if printer == "fdm" else f".{printer}"
+    out = HERE / "out" / f"{m['id']}{tag}.glb"
+    log = HERE / "out" / f"{m['id']}{tag}.log"
     t0 = time.time()
     with open(log, "w", encoding="utf-8") as lf:
         proc = subprocess.Popen(
-            [sys.executable, "-u", "-c", ONE, str(LAB), str(HERE / "models" / f"{m['id']}.glb"), str(out), str(m["heightMm"])],
+            [sys.executable, "-u", "-c", ONE, str(LAB), str(HERE / "models" / f"{m['id']}.glb"), str(out), str(m["heightMm"]), printer],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
         )
@@ -141,7 +143,8 @@ def main() -> None:
     words = [a for a in args if not a.startswith("--")]
     max_faces = next((int(a.split("=")[1]) for a in args if a.startswith("--max-faces=")), None)
     min_faces = next((int(a.split("=")[1]) for a in args if a.startswith("--min-faces=")), None)
-    rec = recipe()
+    printer = next((a.split("=")[1] for a in args if a.startswith("--printer=")), "fdm")
+    rec = recipe() + ("" if printer == "fdm" else f"+{printer}")
     (HERE / "out").mkdir(exist_ok=True)
     skip = set() if again else done_ids(rec)
     todo = [m for m in manifest() if m["id"] not in skip and (not words or any(w in m["id"] for w in words))
@@ -149,7 +152,7 @@ def main() -> None:
             and (min_faces is None or glb_faces(HERE / "models" / f"{m['id']}.glb") >= min_faces)]
     print(f"recipe {rec}: {len(todo)} to run", flush=True)
     for i, m in enumerate(todo, 1):
-        row = run_one(m, rec)
+        row = run_one(m, rec, printer)
         with open(HERE / "results.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
         verdict = (f"{row['method']:8} watertight={row['watertight']} parts={row['parts']} "
