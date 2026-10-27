@@ -23,6 +23,9 @@ argv = sys.argv[sys.argv.index("--") + 1:]
 HIGH, LOW, OUT = argv[:3]
 PARAMS = json.loads(argv[3]) if len(argv) > 3 else {}
 SIZE = int(PARAMS.get("size", 2048))
+# A model coloured by its materials alone, no textures: only the normal map is baked, the materials stay.
+# Baked into one atlas, BrainStem's 59 flat colours came out 86% of the picture off.
+NORMAL_ONLY = bool(PARAMS.get("normalOnly"))
 SAMPLES = int(PARAMS.get("samples", 8))
 # How far rays look for the heavy surface, as a share of the model's size: the cut moved the surface
 # by well under 1% on our models, a little more covers thin parts without catching the far side.
@@ -163,7 +166,7 @@ def shine(socket_name):
 timings = {}
 maps = {}
 for name, kind, colour, extra in [
-    ("roughness", "ROUGHNESS", False, {}),
+    *([] if NORMAL_ONLY else [("roughness", "ROUGHNESS", False, {})]),
     ("normal", "NORMAL", False, {"normal_space": "TANGENT"}),
 ]:
     t = time.time()
@@ -173,7 +176,7 @@ for name, kind, colour, extra in [
 
 # Base colour and metalness are baked as light the heavy model gives off: Cycles' diffuse colour pass
 # is base colour x (1 - metalness), which turned metal parts black.
-for name, socket_name, colour in [("baseColor", "Base Color", True), ("metallic", "Metallic", False)]:
+for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Color", True), ("metallic", "Metallic", False)]:
     t = time.time()
     shine(socket_name)
     maps[name] = image(name, colour)
@@ -192,20 +195,20 @@ def pixels(img):
     return a.reshape(-1, 4)
 
 
-packed = np.zeros((SIZE * SIZE, 4), dtype=np.float32)
-packed[:, 1] = pixels(maps["roughness"])[:, 0]
-packed[:, 2] = pixels(maps["metallic"])[:, 0]
-packed[:, 3] = 1.0
-mr = bpy.data.images.new("metallicRoughness", SIZE, SIZE, alpha=False, float_buffer=False)
-mr.colorspace_settings.name = "Non-Color"
-mr.pixels.foreach_set(packed.ravel())
-for img in (maps["baseColor"], mr, maps["normal"]):
-    img.pack()
+if not NORMAL_ONLY:
+    packed = np.zeros((SIZE * SIZE, 4), dtype=np.float32)
+    packed[:, 1] = pixels(maps["roughness"])[:, 0]
+    packed[:, 2] = pixels(maps["metallic"])[:, 0]
+    packed[:, 3] = 1.0
+    maps["metallicRoughness"] = bpy.data.images.new("metallicRoughness", SIZE, SIZE, alpha=False, float_buffer=False)
+    maps["metallicRoughness"].colorspace_settings.name = "Non-Color"
+    maps["metallicRoughness"].pixels.foreach_set(packed.ravel())
 
 # Out go the baked maps and, for every light mesh, each triangle corner as Blender holds it: position,
 # normal (the smooth ones the normal map was baked against) and new UV. tools_node/graft.mjs puts them
 # into the light model itself; exporting from Blender instead redid rigs: CesiumMan stood 57% off.
-for name, img in (("baseColor", maps["baseColor"]), ("metallicRoughness", mr), ("normal", maps["normal"])):
+for name in ("normal",) if NORMAL_ONLY else ("baseColor", "metallicRoughness", "normal"):
+    img = maps[name]
     img.filepath_raw = os.path.join(OUT, name + ".png")
     img.file_format = "PNG"
     img.save()
@@ -229,4 +232,4 @@ for o in low:
 np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
 with open(os.path.join(OUT, "corners.json"), "w") as fh:
     json.dump(meshes, fh)
-print(json.dumps({"bake": {"size": SIZE, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "seconds": round(time.time() - t0, 1), "passes": timings}}))
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "seconds": round(time.time() - t0, 1), "passes": timings}}))

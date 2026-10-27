@@ -4,7 +4,7 @@
 // seams run, and one material carries the baked maps. Everything else in the file stays as game.mjs left
 // it — nodes, skins, animations, morph targets: sent through Blender's exporter, rigs came out redone
 // (CesiumMan 57% off its original at rest).
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
@@ -105,12 +105,17 @@ function picked(accessor, pick) {
 function texture(name, mime = "image/png") {
   return doc.createTexture(name).setImage(new Uint8Array(readFileSync(join(bakeDir, `${name}.png`)))).setMimeType(mime);
 }
-const material = doc.createMaterial("baked")
-  .setBaseColorTexture(texture("baseColor"))
-  .setMetallicRoughnessTexture(texture("metallicRoughness"))
-  .setNormalTexture(texture("normal"))
-  .setMetallicFactor(1)
-  .setRoughnessFactor(1);
+// Only a normal map (the model had no textures): each part keeps its own material and gets the map.
+const normalOnly = !existsSync(join(bakeDir, "baseColor.png"));
+const normalMap = texture("normal");
+const material = normalOnly
+  ? null
+  : doc.createMaterial("baked")
+    .setBaseColorTexture(texture("baseColor"))
+    .setMetallicRoughnessTexture(texture("metallicRoughness"))
+    .setNormalTexture(normalMap)
+    .setMetallicFactor(1)
+    .setRoughnessFactor(1);
 
 let corners = 0;
 let vertices = 0;
@@ -166,7 +171,8 @@ for (const mesh of doc.getRoot().listMeshes()) {
     prim.setAttribute("NORMAL", doc.createAccessor().setType("VEC3").setArray(Float32Array.from(normals)).setBuffer(buffer));
     prim.setAttribute("TEXCOORD_0", doc.createAccessor().setType("VEC2").setArray(Float32Array.from(uvs)).setBuffer(buffer));
     prim.setIndices(doc.createAccessor().setType("SCALAR").setArray(Uint32Array.from(indices)).setBuffer(buffer));
-    prim.setMaterial(material);
+    if (normalOnly) prim.setMaterial((prim.getMaterial() ?? doc.createMaterial("baked")).setNormalTexture(normalMap));
+    else prim.setMaterial(material);
   }
 }
 await doc.transform(prune());

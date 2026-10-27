@@ -542,6 +542,80 @@ def _lost_detail(original, lost, target_tris: int, kept):
     return chosen[len(kept):]
 
 
+# A rigged or morphing model with clips is also looked at moving: POSE_FRAMES frames through each of its
+# first POSE_CLIPS clips (tools_node/pose.mjs, three.js). A cut that stands right can still break where it
+# bends: CesiumMan at 2000 triangles, 0.30% off at rest, 1.70% in its walk.
+POSE_FRAMES = 6
+POSE_CLIPS = 3
+# A model that moves is seen moving: a round that mends its frames may cost a little at rest. The fox at 300
+# triangles: worst frame 5.7 -> 1.93%, the mean at rest 0.135 -> 0.177%.
+MOVING_REST_SLACK = 1.35
+
+
+def _animated(path: Path) -> bool:
+    gltf = _glb_json(path)
+    moving_parts = gltf.get("skins") or any(p.get("targets") for m in gltf.get("meshes", []) for p in m.get("primitives", []))
+    return bool(gltf.get("animations")) and bool(moving_parts)
+
+
+def _poses(path: Path):
+    """Faces, the file's own vertex positions, the rest pose and every frame (world space), from pose.mjs."""
+    import numpy as np
+
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("no node here to pose the model")
+    fd, prefix = tempfile.mkstemp()
+    os.close(fd)
+    try:
+        done = subprocess.run(
+            [node, str(TOOLS_NODE / "pose.mjs"), str(path), prefix, str(POSE_FRAMES), str(POSE_CLIPS)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
+        if done.returncode != 0 or not lines:
+            raise RuntimeError(f"could not pose the model: {done.stderr.strip()[-300:]}")
+        n = json.loads(lines[-1])["vertices"]
+        faces = np.fromfile(prefix + ".u32", dtype=np.uint32).reshape(-1, 3)
+        stack = np.fromfile(prefix + ".f32", dtype=np.float32).reshape(-1, n, 3)
+        return faces, stack[0], stack[1].astype(np.float64), stack[2:].astype(np.float64)
+    finally:
+        for path_ in (prefix, prefix + ".u32", prefix + ".f32"):
+            Path(path_).unlink(missing_ok=True)
+
+
+class _Moves:
+    """The original in its clips, posed once per job, to measure cuts against frame by frame."""
+
+    def __init__(self, path: Path):
+        self.faces, self.raw, self.rest, self.frames = _poses(path)
+        self.size = float((self.rest.max(0) - self.rest.min(0)).max()) or 1.0
+
+    def compare(self, cut_path: Path):
+        """How far each original vertex ends up from the cut's surface in the worst of the frames (% of
+        size), and the mean and max of that."""
+        import numpy as np
+        import pymeshlab
+
+        faces, _, rest, frames = _poses(cut_path)
+        offset = rest.min(0) - self.rest.min(0)  # game_prep stood the cut on the floor
+        worst = np.zeros(len(self.rest))
+        for mine, theirs in zip(self.frames, frames):
+            ms = pymeshlab.MeshSet()
+            ms.add_mesh(pymeshlab.Mesh(mine, self.faces.astype(np.int32)))
+            ms.add_mesh(pymeshlab.Mesh(theirs - offset, faces.astype(np.int32)))
+            ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(mine), savesample=True)
+            saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
+            sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
+            if sampled.shape != mine.shape or not np.allclose(sampled, mine, atol=1e-6 * self.size):
+                raise RuntimeError("meshlab changed the order of the posed vertices")
+            worst = np.maximum(worst, np.linalg.norm(sampled - nearest, axis=1))
+        lost = worst / self.size * 100
+        return {"meanPct": round(float(lost.mean()), 3), "maxPct": round(float(lost.max()), 2)}, lost
+
+
 def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, Any]:
     node = shutil.which("node")
     if not node or not (TOOLS_NODE / "game.mjs").is_file():
@@ -583,7 +657,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift})],
+             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures")})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -872,16 +946,64 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     if kept:
         steps.append(f"lost details found and kept: {len(kept)} spots in {tried} rounds, worst spot now {deviation['maxPct']:g}% off")
 
+    # The same for a model that moves, over the frames of its clips: where a cut breaks as it bends (a knee,
+    # an elbow), keep vertices there too. Rounds as above, the frames deciding, the shape at rest no more
+    # than MOVING_REST_SLACK further off on the whole.
+    moving = None
+    if to_budget and _animated(in_path):
+        moves = _Moves(in_path)
+        moving, moving_lost = moves.compare(out_path)
+        rest_keep = original[0][kept] if kept else np.zeros((0, 3))
+        # Each round adds points where the last cut tried broke worst, kept or not: a round can mend the
+        # frames on the whole yet open a new worst spot (the plain fox at 300: mean 0.428 -> 0.366%, worst
+        # 3.06 -> 3.73%), and the next one mends that. A cut is taken only if better than the best so far.
+        kept_moving, trying, trial_lost, tried_moving = [], [], moving_lost, 0
+        while tried_moving < KEEP_ROUNDS and (trial_lost > KEEP_LOST_PCT).any():
+            more = _lost_detail((moves.rest,), trial_lost, job["targetTris"], trying)
+            if not more:
+                break
+            tried_moving += 1
+            trying = trying + more
+            fd, keep_name = tempfile.mkstemp(suffix=".f32")
+            os.close(fd)
+            fd, second_name = tempfile.mkstemp(suffix=".glb")
+            os.close(fd)
+            keep_path, second_path = Path(keep_name), Path(second_name)
+            try:
+                points = np.vstack([rest_keep, moves.raw[trying]])
+                keep_path.write_bytes(np.asarray(points, dtype=np.float32).tobytes())
+                second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
+                again_moving, trial_lost = moves.compare(second_path)
+                again, _ = reference.compare(second_path, second["shift"])
+                closer = again_moving["maxPct"] < 0.97 * moving["maxPct"] or again_moving["meanPct"] < 0.97 * moving["meanPct"]
+                if closer and again_moving["maxPct"] <= moving["maxPct"] and again["meanPct"] <= MOVING_REST_SLACK * first_mean:
+                    shutil.copyfile(second_path, out_path)
+                    kept_moving = trying
+                    result, deviation, moving = second, again, again_moving
+                    steps = list(result["steps"])
+            finally:
+                keep_path.unlink(missing_ok=True)
+                try:
+                    second_path.unlink(missing_ok=True)
+                except OSError:  # Windows: trimesh may still hold it
+                    pass
+        if kept_moving:
+            if kept:  # the steps came back with the new cut
+                steps.append(f"lost details found and kept: {len(kept)} spots, worst spot now {deviation['maxPct']:g}% off")
+            steps.append(f"breaks in motion found and kept: {len(kept_moving)} spots in {tried_moving} rounds, worst frame now {moving['maxPct']:g}% off")
+
     if job.get("forBake"):
         baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
-        steps.append(f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map ({baked['seconds']:g} s)")
-        result["after"] = {**result["after"], "textures": 2, "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
+        steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
+                     else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map ({baked['seconds']:g} s)")
+        result["after"] = {**result["after"], "textures": len(_glb_json(out_path).get("textures", [])), "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
 
     after = {
         **result["after"],
         "targetTris": job["targetTris"],
         "budgetReached": result["budgetReached"],
         "deviation": deviation,
+        **({"moving": moving} if moving else {}),
     }
     if "maxErrorPct" in job:
         after["maxErrorPct"] = job["maxErrorPct"]

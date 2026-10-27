@@ -12,7 +12,7 @@ FROM node:20-slim AS tools_node
 WORKDIR /app/tools_node
 COPY tools_node/package.json tools_node/package-lock.json ./
 RUN npm ci --omit=dev
-COPY tools_node/decode.mjs tools_node/game.mjs tools_node/graft.mjs ./
+COPY tools_node/decode.mjs tools_node/game.mjs tools_node/graft.mjs tools_node/pose.mjs ./
 
 FROM python:3.11-slim
 
@@ -44,7 +44,7 @@ COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
 RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
-    cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp')]).then(([, s]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp))"
+    cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp'), import('three')]).then(([, s, t]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp, 'three', t.REVISION))"
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}

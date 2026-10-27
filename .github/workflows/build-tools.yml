@@ -16,6 +16,7 @@ on:
       - "tools_node/decode.mjs"
       - "tools_node/game.mjs"
       - "tools_node/graft.mjs"
+      - "tools_node/pose.mjs"
       - ".github/workflows/build-tools.yml"
   workflow_dispatch:
 
