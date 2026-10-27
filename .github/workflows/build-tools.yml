@@ -15,6 +15,7 @@ on:
       - "tools_node/package-lock.json"
       - "tools_node/decode.mjs"
       - "tools_node/game.mjs"
+      - "tools_node/graft.mjs"
       - ".github/workflows/build-tools.yml"
   workflow_dispatch:
 

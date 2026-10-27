@@ -12,7 +12,7 @@ FROM node:20-slim AS tools_node
 WORKDIR /app/tools_node
 COPY tools_node/package.json tools_node/package-lock.json ./
 RUN npm ci --omit=dev
-COPY tools_node/decode.mjs tools_node/game.mjs ./
+COPY tools_node/decode.mjs tools_node/game.mjs tools_node/graft.mjs ./
 
 FROM python:3.11-slim
 
