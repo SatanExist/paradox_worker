@@ -780,6 +780,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         job["maxErrorPct"] = float(params["maxErrorPct"])
     if params.get("forBake"):
         job["forBake"] = True
+    if params.get("regularize") in ("light", "full"):
+        job["regularize"] = params["regularize"]
     # The cut runs in node while this process gets the original ready to measure against; a huge model
     # is done one after the other, so the two copies of it don't sit in memory at once.
     from concurrent.futures import ThreadPoolExecutor

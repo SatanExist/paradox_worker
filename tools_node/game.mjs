@@ -23,6 +23,11 @@ const params = JSON.parse(rawParams || "{}");
 const targetTris = Number(params.targetTris) || 20000;
 const textureSize = Number(params.textureSize) || 2048;
 const maxError = Number(params.maxErrorPct) > 0 ? Number(params.maxErrorPct) / 100 : null;
+// regularize: "light" or "full" asks meshopt for more even triangles. Off by default: the cuts have 2-10%
+// needles (quality < 0.1) where originals have ~0, and "full" brings that to ~0, but on the bench props it
+// cost looks (mech 10k baked 6.55 -> 9.9% noticeable, its antenna lost again; drill 0.6 -> 1.3%) and
+// "light" was mixed. Kept for rigged models, where even triangles bend better.
+const EVEN = { light: ["RegularizeLight"], full: ["Regularize"] }[params.regularize] ?? [];
 // Points (float32 x,y,z) where an earlier cut lost detail: vertices there are kept (tools_ops.py).
 // Copied into a buffer of its own: a small file's Buffer is a slice of Node's shared pool, and reading
 // its .buffer whole gave 16384 floats of whatever else was in the pool (no point ever matched).
@@ -340,11 +345,11 @@ if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.
   // Joined across seams (forBake), only Permissive gets far: without it meshopt stalled at 8x the budget.
-  cut(prims, targetTris / triangleCount(prims), params.forBake ? ["Permissive"] : []);
+  cut(prims, targetTris / triangleCount(prims), [...(params.forBake ? ["Permissive"] : []), ...EVEN]);
   steps.push(`triangles cut to ${targetTris}`);
   if (triangleCount(prims) > targetTris * 1.05) {
     // Only then let it collapse across seams: the budget is met, textures near seams may shift.
-    cut(prims, targetTris / triangleCount(prims), ["Permissive"]);
+    cut(prims, targetTris / triangleCount(prims), ["Permissive", ...EVEN]);
     steps.push("UV seams loosened to reach the budget");
   }
 }
