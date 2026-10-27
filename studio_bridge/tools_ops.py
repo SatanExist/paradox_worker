@@ -550,6 +550,15 @@ POSE_CLIPS = 3
 # A model that moves is seen moving: a round that mends its frames may cost a little at rest. The fox at 300
 # triangles: worst frame 5.7 -> 1.93%, the mean at rest 0.135 -> 0.177%.
 MOVING_REST_SLACK = 1.35
+# A near-whole cut sits so close at rest that the ratio alone forbids every mend: the fox at 500 of 576
+# triangles, worst frame 1.87 -> 0.58% turned down for a rest mean of 0.002 -> 0.003%. Up to this much
+# more (% of size, a third of a millimetre on a 1.8 m figure) the ratio doesn't apply.
+MOVING_REST_EPS_PCT = 0.02
+# How much more a cut may be off moving than at rest (bendPct, % of size) before the auto budget gives it
+# more triangles. Provisional, not marked by eye yet: cuts that look right sit at 0.1-0.9 (CesiumMan 1000
+# baked 0.88, BrainStem 15000 0.32, fox 450 baked 0.91), ones that don't at 1.4-2.9 (CesiumMan 1000 plain
+# 1.41, fox 300 1.78, fox 150 2.89).
+MOVING_BEND_OK_PCT = 1.0
 
 
 def _animated(path: Path) -> bool:
@@ -595,14 +604,15 @@ class _Moves:
 
     def compare(self, cut_path: Path):
         """How far each original vertex ends up from the cut's surface in the worst of the frames (% of
-        size), and the mean and max of that."""
+        size), the mean and max of that, and bendPct: the most any vertex is further off moving than at rest,
+        what bending alone breaks (a spot the cut rounds off at rest is the look's to judge, not this)."""
         import numpy as np
         import pymeshlab
 
         faces, _, rest, frames = _poses(cut_path)
         offset = rest.min(0) - self.rest.min(0)  # game_prep stood the cut on the floor
-        worst = np.zeros(len(self.rest))
-        for mine, theirs in zip(self.frames, frames):
+
+        def apart(mine, theirs):
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(mine, self.faces.astype(np.int32)))
             ms.add_mesh(pymeshlab.Mesh(theirs - offset, faces.astype(np.int32)))
@@ -611,9 +621,15 @@ class _Moves:
             sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
             if sampled.shape != mine.shape or not np.allclose(sampled, mine, atol=1e-6 * self.size):
                 raise RuntimeError("meshlab changed the order of the posed vertices")
-            worst = np.maximum(worst, np.linalg.norm(sampled - nearest, axis=1))
+            return np.linalg.norm(sampled - nearest, axis=1)
+
+        at_rest = apart(self.rest, rest)
+        worst = np.zeros(len(self.rest))
+        for mine, theirs in zip(self.frames, frames):
+            worst = np.maximum(worst, apart(mine, theirs))
         lost = worst / self.size * 100
-        return {"meanPct": round(float(lost.mean()), 3), "maxPct": round(float(lost.max()), 2)}, lost
+        bend = (worst - at_rest).max(initial=0.0) / self.size * 100
+        return {"meanPct": round(float(lost.mean()), 3), "maxPct": round(float(lost.max()), 2), "bendPct": round(float(bend), 2)}, lost
 
 
 def _game_mjs(in_path: Path, out_path: Path, job: dict[str, Any]) -> dict[str, Any]:
@@ -832,7 +848,9 @@ def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
             if triangles <= BOTH_UNDER_TRIS:
                 first = _game_prep(in_path, out_path, plain)
                 seen = [r["after"].get("look", {}).get("noticeablePct", math.inf) for r in (first, baked)]
-                if seen[0] <= seen[1]:
+                # Alike to the eye (CesiumMan at 2000 judged at 128 px: 0% both), the one that bends better.
+                bend = [(r["after"].get("moving") or {}).get("bendPct", 0) for r in (first, baked)]
+                if (seen[0], bend[0]) <= (seen[1], bend[1]):
                     for extra in (baked.get("extraFiles") or {}).values():
                         Path(extra).unlink(missing_ok=True)
                     first["after"]["bake"] = {"used": False, "noticeablePct": {"plain": seen[0], "baked": seen[1]}}
@@ -872,8 +890,24 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
     report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
+    # The look is judged standing still. A model that moves also has to bend right: while it breaks more than
+    # MOVING_BEND_OK_PCT, the next rung up is cut (the whole model always passes). Not a halving search:
+    # bending isn't steady in the budget (the fox broke worse at 450 triangles than at 300).
+    looked = auto["picked"]
+    whole = _triangles_in_file(in_path)
+    ladder = purpose["bakeLadder" if bake else "ladder"]
+    bent: list[dict[str, Any]] = []
+    while (report["after"].get("moving") or {}).get("bendPct", 0) > MOVING_BEND_OK_PCT and auto["picked"] < whole:
+        bent.append({"targetTris": auto["picked"], "bendPct": report["after"]["moving"]["bendPct"]})
+        for extra in (report.get("extraFiles") or {}).values():
+            Path(extra).unlink(missing_ok=True)
+        auto["picked"] = next((b for b in ladder if auto["picked"] < b < whole), whole)
+        report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
+    if bent:
+        auto["bentAt"] = bent
     report["after"]["autoBudget"] = auto
-    report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different")
+    report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different"
+                           + (f" and bend right in motion ({looked} looked right but broke {bent[0]['bendPct']:g}% where it bends)" if bent else ""))
     return report
 
 
@@ -976,7 +1010,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                 again_moving, trial_lost = moves.compare(second_path)
                 again, _ = reference.compare(second_path, second["shift"])
                 closer = again_moving["maxPct"] < 0.97 * moving["maxPct"] or again_moving["meanPct"] < 0.97 * moving["meanPct"]
-                if closer and again_moving["maxPct"] <= moving["maxPct"] and again["meanPct"] <= MOVING_REST_SLACK * first_mean:
+                rest_ok = again["meanPct"] <= max(MOVING_REST_SLACK * first_mean, first_mean + MOVING_REST_EPS_PCT)
+                if closer and again_moving["maxPct"] <= moving["maxPct"] and rest_ok:
                     shutil.copyfile(second_path, out_path)
                     kept_moving = trying
                     result, deviation, moving = second, again, again_moving
@@ -991,6 +1026,9 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             if kept:  # the steps came back with the new cut
                 steps.append(f"lost details found and kept: {len(kept)} spots, worst spot now {deviation['maxPct']:g}% off")
             steps.append(f"breaks in motion found and kept: {len(kept_moving)} spots in {tried_moving} rounds, worst frame now {moving['maxPct']:g}% off")
+        if moving["bendPct"] > MOVING_BEND_OK_PCT and not params.get("maxErrorPct"):
+            steps.append(f"still breaks where it bends ({moving['bendPct']:g}% of its size further off moving than at rest): "
+                         "the auto budget gives a moving model the triangles it needs")
 
     if job.get("forBake"):
         baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
