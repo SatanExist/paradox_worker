@@ -65,6 +65,7 @@ UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down mea
 TILT_FREE_DEG = 3.0  # it may be tilted this much onto a face it rests on: nobody sees it
 CUT_MAX_MM = 2.0  # the bottom is cut flat by at most this much (and 3 % of the height)
 CUT_STEP_MM = 0.1
+HOLD_MM2 = 20.0  # plate contact for the first layer to hold (upright models; one lying down is held by supports)
 BASE_MM = 2.0  # height of an added base
 
 
@@ -971,11 +972,14 @@ def _tip_deg(pts2, c2, height) -> float:
     return float(np.degrees(np.arctan2(margin, height)))
 
 
-def _best_cut(man, com, printer: Printer, cut_max: float):
+def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     """Standing as it is (Z up, bottom at 0): the flat cut d (0 = none) that makes it steadiest, and its tip
     angle and plate contact. The plate holds what lies within the first layer, so d = 0 is judged on the
     cross-section half a layer up; a cut d is judged on the section at d, which becomes its flat bottom.
-    The smallest cut that stands steady wins; failing that, the smallest within half a degree of the best."""
+    The smallest cut that stands steady wins, and with `hold` one whose contact also holds on the plate
+    (HOLD_MM2) before one that doesn't: trellis2_crown stood steady on 1.8 mm² of rim points, 51 mm² at 0.3 mm.
+    Failing steady, the smallest within half a degree of the best. A cut that would split the model in two (a
+    strand joined to it only below the cut) is never taken."""
     import numpy as np
 
     rows = []
@@ -985,10 +989,14 @@ def _best_cut(man, com, printer: Printer, cut_max: float):
         pts = np.vstack(polys) if polys else np.zeros((0, 2))
         rows.append((d, _tip_deg(pts, com[:2], com[2] - d), float(cs.area())))
     steady = [r for r in rows if r[1] >= STEADY_TIP_DEG]
-    if steady:
-        return steady[0]
     best = max(r[1] for r in rows)
-    return next(r for r in rows if r[1] >= best - 0.5)
+    order = ([r for r in steady if r[2] >= HOLD_MM2] if hold else []) + steady
+    order += [r for r in rows if r[1] >= best - 0.5] + sorted(rows, key=lambda r: -r[1])
+    parts = len(man.decompose())
+    for r in order:
+        if r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts:
+            return r
+    return rows[0]
 
 
 def _rest_faces(V, com):
@@ -1056,7 +1064,8 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
         V2 = trimesh.transform_points(np.asarray(m.vertices, np.float64), T2)
         c2 = trimesh.transform_points(np.asarray(m.center_mass, np.float64)[None], T2)[0]
         man2 = solid(V2)
-        return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, min(CUT_MAX_MM, 0.03 * float(np.ptp(V2[:, 1])))))
+        cut = min(CUT_MAX_MM, 0.03 * float(np.ptp(V2[:, 1])))
+        return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, cut, hold=bool(nrm[1] < -0.9)))
 
     if tip < FALLS_TIP_DEG:
         rests = _rest_faces(V, com)
