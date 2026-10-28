@@ -131,6 +131,7 @@ def run_one(m: dict, rec: str, printer: str = "fdm") -> dict:
         "floating": report.get("floating"),
         "fineDetail": report.get("fineDetail"),
         "thinSpots": report.get("thinSpots"),
+        "stand": report.get("stand"),
     })
     pick = next((c for c in solid.get("candidates", []) if c.get("method") == row["method"]), {})
     row["changedShare"], row["lostShare"] = pick.get("changedShare"), pick.get("lostShare")
@@ -160,6 +161,7 @@ def main() -> None:
         with open(HERE / "results.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
         verdict = (f"{row['method']:8} watertight={row['watertight']} parts={row['parts']} "
+                   f"stand={(row.get('stand') or {}).get('pose')}/{(row.get('stand') or {}).get('tipDeg')} "
                    f"changed={row['changedShare']} lost={row['lostShare']}") if row["ok"] else f"FAILED {row['error']}"
         print(f"[{i}/{len(todo)}] {m['id']:24} {row['secs']:5}s {row['peakGb']:5}GB  {verdict}", flush=True)
 

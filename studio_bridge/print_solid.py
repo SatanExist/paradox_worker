@@ -59,6 +59,13 @@ THIN_SPOT_MIN_MM2 = 1.0  # smaller thin spots are tips and needle points, not wa
 THICKEN_SPACING_MM = 0.2  # where walls are thickened, the added material is centred on points this far apart
 THICKEN_MARGIN_MM = 0.05  # added walls are this much over the minimum: the balls leave shallow dips between them
 THICKEN_CLEAR_MM = 0.05  # a ball added out of sight may come this close past the seen surface, no closer
+STEADY_TIP_DEG = 10.0  # a model that must tilt this far before it falls stands steady; less is wobbly
+FALLS_TIP_DEG = 3.0  # under this it falls at a breath: laid down, or given a base
+UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down means it was made to stand
+TILT_FREE_DEG = 3.0  # it may be tilted this much onto a face it rests on: nobody sees it
+CUT_MAX_MM = 2.0  # the bottom is cut flat by at most this much (and 3 % of the height)
+CUT_STEP_MM = 0.1
+BASE_MM = 2.0  # height of an added base
 
 
 @dataclass(frozen=True)
@@ -929,6 +936,168 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     info["addedCm3"] = round((float(out.volume) - float(m.volume)) / 1000, 2)
     info["secs"] = round(time.time() - t0, 1)
     return out, info
+
+
+# --- standing ------------------------------------------------------------------------------------
+
+def _zup(V):
+    """Y up -> Z up (a quarter turn about X), the axis Manifold slices along."""
+    import numpy as np
+
+    V = np.asarray(V, np.float64)
+    return np.c_[V[:, 0], -V[:, 2], V[:, 1]]
+
+
+def _yup(V):
+    import numpy as np
+
+    V = np.asarray(V, np.float64)
+    return np.c_[V[:, 0], V[:, 2], -V[:, 1]]
+
+
+def _tip_deg(pts2, c2, height) -> float:
+    """How far a model tips before it falls, standing on the convex hull of pts2 (2D) with its centre of mass
+    `height` above them at c2: atan(distance from c2 in to the hull's edge / height). Negative: it falls."""
+    import numpy as np
+    from scipy.spatial import ConvexHull, QhullError
+
+    if len(pts2) < 3 or height <= 0:
+        return -90.0
+    try:
+        h = ConvexHull(pts2)
+    except (QhullError, ValueError):  # all on one line: it rolls
+        return -90.0
+    margin = float(-(h.equations[:, :2] @ c2 + h.equations[:, 2]).max())
+    return float(np.degrees(np.arctan2(margin, height)))
+
+
+def _best_cut(man, com, printer: Printer, cut_max: float):
+    """Standing as it is (Z up, bottom at 0): the flat cut d (0 = none) that makes it steadiest, and its tip
+    angle and plate contact. The plate holds what lies within the first layer, so d = 0 is judged on the
+    cross-section half a layer up; a cut d is judged on the section at d, which becomes its flat bottom.
+    The smallest cut that stands steady wins; failing that, the smallest within half a degree of the best."""
+    import numpy as np
+
+    rows = []
+    for d in [0.0] + [round(CUT_STEP_MM * k, 3) for k in range(1, int(cut_max / CUT_STEP_MM + 1e-9) + 1)]:
+        cs = man.slice(max(d, printer.layer_mm / 2))
+        polys = [np.asarray(q) for q in cs.to_polygons()]
+        pts = np.vstack(polys) if polys else np.zeros((0, 2))
+        rows.append((d, _tip_deg(pts, com[:2], com[2] - d), float(cs.area())))
+    steady = [r for r in rows if r[1] >= STEADY_TIP_DEG]
+    if steady:
+        return steady[0]
+    best = max(r[1] for r in rows)
+    return next(r for r in rows if r[1] >= best - 0.5)
+
+
+def _rest_faces(V, com):
+    """Faces of the convex hull it could rest on (centre of mass over them): (outward normal, tip angle, tilt
+    from straight down in degrees), steadiest first."""
+    import numpy as np
+    import trimesh
+
+    hull = trimesh.Trimesh(V, process=False).convex_hull
+    groups = [list(f) for f in hull.facets]
+    used = {i for g in groups for i in g}
+    groups += [[i] for i in range(len(hull.faces)) if i not in used]
+    out = []
+    for g in groups:
+        nrm = np.asarray(hull.face_normals[g[0]], np.float64)
+        P = hull.vertices[np.unique(hull.faces[g])]
+        u = np.cross(nrm, [1.0, 0, 0] if abs(nrm[0]) < 0.9 else [0, 1.0, 0])
+        u /= np.linalg.norm(u)
+        w = np.cross(nrm, u)
+        tip = _tip_deg(np.c_[P @ u, P @ w], np.array([com @ u, com @ w]), float((P[0] - com) @ nrm))
+        if tip > 0:
+            out.append((nrm, tip, float(np.degrees(np.arccos(np.clip(-nrm[1], -1.0, 1.0))))))
+    return sorted(out, key=lambda r: -r[1])
+
+
+def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
+    """Make a model stand on the plate, and later on a shelf: its centre of mass over what it stands on, far
+    enough in that a knock doesn't tip it over (the tip angle: how far it tilts before it falls).
+
+    Upright as made (Y up), if needed with its bottom cut flat by up to 2 mm: an uneven base touches the plate
+    at a few points, which hold neither the print nor the model. On the corpus a cut of 0.3–1 mm gives most
+    figures a flat bottom (trellis2_statue: 0 -> 1737 mm² of contact, steady at 27°). A model that can't stand
+    upright even so falls at a breath (under 3°). It is tilted up to 3° onto a face of its hull it rests on, if
+    that steadies it; else, if it has such a face near straight down, it was made to stand and gets a round base (`base` "none" leaves it as it is); otherwise it is an object lying about,
+    stood on its tip by the generator (a sword, a blaster), and is laid on the face it lies steadiest on.
+    `m` is closed, in mm, Y up, bottom at 0. Returns (mesh, T, info): T the 4x4 move (rotation and shift) the
+    result went through before any cut or base, so pieces kept beside it can follow; mesh None when it was
+    left as it was."""
+    import manifold3d as mf
+    import numpy as np
+    import trimesh
+
+    V = np.asarray(m.vertices, np.float64)
+    F = np.asarray(m.faces, np.int64)
+    com = np.asarray(m.center_mass, np.float64)
+    cut_max = min(CUT_MAX_MM, 0.03 * float(m.extents[1]))
+    T = np.eye(4)
+
+    def solid(Vy):
+        return mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(_zup(Vy)), tri_verts=F.astype(np.uint64)))
+
+    man = solid(V)
+    if man.status() != mf.Error.NoError:
+        raise RuntimeError(f"not a solid Manifold takes: {man.status()}")
+    d, tip, contact = _best_cut(man, _zup(com[None])[0], printer, cut_max)
+    info: dict[str, Any] = {"pose": "upright"}
+    add_base = False
+    def onto(nrm):
+        """Turned to rest on the hull face with outward normal nrm, centred, on the plate."""
+        R = np.eye(4)
+        R[:3, :3] = trimesh.geometry.align_vectors(nrm, [0, -1.0, 0])[:3, :3]
+        V2 = trimesh.transform_points(np.asarray(m.vertices, np.float64), R)
+        lo, hi = V2.min(0), V2.max(0)
+        T2 = trimesh.transformations.translation_matrix([-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2]) @ R
+        V2 = trimesh.transform_points(np.asarray(m.vertices, np.float64), T2)
+        c2 = trimesh.transform_points(np.asarray(m.center_mass, np.float64)[None], T2)[0]
+        man2 = solid(V2)
+        return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, min(CUT_MAX_MM, 0.03 * float(np.ptp(V2[:, 1])))))
+
+    if tip < FALLS_TIP_DEG:
+        rests = _rest_faces(V, com)
+        upright = [r for r in rests if r[2] <= UPRIGHT_TILT_DEG]
+        small = [r for r in upright if r[2] <= TILT_FREE_DEG]
+        turned = onto(small[0][0]) if small else None
+        if turned and turned[5] >= FALLS_TIP_DEG:  # a tilt nobody sees puts it on a face it rests on
+            T, V, com, man, d, tip, contact = turned
+            info["tiltDeg"] = round(small[0][2], 1)
+        elif upright:
+            add_base = base != "none"
+        elif rests:  # an object stood on its tip: laid on the face it lies steadiest on
+            T, V, com, man, d, tip, contact = onto(rests[0][0])
+            info["pose"] = "lying"
+    if d == 0 and not add_base and info["pose"] == "upright" and "tiltDeg" not in info:
+        info.update({"tipDeg": round(tip, 1), "contactMm2": round(contact, 1), "cutMm": 0.0})
+        return None, T, info
+    out = man.trim_by_plane((0.0, 0.0, 1.0), d) if d > 0 else man
+    cut_cm3 = (man.volume() - out.volume()) / 1000.0
+    lift = -d
+    if add_base:
+        # A disc under it, centred under the centre of mass, wide enough to take its footing and steady it.
+        c = _zup(com[None])[0]
+        foot = [np.asarray(q) for q in out.slice(d + printer.layer_mm / 2).to_polygons()]
+        reach = max((float(np.linalg.norm(q - c[:2], axis=1).max()) for q in foot), default=0.0)
+        radius = max(reach + 2.0, (c[2] - d + BASE_MM) * np.tan(np.radians(STEADY_TIP_DEG)) + 1.0)
+        disc = mf.Manifold.cylinder(BASE_MM + 0.01, radius, radius, 96).translate((c[0], c[1], d - BASE_MM))
+        out = mf.Manifold.batch_boolean([out, disc], mf.OpType.Add)
+        lift = BASE_MM - d
+        tip = _tip_deg(np.asarray(disc.slice(d - BASE_MM / 2).to_polygons()[0]), c[:2], c[2] - d + BASE_MM)
+        contact = float(np.pi * radius**2)
+        info["base"] = {"diameterMm": round(2 * radius, 1), "heightMm": BASE_MM}
+    mesh = out.to_mesh64()
+    Vo = _yup(np.array(mesh.vert_properties[:, :3], np.float64))
+    Vo[:, 1] += lift
+    res = trimesh.Trimesh(Vo, np.array(mesh.tri_verts, np.int64), process=False)
+    T = trimesh.transformations.translation_matrix([0.0, lift, 0.0]) @ T
+    info.update({"tipDeg": round(tip, 1), "contactMm2": round(contact, 1), "cutMm": round(d, 2),
+                 "cutCm3": round(cut_cm3, 3)})
+    log(f" stand: {info}")
+    return res, T, info
 
 
 # --- floating pieces -------------------------------------------------------------------------------

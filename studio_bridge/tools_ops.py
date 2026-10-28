@@ -13,7 +13,9 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               params["floating"] is "keep"; the other choice is written too, as the "alternate" file.
               Walls thinner than the printer holds are thickened from inside; thin details seen from both
               sides grow on both, unless params["thinDetails"] is "keep". What is still thin is reported as
-              spots ("thinSpots"). params["printer"]
+              spots ("thinSpots"). It is stood steady (print_solid.stand: bottom cut flat, laid down, or a
+              base; "stand" in the report), unless params["stand"] is "keep"; params["base"] "none" adds no
+              base. params["printer"]
               is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
 """
 
@@ -305,12 +307,44 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             m.apply_scale(s)
             m.apply_translation(shift)
     steps.append("placed on plate")
+    to_mm = 1000.0 if height_mm else mm_per_unit  # the file is in metres when a height was asked for
 
-    # Walls thinner than the printer holds, measured at the size it prints at (the file is in metres when a
-    # height was asked for, else in its own units at the working scale). Positions as the floating pieces'.
+    # Standing steady on the plate and later on a shelf: upright as made, its bottom cut flat if need be; an
+    # object the generator stood on its tip is laid down, a figure that can't stand gets a base.
+    stood = None
+    moved = None  # the move the pieces followed, for their report positions
+    if str(params.get("stand") or "auto") != "keep":
+        from studio_bridge.print_solid import STEADY_TIP_DEG, stand
+
+        try:
+            new, T, stood = stand(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False),
+                                  printer, base=str(params.get("base") or "auto"))
+            if new is not None:
+                body = trimesh.Trimesh(np.asarray(new.vertices) / to_mm, new.faces, process=False)
+                if pieces is not None:
+                    T = T.copy()
+                    T[:3, 3] /= to_mm
+                    pieces.apply_transform(T)
+                    moved = T
+            if stood["pose"] == "lying":
+                steps.append("laid down: it can't stand upright")
+            if stood.get("cutMm"):
+                steps.append(f"bottom cut flat by {stood['cutMm']:g} mm to stand on the plate ({stood['cutCm3']:g} cm³)")
+            if stood.get("base"):
+                b = stood["base"]
+                steps.append(f"added a base {b['diameterMm']:g} mm across and {b['heightMm']:g} mm high: it couldn't stand alone")
+            tip = stood["tipDeg"]
+            steps.append(f"stands steady: tips over only past {tip:.0f}°" if tip >= STEADY_TIP_DEG else
+                         f"wobbly: a knock past {max(tip, 0):.0f}° tips it over; a base would steady it")
+        except Exception as exc:  # a report extra: never worth failing the print for
+            print(f"standing not checked: {exc}")
+    timings["stand"] = round(time.time() - t, 1)
+    t = time.time()
+
+    # Walls thinner than the printer holds, measured at the size it prints at (in its own units at the working
+    # scale when no height was asked for). Positions as the floating pieces'.
     from studio_bridge.print_solid import thin_spots
 
-    to_mm = 1000.0 if height_mm else mm_per_unit
     try:
         thin = thin_spots(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False), printer)
         for spot in thin["spots"]:
@@ -337,7 +371,7 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                 {
                     "volumeCm3": p["volumeCm3"],
                     "gapMm": p["gapMm"],
-                    "centerMm": [round(float(v), 1) for v in (p["_center"] * s + shift) * unit_mm],
+                    "centerMm": [round(float(v), 1) for v in _moved(p["_center"] * s + shift, moved) * unit_mm],
                     "sizeMm": [round(float(v), 1) for v in p["_size"] * s * unit_mm],
                 }
                 for p in about
@@ -363,6 +397,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["solid"] = solid
     if thin is not None:
         report["thinSpots"] = thin
+    if stood is not None:
+        report["stand"] = stood
     report["printer"] = printer.name
     if remesh:
         report["remesh"] = remesh
@@ -371,6 +407,12 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["fineDetail"] = fine
     report["timings"] = timings
     return report
+
+
+def _moved(point, T):
+    import trimesh
+
+    return point if T is None else trimesh.transform_points(point[None], T)[0]
 
 
 def _joined(parts: dict[str, Any]):
