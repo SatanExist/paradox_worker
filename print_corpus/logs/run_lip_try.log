@@ -1,0 +1,6 @@
+recipe 2314772-dirty: 5 to run
+[1/5] trellis2_crown             190s  2.13GB  solidify watertight=True parts=1 stand=upright/59.3 changed=0.0477 lost=0.00028
+[2/5] trellis2_bust              445s  2.91GB  wrap     watertight=True parts=1 stand=upright/51.1 changed=0.1525 lost=2e-05
+[3/5] hi3dgen_snowman             41s  0.85GB  repair   watertight=True parts=1 stand=upright/21.0 changed=0.0292 lost=0.00049
+[4/5] direct3ds2_knight          339s  4.86GB  repair   watertight=True parts=1 stand=upright/23.0 changed=0.0067 lost=0.00017
+[5/5] tripo_spellbook            143s  1.99GB  solidify watertight=True parts=1 stand=upright/6.1 changed=0.0427 lost=0.0
