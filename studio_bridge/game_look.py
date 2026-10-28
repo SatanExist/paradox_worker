@@ -183,6 +183,73 @@ def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tup
     return seen.reshape(res, res), pictures
 
 
+def _sphere(k: int):
+    """k directions spread evenly over the sphere (a Fibonacci spiral: the same every run)."""
+    import numpy as np
+
+    i = np.arange(k) + 0.5
+    phi = np.arccos(1 - 2 * i / k)
+    theta = np.pi * (1 + 5**0.5) * i
+    return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], 1)
+
+
+def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
+    """Where a view meets the model at all, and which face turned towards it it meets (-1: none): a viewer
+    draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
+    import igl.embree
+    import numpy as np
+
+    d = -np.asarray(view, float)
+    d /= np.linalg.norm(d)
+    up = np.array([0.0, 1.0, 0.0]) if abs(d[1]) < 0.9 else np.array([0.0, 0.0, -1.0])
+    right = np.cross(d, up)
+    right /= np.linalg.norm(right)
+    up = np.cross(right, d)
+    s = (np.arange(res) + 0.5) / res * 2 - 1
+    xs, ys = np.meshgrid(s, -s)
+    origins = (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+    rays = np.repeat(d[None], len(origins), 0)
+    V, F = m["V"], m["F"]
+    facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
+    met = igl.embree.line_mesh_intersection(origins, rays, V, F)[:, 0] >= 0
+    shown = np.full(len(origins), -1, np.int64)
+    if len(facing):
+        hit = igl.embree.line_mesh_intersection(origins, rays, V, F[facing])[:, 0].astype(np.int64)
+        shown[hit >= 0] = facing[hit[hit >= 0]]
+    return met.reshape(res, res), shown.reshape(res, res)
+
+
+SEE_THROUGH_VIEWS = 26  # all round: a slit shows through from a few angles only (the knight's, from above)
+
+
+def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str, int]:
+    """Pixels where a viewer would see through the result (it has only back faces there) while the original
+    is drawn, over SEE_THROUGH_VIEWS views; the six views above draw both sides and miss them. A face left
+    out as hidden that showed through a slit after all leaves exactly this, as does a triangle a cut folded
+    over. Returns the total, the biggest patch of them in one view (a hole is a patch: single pixels
+    scattered over the views are an edge grazed), and the original's faces drawn at those pixels: the ones a
+    cut should have kept (numbered as tools_ops._shaded numbers them)."""
+    import numpy as np
+    from scipy import ndimage
+
+    a, b = _load(Path(original)), _load(Path(result))
+    b["V"] = b["V"] - np.asarray(shift, float)
+    lo, hi = a["V"].min(0), a["V"].max(0)
+    centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
+    total, biggest, faces = 0, 0, set()
+    for view in _sphere(SEE_THROUGH_VIEWS):
+        _, drawn = _drawn(a, centre, radius, view, res)
+        met, shown = _drawn(b, centre, radius, view, res)
+        inside = ndimage.binary_erosion(drawn >= 0, iterations=1)  # not the outline's edge pixels
+        through = inside & met & (shown < 0)
+        total += int(through.sum())
+        faces.update(int(f) for f in drawn[through])
+        patches, count = ndimage.label(through, structure=np.ones((3, 3)))
+        if count:
+            biggest = max(biggest, int(np.bincount(patches.reshape(-1))[1:].max()))
+    return {"seeThroughPx": total, "seeThroughPatchPx": biggest, "originalFaces": sorted(faces)}
+
+
 def compare(original: Path, result: Path, shift, preview: Path | None = None, res: int = RES) -> dict[str, Any]:
     """The look numbers (in %), and a picture original | result | difference per view when `preview`
     is given. `shift` is how far game.mjs moved the result; it is moved back over the original."""

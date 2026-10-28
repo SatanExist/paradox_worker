@@ -550,6 +550,7 @@ HIDDEN_DIRECTIONS = 128
 HIDDEN_DIRECTIONS_HUGE = 64
 HIDDEN_HUGE_TRIS = 1_500_000
 HIDDEN_RINGS = 5
+HIDDEN_RINGS_AT_HOLES = 15  # around faces found showing through a cut (_game_prep)
 HIDDEN_MIN_SHARE = 0.005  # less than this left out isn't worth a step
 HIDDEN_RAYS_PER_CALL = 1_500_000  # rays a process casts at once (a few hundred MB at most)
 # libigl's caster keeps Python's lock: one core, ~0.7M rays a second (the necromutant's search took 112 s,
@@ -707,50 +708,62 @@ def _seen_faces_with(V, F, directions: int, pool, workers: int):
     return seen
 
 
-def _hidden(in_path: Path, original=None) -> dict[str, Any] | None:
+def _hidden(in_path: Path, original=None, rings: int = HIDDEN_RINGS, also: tuple[int, ...] = ()) -> dict[str, Any] | None:
     """What of the original no one sees, worked out once per job: the points (model space) whose every face
     is hidden, written for game.mjs to leave out triangles with all three corners on them, and which faces
-    of `original` (`_shaded`) stay. None for a model that moves or with next to nothing hidden."""
+    of `original` (`_shaded`) stay. `rings`: how far around what is seen stays too; `also`: faces (numbered
+    as `_shaded` numbers them) to count as seen, found showing through a cut. The rays are cast once; the
+    rest is grown from them. None for a model that moves or with next to nothing hidden."""
     import numpy as np
     from scipy import sparse
 
     cache = _job_cache(in_path)
-    if "found" in cache:
-        return cache["found"]
+    if ("found", rings, also) in cache:
+        return cache[("found", rings, also)]
     found = None
     if not _animated(in_path):
-        original = original or _shaded(in_path)
-        V, F = original[0], np.asarray(original[1], np.int64)
-        seen = _seen_faces(V, F, HIDDEN_DIRECTIONS_HUGE if len(F) > HIDDEN_HUGE_TRIS else HIDDEN_DIRECTIONS)
-        # Rings over shared positions: a UV seam splits a vertex, not the surface.
-        _, spot = np.unique(V, axis=0, return_inverse=True)
-        spot = spot.reshape(-1)
-        touches = sparse.csr_matrix((np.ones(F.size, np.float32), (np.repeat(np.arange(len(F)), 3), spot[F].reshape(-1))), shape=(len(F), spot.max() + 1))
+        if "seen" not in cache:
+            original = original or _shaded(in_path)
+            V, F = original[0], np.asarray(original[1], np.int64)
+            # Rings over shared positions: a UV seam splits a vertex, not the surface.
+            _, spot = np.unique(V, axis=0, return_inverse=True)
+            spot = spot.reshape(-1)
+            first = np.zeros(spot.max() + 1, np.int64)
+            first[spot[::-1]] = np.arange(len(spot))[::-1]
+            cache.update(
+                seen=_seen_faces(V, F, HIDDEN_DIRECTIONS_HUGE if len(F) > HIDDEN_HUGE_TRIS else HIDDEN_DIRECTIONS),
+                corners=spot[F],
+                spots=np.asarray(V[first], np.float32),
+                touches=sparse.csr_matrix((np.ones(F.size, np.float32), (np.repeat(np.arange(len(F)), 3), spot[F].reshape(-1))), shape=(len(F), spot.max() + 1)),
+            )
+        touches = cache["touches"]
 
-        def grown(faces, rings):
-            for _ in range(rings):
+        def grown(faces, by):
+            for _ in range(by):
                 faces = faces | ((touches @ ((touches.T @ faces.astype(np.float32)) > 0).astype(np.float32)) > 0)
             return faces
 
-        seen = grown(seen, HIDDEN_RINGS)
+        seen = grown(cache["seen"], rings)
+        if also:  # where a cut showed through, a wider margin: the hole opens at the edge of what was left out
+            near = np.zeros(len(seen), bool)
+            near[list(also)] = True
+            seen |= grown(near, HIDDEN_RINGS_AT_HOLES)
         shown = (touches.T @ seen.astype(np.float32)) > 0
-        stays = ~(~shown[spot[F]]).all(1)
+        stays = ~(~shown[cache["corners"]]).all(1)
         if (~stays).mean() >= HIDDEN_MIN_SHARE:
-            first = np.zeros(spot.max() + 1, np.int64)
-            first[spot[::-1]] = np.arange(len(spot))[::-1]
             fd, name = tempfile.mkstemp(suffix=".f32")
             os.close(fd)
-            Path(name).write_bytes(np.asarray(V[first[~shown]], np.float32).tobytes())
-            found = {"file": name, "stays": stays, "faces": int((~stays).sum())}
-    cache["found"] = found
+            Path(name).write_bytes(cache["spots"][~shown].tobytes())
+            found = {"file": name, "stays": stays, "faces": int((~stays).sum()), "rings": rings}
+    cache[("found", rings, also)] = found
     return found
 
 
 def _forget_hidden(in_path: Path) -> None:
     for key in [k for k in _HIDDEN if k[0] == str(in_path)]:
-        found = _HIDDEN.pop(key).get("found")
-        if found:
-            Path(found["file"]).unlink(missing_ok=True)
+        for value in _HIDDEN.pop(key).values():
+            if isinstance(value, dict) and value.get("file"):
+                Path(value["file"]).unlink(missing_ok=True)
 
 
 def _visible(original, found):
@@ -1181,25 +1194,86 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
     # The look is judged standing still. A model that moves also has to bend right: while it breaks more than
     # MOVING_BEND_OK_PCT, the next rung up is cut (the whole model always passes). Not a halving search:
     # bending isn't steady in the budget (the fox broke worse at 450 triangles than at 300).
+    # Likewise a cut that still shows through after its holes were mended (_game_prep): the harbor, the TRELLIS
+    # bust and knight at 20k, which looked well off anyway.
     looked = auto["picked"]
     whole = _triangles_in_file(in_path)
     ladder = purpose["bakeLadder" if bake else "ladder"]
+
+    def flaws(after):
+        found = {}
+        if (after.get("moving") or {}).get("bendPct", 0) > MOVING_BEND_OK_PCT:
+            found["bendPct"] = after["moving"]["bendPct"]
+        if (after.get("seeThrough") or {}).get("seeThroughPatchPx", 0) >= SEE_THROUGH_HOLE_PX:
+            found["seeThroughPatchPx"] = after["seeThrough"]["seeThroughPatchPx"]
+        return found
+
     bent: list[dict[str, Any]] = []
-    while (report["after"].get("moving") or {}).get("bendPct", 0) > MOVING_BEND_OK_PCT and auto["picked"] < whole:
-        bent.append({"targetTris": auto["picked"], "bendPct": report["after"]["moving"]["bendPct"]})
+    while (found := flaws(report["after"])) and auto["picked"] < whole:
+        bent.append({"targetTris": auto["picked"], **found})
         for extra in (report.get("extraFiles") or {}).values():
             Path(extra).unlink(missing_ok=True)
         auto["picked"] = next((b for b in ladder if auto["picked"] < b < whole), whole)
         report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
     if bent:
         auto["bentAt"] = bent
+    why = [f"broke {bent[0]['bendPct']:g}% where it bends" if "bendPct" in bent[0] else "",
+           f"showed through ({bent[0]['seeThroughPatchPx']} pixels)" if "seeThroughPatchPx" in bent[0] else ""] if bent else []
     report["after"]["autoBudget"] = auto
     report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different"
-                           + (f" and bend right in motion ({looked} looked right but broke {bent[0]['bendPct']:g}% where it bends)" if bent else ""))
+                           + (f", bend right and don't show through ({looked} looked right but {' and '.join(w for w in why if w)})" if bent else ""))
     return report
 
 
+# A cut that leaves out what is hidden is looked at all round as a viewer draws it (back faces not drawn).
+# Where a patch of it shows through, the original's faces drawn there count as seen after all, with a
+# margin of HIDDEN_RINGS_AT_HOLES around them (the hole opens at the edge of what was left out: the dog's
+# 37-pixel patch stayed with a margin of 5, closed with 15), and the cut is made again, up to
+# SEE_THROUGH_MENDS times, keeping a try only if its biggest patch is smaller: the rest of what is hidden
+# stays out. Growing the margin everywhere instead closed the knight's slit by the
+# fist (5 -> 8 rings) but cost others most of the gain: Direct3D-S2's knight needed nothing left out at
+# all for a 7-pixel patch on a pauldron seen from below, and looked 1.06 -> 6.29% off. Scattered single
+# pixels are an edge grazed, not a hole: the Pixal3D knight's 3, all apart, are left alone.
+SEE_THROUGH_HOLE_PX = 4  # a patch this big in one 384-px view is a hole (the knight's slit by the fist: 12)
+SEE_THROUGH_MENDS = 3
+
+
 def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    from studio_bridge.game_look import see_through
+
+    report = _game_prep_at(in_path, out_path, params)
+    if not report["after"].get("hiddenLeftOut"):
+        return report  # nothing left out: nothing to show through
+    holes = first = see_through(in_path, out_path, report["after"]["shift"])
+    kept: tuple[int, ...] = ()
+    for _ in range(SEE_THROUGH_MENDS):
+        more = set(holes["originalFaces"]) - set(kept)
+        if holes["seeThroughPatchPx"] < SEE_THROUGH_HOLE_PX or not more:
+            break
+        fd, name = tempfile.mkstemp(suffix=".glb")
+        os.close(fd)
+        trying = tuple(sorted(set(kept) | more))
+        again = _game_prep_at(in_path, Path(name), {**params, "hiddenKeep": trying})
+        again_holes = see_through(in_path, Path(name), again["after"]["shift"])
+        better = again_holes["seeThroughPatchPx"] < holes["seeThroughPatchPx"]
+        if better:
+            shutil.copyfile(name, out_path)
+        for extra in [name, *(report if better else again).get("extraFiles", {}).values()]:
+            try:
+                Path(extra).unlink(missing_ok=True)
+            except OSError:  # Windows: trimesh may still hold it
+                pass
+        if not better:
+            break
+        report, holes, kept = again, again_holes, trying
+    report["after"]["seeThrough"] = {k: v for k, v in holes.items() if k != "originalFaces"}
+    if kept:
+        report["steps"].append(f"showed through where hidden faces were left out (a {first['seeThroughPatchPx']}-pixel patch in 26 views): "
+                               f"{len(kept)} of them kept, now {holes['seeThroughPatchPx']}")
+    return report
+
+
+def _game_prep_at(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     # trimesh would flatten the model into one mesh and drop its textures; a game needs both,
     # so the whole job runs in gltf-transform, which also unpacks Draco / meshopt on the way in.
     # trimesh only reads both files afterwards, to measure how much the shape and shading changed.
@@ -1221,7 +1295,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     from concurrent.futures import ThreadPoolExecutor
 
     original = _shaded(in_path)
-    found = _hidden(in_path, original)
+    found = _hidden(in_path, original, also=tuple(params.get("hiddenKeep", ())))
     if found:
         job["dropFile"] = found["file"]
     if _triangles_in_file(in_path) > OVERLAP_MAX_TRIS:
@@ -1344,6 +1418,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         "budgetReached": result["budgetReached"],
         "deviation": deviation,
         **({"moving": moving} if moving else {}),
+        **({"hiddenLeftOut": found["faces"]} if found else {}),
+        "shift": result["shift"],
     }
     if "maxErrorPct" in job:
         after["maxErrorPct"] = job["maxErrorPct"]
