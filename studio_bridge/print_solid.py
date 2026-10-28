@@ -515,8 +515,14 @@ def _pieces(m) -> int:
 
 def _seen(V, F, pts, normals):
     """Which surface points can be seen from outside: at least one of VIS_RAYS rays over the point's hemisphere
-    gets out (embree). The walls of a sealed void, or of a hollow behind a crack, are hidden. The rays come from
-    the C library's rand, so it is reset first: every candidate, and every run, is lit by the same rays."""
+    gets out (embree). The walls of a sealed void, or of a hollow behind a crack, are hidden."""
+    return _open_share(V, F, pts, normals) > 0.0
+
+
+def _open_share(V, F, pts, normals):
+    """The share of VIS_RAYS rays over each point's hemisphere that get out (embree): 0 hidden, about 1 on open
+    flat ground, a few rays at the back of a sheet seen through a slit. The rays come from the C library's rand,
+    so it is reset first: every candidate, and every run, is lit by the same rays."""
     import ctypes
     import ctypes.util
     import numpy as np
@@ -524,13 +530,12 @@ def _seen(V, F, pts, normals):
     try:
         import igl.embree
     except ImportError:
-        return np.ones(len(pts), dtype=bool)
+        return np.ones(len(pts))
     try:
         ctypes.CDLL(ctypes.util.find_library("c") or "ucrtbase").srand(SEED)
     except (OSError, AttributeError):
         pass
-    occluded = igl.embree.ambient_occlusion(V, F, pts + normals * 1e-3, normals, VIS_RAYS)
-    return occluded < 1.0
+    return 1.0 - np.asarray(igl.embree.ambient_occlusion(V, F, pts + normals * 1e-3, normals, VIS_RAYS), np.float64)
 
 
 def _measure(orig, orig_pts, m, printer: Printer) -> dict[str, Any]:
@@ -836,13 +841,14 @@ def _unref(V, F):
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     """Walls thinner than the printer holds made thick enough, keeping the surface you see.
 
-    At points 0.2 mm apart over the thin areas the wall is measured as in wall_thickness, and which of its two
-    sides can be seen from outside (_seen). Seen on one side only (a skin over a hollow, the outer wall of an
-    open chest): material is added behind it, a ball of the printer's wall touching the seen side from inside,
-    so that side stays where it was. Seen on both sides (a blade, a fin, filigree) or on neither: a ball about
-    the middle, so both sides move out by half the shortfall; `seen_too` False leaves the ones seen on both
-    sides as they are. A ball meant to stay out of sight that would reach the seen surface is left out (see
-    below), so that spot stays thin and is reported. The balls become one solid by an Alpha Wrap of their
+    At points 0.2 mm apart over the thin areas the wall is measured as in wall_thickness, and how open each of
+    its two sides is to the outside (_open_share). A ball of the printer's wall goes across it, coming out on
+    each side by a part of the shortfall that shrinks the better that side is seen. Seen on one side only (a
+    skin over a hollow, the outer wall of an open chest): it touches that side from inside, so the side stays
+    where it was. Seen alike from both sides (a blade, a fin, filigree) or from neither: half on each. A panel
+    whose back shows only through a slit grows mostly at the back. `seen_too` False leaves the ones seen on
+    both sides as they are. A ball that would come out of the seen surface further than meant is left out
+    (see below), so that spot stays thin and is reported. The balls become one solid by an Alpha Wrap of their
     centres at their radius (closed and free of crossings by construction), fused with the model by Manifold;
     voids the new walls sealed are filled. Walls under 0.4 mm: trellis2_chest 49 % of the surface -> 0.2 %,
     tripo_blaster 76 % -> 0.2 %; seen surface out by more than 0.1 mm: 1.4 % on the chest, while the blaster's
@@ -883,26 +889,33 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     thin = (across < lo) & (hit >= 0)
     p, n, t, hit = dense[thin], n[thin], across[thin], hit[thin]
     del dense, start, d32, across
-    seen_p = _seen(V, F, p, n)
-    seen_q = _seen(V, F, p - n * t[:, None], out_n * np.asarray(m.face_normals, np.float64)[hit])
+    open_p = _open_share(V, F, p, n)
+    open_q = _open_share(V, F, p - n * t[:, None], out_n * np.asarray(m.face_normals, np.float64)[hit])
+    seen_p, seen_q = open_p > 0, open_q > 0
     r = lo / 2 + THICKEN_MARGIN_MM
-    behind = seen_p & ~seen_q  # the other side's points (hidden, facing a seen one) are covered by these
-    both = seen_p & seen_q & seen_too
-    neither = ~seen_p & ~seen_q
-    centres = np.vstack([p[behind] - n[behind] * r, p[both | neither] - n[both | neither] * (t[both | neither] / 2)[:, None]])
-    grow_seen = np.concatenate([np.zeros(int(behind.sum()), bool), both[both | neither]])
-    del p, n, t
-    # A ball meant to stay out of sight must not reach the seen surface: in a groove narrower than the ball it
-    # would bulge through the far side, and the bottom of a deep groove can pass for hidden (all 32 rays
-    # blocked) while it shows. On trellis2_chest those balls pushed 27 % of the seen surface out by ~0.2 mm.
+    # The shortfall 2r - t is shared between the two sides by how open each is: the side you see better moves
+    # less. Seen on one side only, the ball touches that side from inside (the other side's points, hidden and
+    # facing a seen one, are covered by these); a blade seen alike from both sides grows by half on each; a
+    # panel whose back shows only through a slit grows mostly at the back. On neither side: half and half.
+    shared = open_p + open_q
+    w = np.where(shared > 0, open_q / np.where(shared > 0, shared, 1.0), 0.5)  # p's part of the shortfall
+    w[seen_p & ~seen_q] = 0.0
+    out_p = (2 * r - t) * w  # how far the ball comes out past p
+    out_q = (2 * r - t) * (1 - w)  # and past the other side
+    keep = (seen_p | ~seen_q) & (~(seen_p & seen_q) | seen_too)  # hidden facing seen: its partner covers it
+    # A ball must not come out of the seen surface further than it was meant to: in a groove narrower than the
+    # ball it would bulge through the far side, and the bottom of a deep groove can pass for hidden (all 32 rays
+    # blocked) while it shows. On trellis2_chest such balls pushed 27 % of the seen surface out by ~0.2 mm.
+    centres = p - n * (r - out_p)[:, None]
+    allowed = np.maximum(np.where(seen_p, out_p, 0.0), np.where(seen_q, out_q, 0.0))
     face_seen = _seen(V, F, m.triangles_center, out_n * np.asarray(m.face_normals, np.float64))
-    clear = np.ones(len(centres), bool)
     if face_seen.any():
         SV, SF = _unref(V, F[face_seen])
-        clear = np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - THICKEN_CLEAR_MM
-    keep = clear | grow_seen
-    info: dict[str, Any] = {"toMm": round(2 * r, 2), "behindSeen": int(behind.sum()), "bothSeen": int(both.sum()),
-                            "notThickened": int((~keep).sum()) + (0 if seen_too else int((seen_p & seen_q).sum()))}
+        keep &= np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - allowed - THICKEN_CLEAR_MM
+    info: dict[str, Any] = {"toMm": round(2 * r, 2), "behindSeen": int((seen_p & ~seen_q).sum()),
+                            "bothSeen": int((seen_p & seen_q).sum()) if seen_too else 0,
+                            "notThickened": int((~keep & (seen_p | ~seen_q)).sum())}
+    del p, n, t
     centres = centres[keep]
     if not len(centres):
         return m, None
