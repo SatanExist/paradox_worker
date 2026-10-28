@@ -66,6 +66,7 @@ TILT_FREE_DEG = 3.0  # it may be tilted this much onto a face it rests on: nobod
 CUT_MAX_MM = 2.0  # the bottom is cut flat by at most this much (and 3 % of the height)
 CUT_STEP_MM = 0.1
 HOLD_MM2 = 20.0  # plate contact for the first layer to hold (upright models; one lying down is held by supports)
+LIP_MM2 = 2.0  # a cut may leave this much of a ledge thinner than a wall should be, no more
 BASE_MM = 2.0  # height of an added base
 
 
@@ -979,9 +980,12 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     The smallest cut that stands steady wins, and with `hold` one whose contact also holds on the plate
     (HOLD_MM2) before one that doesn't: trellis2_crown stood steady on 1.8 mm² of rim points, 51 mm² at 0.3 mm.
     Failing steady, the smallest within half a degree of the best. A cut that would split the model in two (a
-    strand joined to it only below the cut) is never taken."""
+    strand joined to it only below the cut) is never taken, and one that shaves a ledge on the bottom thinner
+    than a wall should be (Printer.min_wall_mm) is taken only when no other will do: tripo_spellbook's cover
+    lip went from 1.5 to 0.4 mm at a 1.1 mm cut."""
     import numpy as np
 
+    lip = _ledges(man, cut_max + printer.min_wall_mm)
     rows = []
     for d in [0.0] + [round(CUT_STEP_MM * k, 3) for k in range(1, int(cut_max / CUT_STEP_MM + 1e-9) + 1)]:
         cs = man.slice(max(d, printer.layer_mm / 2))
@@ -992,11 +996,41 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     best = max(r[1] for r in rows)
     order = ([r for r in steady if r[2] >= HOLD_MM2] if hold else []) + steady
     order += [r for r in rows if r[1] >= best - 0.5] + sorted(rows, key=lambda r: -r[1])
+    h, below, area = lip
+    w = printer.min_wall_mm
+    shaved = lambda d: float(area[(h - below < d) & (d < h) & (h < d + w)].sum())  # noqa: E731
+    order = [r for r in order if shaved(r[0]) <= LIP_MM2] + order
     parts = len(man.decompose())
     for r in order:
         if r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts:
             return r
     return rows[0]
+
+
+def _ledges(man, top: float):
+    """Up-facing surface (Z up) lower than `top`: each triangle's height, the depth of solid straight under it
+    and its area, for telling which flat cuts would shave a ledge thin."""
+    import igl.embree
+    import numpy as np
+
+    mesh = man.to_mesh64()
+    V = np.asarray(mesh.vert_properties[:, :3], np.float64)
+    F = np.asarray(mesh.tri_verts, np.int64)
+    a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    n = np.cross(b - a, c - a)
+    area = np.linalg.norm(n, axis=1) / 2
+    mid = (a + b + c) / 3
+    up = (n[:, 2] > 0.5 * 2 * area) & (mid[:, 2] < top)
+    below = np.full(int(up.sum()), np.inf)
+    if up.any():
+        ei = igl.embree.EmbreeIntersector()
+        ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(F, np.int32), True)
+        down = np.array([0, 0, -1.0], np.float32)
+        for i, q in enumerate(mid[up]):
+            f, t, _, _ = ei.intersectRay_first((q + [0, 0, -1e-3]).astype(np.float32), down)
+            if f >= 0:
+                below[i] = t + 1e-3
+    return mid[up, 2], below, area[up]
 
 
 def _rest_faces(V, com):
