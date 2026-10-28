@@ -193,10 +193,8 @@ def _sphere(k: int):
     return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], 1)
 
 
-def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
-    """Where a view meets the model at all, and which face turned towards it it meets (-1: none): a viewer
-    draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
-    import igl.embree
+def _origins(centre, radius: float, view, res: int):
+    """Where the rays of one view start, a pixel each, row by row (as _draw lays them out)."""
     import numpy as np
 
     d = -np.asarray(view, float)
@@ -207,7 +205,18 @@ def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
     up = np.cross(right, d)
     s = (np.arange(res) + 0.5) / res * 2 - 1
     xs, ys = np.meshgrid(s, -s)
-    origins = (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+    return (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+
+
+def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
+    """Where a view meets the model at all, and which face turned towards it it meets (-1: none): a viewer
+    draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
+    import igl.embree
+    import numpy as np
+
+    d = -np.asarray(view, float)
+    d /= np.linalg.norm(d)
+    origins = _origins(centre, radius, view, res)
     rays = np.repeat(d[None], len(origins), 0)
     V, F = m["V"], m["F"]
     facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
@@ -227,8 +236,8 @@ def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str
     is drawn, over SEE_THROUGH_VIEWS views; the six views above draw both sides and miss them. A face left
     out as hidden that showed through a slit after all leaves exactly this, as does a triangle a cut folded
     over. Returns the total, the biggest patch of them in one view (a hole is a patch: single pixels
-    scattered over the views are an edge grazed), and the original's faces drawn at those pixels: the ones a
-    cut should have kept (numbered as tools_ops._shaded numbers them)."""
+    scattered over the views are an edge grazed), and the original's faces drawn there (numbered as
+    tools_ops._shaded numbers them)."""
     import numpy as np
     from scipy import ndimage
 

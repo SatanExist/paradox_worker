@@ -302,39 +302,50 @@ function keepPoints(prims) {
 }
 
 /**
- * Leave out triangles whose three corners are all hidden points. Matched where the model puts them, within
- * a hair: Python worked model space out in its own order of float operations. Returns how many went.
+ * A test for points given in model space (float32 x,y,z): whether a vertex at (x, y, z) in model space is one
+ * of them, within a hair (Python worked model space out in its own order of float operations).
  */
-function dropHidden(prims) {
+function pointsAt(points) {
   let span = 0;
-  for (let i = 0; i < hidden.length; i++) span = Math.max(span, Math.abs(hidden[i]));
+  for (let i = 0; i < points.length; i++) span = Math.max(span, Math.abs(points[i]));
   const hair = Math.max(span, 1e-9) * 1e-7;
   const cellSize = 4 * hair;
   const cellKey = (ix, iy, iz) => (ix * 73856093) ^ (iy * 19349663) ^ (iz * 83492791);
   const grid = new Map();
-  for (let i = 0; i < hidden.length; i += 3) {
-    const k = cellKey(Math.floor(hidden[i] / cellSize), Math.floor(hidden[i + 1] / cellSize), Math.floor(hidden[i + 2] / cellSize));
+  for (let i = 0; i < points.length; i += 3) {
+    const k = cellKey(Math.floor(points[i] / cellSize), Math.floor(points[i + 1] / cellSize), Math.floor(points[i + 2] / cellSize));
     const list = grid.get(k);
     if (list) list.push(i);
     else grid.set(k, [i]);
   }
-  const isHidden = (x, y, z) => {
+  return (x, y, z) => {
     for (let ix = Math.floor((x - hair) / cellSize); ix <= Math.floor((x + hair) / cellSize); ix++)
       for (let iy = Math.floor((y - hair) / cellSize); iy <= Math.floor((y + hair) / cellSize); iy++)
         for (let iz = Math.floor((z - hair) / cellSize); iz <= Math.floor((z + hair) / cellSize); iz++)
           for (const i of grid.get(cellKey(ix, iy, iz)) ?? [])
-            if (Math.abs(hidden[i] - x) <= hair && Math.abs(hidden[i + 1] - y) <= hair && Math.abs(hidden[i + 2] - z) <= hair) return true;
+            if (Math.abs(points[i] - x) <= hair && Math.abs(points[i + 1] - y) <= hair && Math.abs(points[i + 2] - z) <= hair) return true;
     return false;
   };
+}
+
+/** Which vertices of a primitive sit on the points, placed where the model puts them. */
+function onPoints(p, isOn) {
+  const m = p.matrix;
+  const count = p.positions.length / 3;
+  const on = new Uint8Array(count);
+  for (let v = 0; v < count; v++) {
+    const [x, y, z] = [p.positions[v * 3], p.positions[v * 3 + 1], p.positions[v * 3 + 2]];
+    on[v] = isOn(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]) ? 1 : 0;
+  }
+  return on;
+}
+
+/** Leave out triangles whose three corners are all hidden points. Returns how many went. */
+function dropHidden(prims) {
+  const isHidden = pointsAt(hidden);
   let dropped = 0;
   for (const p of prims) {
-    const m = p.matrix;
-    const count = p.positions.length / 3;
-    const off = new Uint8Array(count);
-    for (let v = 0; v < count; v++) {
-      const [x, y, z] = [p.positions[v * 3], p.positions[v * 3 + 1], p.positions[v * 3 + 2]];
-      off[v] = isHidden(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]) ? 1 : 0;
-    }
+    const off = onPoints(p, isHidden);
     const stay = [];
     for (let i = 0; i < p.indices.length; i += 3) {
       if (off[p.indices[i]] && off[p.indices[i + 1]] && off[p.indices[i + 2]]) dropped++;
