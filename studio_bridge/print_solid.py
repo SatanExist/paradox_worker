@@ -911,7 +911,7 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     face_seen = _seen(V, F, m.triangles_center, out_n * np.asarray(m.face_normals, np.float64))
     if face_seen.any():
         SV, SF = _unref(V, F[face_seen])
-        keep &= np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - allowed - THICKEN_CLEAR_MM
+        keep &= (np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - allowed - THICKEN_CLEAR_MM) | (seen_p & seen_q)
     info: dict[str, Any] = {"toMm": round(2 * r, 2), "behindSeen": int((seen_p & ~seen_q).sum()),
                             "bothSeen": int((seen_p & seen_q).sum()) if seen_too else 0,
                             "notThickened": int((~keep & (seen_p | ~seen_q)).sum())}
