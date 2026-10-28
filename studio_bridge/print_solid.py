@@ -66,7 +66,7 @@ TILT_FREE_DEG = 3.0  # it may be tilted this much onto a face it rests on: nobod
 CUT_MAX_MM = 2.0  # the bottom is cut flat by at most this much (and 3 % of the height)
 CUT_STEP_MM = 0.1
 HOLD_MM2 = 20.0  # plate contact for the first layer to hold (upright models; one lying down is held by supports)
-LIP_MM2 = 2.0  # a cut may leave this much of a ledge thinner than a wall should be, no more
+LIP_MM2 = 25.0  # a cut may shave this much of a bottom ledge thin (soles: 2-20 mm²; a book cover, a bust rim: 60-100)
 BASE_MM = 2.0  # height of an added base
 
 
@@ -980,9 +980,12 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     The smallest cut that stands steady wins, and with `hold` one whose contact also holds on the plate
     (HOLD_MM2) before one that doesn't: trellis2_crown stood steady on 1.8 mm² of rim points, 51 mm² at 0.3 mm.
     Failing steady, the smallest within half a degree of the best. A cut that would split the model in two (a
-    strand joined to it only below the cut) is never taken, and one that shaves a ledge on the bottom thinner
-    than a wall should be (Printer.min_wall_mm) is taken only when no other will do: tripo_spellbook's cover
-    lip went from 1.5 to 0.4 mm at a 1.1 mm cut."""
+    strand joined to it only below the cut) is never taken.
+    A cut can also shave a ledge on the bottom thinner than a wall should be (Printer.min_wall_mm):
+    tripo_spellbook's cover lip went from 1.5 to 0.4 mm at a 1.1 mm cut (61 mm² of it). One that shaves more
+    than LIP_MM2 gives way to the first that doesn't, if that stands about as well (steady, or within half a
+    degree); else it is kept and flagged. Returns (d, tip, contact, shaves, clean): clean the row the first cut
+    that doesn't shave, for a base to take the ledge instead."""
     import numpy as np
 
     lip = _ledges(man, cut_max + printer.min_wall_mm)
@@ -999,12 +1002,15 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     h, below, area = lip
     w = printer.min_wall_mm
     shaved = lambda d: float(area[(h - below < d) & (d < h) & (h < d + w)].sum())  # noqa: E731
-    order = [r for r in order if shaved(r[0]) <= LIP_MM2] + order
     parts = len(man.decompose())
-    for r in order:
-        if r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts:
-            return r
-    return rows[0]
+    whole = lambda r: r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts  # noqa: E731
+    pick = next((r for r in order if whole(r)), rows[0])
+    if shaved(pick[0]) <= LIP_MM2:
+        return (*pick, False, pick)
+    clean = next(r for r in order if shaved(r[0]) <= LIP_MM2 and whole(r))  # d = 0 shaves nothing
+    if clean[1] >= min(pick[1], STEADY_TIP_DEG) - 0.5:
+        return (*clean, False, clean)
+    return (*pick, True, clean)
 
 
 def _ledges(man, top: float):
@@ -1063,7 +1069,8 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     Upright as made (Y up), if needed with its bottom cut flat by up to 2 mm: an uneven base touches the plate
     at a few points, which hold neither the print nor the model. On the corpus a cut of 0.3–1 mm gives most
     figures a flat bottom (trellis2_statue: 0 -> 1737 mm² of contact, steady at 27°). A model that can't stand
-    upright even so falls at a breath (under 3°). It is tilted up to 3° onto a face of its hull it rests on, if
+    upright even so falls at a breath (under 3°), or only stands on a cut that shaves its bottom ledge thin
+    (see _best_cut). It is tilted up to 3° onto a face of its hull it rests on, if
     that steadies it; else, if it has such a face near straight down, it was made to stand and gets a round base (`base` "none" leaves it as it is); otherwise it is an object lying about,
     stood on its tip by the generator (a sword, a blaster), and is laid on the face it lies steadiest on.
     `m` is closed, in mm, Y up, bottom at 0. Returns (mesh, T, info): T the 4x4 move (rotation and shift) the
@@ -1085,7 +1092,7 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     man = solid(V)
     if man.status() != mf.Error.NoError:
         raise RuntimeError(f"not a solid Manifold takes: {man.status()}")
-    d, tip, contact = _best_cut(man, _zup(com[None])[0], printer, cut_max)
+    d, tip, contact, shaves, clean = _best_cut(man, _zup(com[None])[0], printer, cut_max)
     info: dict[str, Any] = {"pose": "upright"}
     add_base = False
     def onto(nrm):
@@ -1101,18 +1108,20 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
         cut = min(CUT_MAX_MM, 0.03 * float(np.ptp(V2[:, 1])))
         return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, cut, hold=bool(nrm[1] < -0.9)))
 
-    if tip < FALLS_TIP_DEG:
+    if tip < FALLS_TIP_DEG or shaves:
         rests = _rest_faces(V, com)
         upright = [r for r in rests if r[2] <= UPRIGHT_TILT_DEG]
         small = [r for r in upright if r[2] <= TILT_FREE_DEG]
         turned = onto(small[0][0]) if small else None
-        if turned and turned[5] >= FALLS_TIP_DEG:  # a tilt nobody sees puts it on a face it rests on
-            T, V, com, man, d, tip, contact = turned
+        if turned and turned[5] >= FALLS_TIP_DEG and not turned[7]:  # a tilt nobody sees puts it on a face it rests on
+            T, V, com, man, d, tip, contact = turned[:7]
             info["tiltDeg"] = round(small[0][2], 1)
         elif upright:
             add_base = base != "none"
-        elif rests:  # an object stood on its tip: laid on the face it lies steadiest on
-            T, V, com, man, d, tip, contact = onto(rests[0][0])
+            if add_base and shaves:  # the base takes the ledge: no need to shave it
+                d, tip, contact = clean
+        elif rests and tip < FALLS_TIP_DEG:  # an object stood on its tip: laid on the face it lies steadiest on
+            T, V, com, man, d, tip, contact = onto(rests[0][0])[:7]
             info["pose"] = "lying"
     if d == 0 and not add_base and info["pose"] == "upright" and "tiltDeg" not in info:
         info.update({"tipDeg": round(tip, 1), "contactMm2": round(contact, 1), "cutMm": 0.0})
