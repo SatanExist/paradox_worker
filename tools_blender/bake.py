@@ -260,6 +260,9 @@ for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Col
 # computer's vents and screen bars and ragged spots on its screws, which went at 30 (light 1.78 -> 1.58%,
 # creases 0.58 -> 0.28%; 45 and 60 left the black rims). The bench stayed level, the dog's wrinkles too
 # (1.17%), the crown came closer (4.00 -> 3.83%); drill and watch moved 0.07 the other way (2026-10-29).
+# Round parts a very light cut leaves to the map lose little: at 2k the magnum's cylinder shaded 1.68 -> 1.77%
+# off, the same to the eye, and camera and watch came closer. Capping only strips up to 2 or 4 texels wide
+# left most of the computer's streaks (light 1.76, 1.71%): they are broader than that.
 TILT = float(PARAMS.get("tilt", 30))
 steep = np.zeros(0, dtype=bool)
 if TILT:
