@@ -112,6 +112,18 @@ for o in low:
 bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+# Edges sharper than SHARP degrees stay sharp (normals split there), so the normal map needn't bend a
+# smoothed corner back: the Rodin computer at 200k shaded 1.94 -> 1.78% off, creases 1.06 -> 0.58%, its
+# panels' edges crisp again. Cutting the texture along them as well took 13% of its texels and drew dark
+# jags on the edges (look 1.52 -> 2.84%).
+SHARP = float(PARAMS.get("sharp", 45))
+if SHARP:
+    bpy.ops.mesh.select_mode(type="EDGE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.mesh.edges_select_sharp(sharpness=math.radians(SHARP))
+    bpy.ops.mesh.mark_sharp()
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="SELECT")
 
 
 def overlapping():
@@ -243,6 +255,27 @@ for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Col
     run("EMIT", maps[name])
     timings[name] = round(time.time() - t, 1)
 
+# The normal map tilts the light model's surface at most TILT degrees. Steeper texels are rays that met the
+# side walls of a groove or a step the cut flattened: they drew white streaks and black rims along the Rodin
+# computer's vents and screen bars and ragged spots on its screws, which went at 30 (light 1.78 -> 1.58%,
+# creases 0.58 -> 0.28%; 45 and 60 left the black rims). The bench stayed level, the dog's wrinkles too
+# (1.17%), the crown came closer (4.00 -> 3.83%); drill and watch moved 0.07 the other way (2026-10-29).
+TILT = float(PARAMS.get("tilt", 30))
+steep = np.zeros(0, dtype=bool)
+if TILT:
+    img = maps["normal"]
+    a = np.empty(img.size[0] * img.size[1] * 4, dtype=np.float32)
+    img.pixels.foreach_get(a)
+    a = a.reshape(-1, 4)
+    v = a[:, :3] * 2 - 1
+    lim = math.cos(math.radians(TILT))
+    steep = v[:, 2] < lim
+    xy = v[steep, :2]
+    v[steep, :2] = xy * (math.sqrt(1 - lim * lim) / np.linalg.norm(xy, axis=1, keepdims=True).clip(1e-6))
+    v[steep, 2] = lim
+    a[:, :3] = (v + 1) / 2
+    img.pixels.foreach_set(a.ravel())
+
 # glTF keeps roughness in G and metalness in B of one texture.
 for img in maps.values():
     if SUPER > 1:
@@ -292,4 +325,4 @@ for o in low:
 np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
 with open(os.path.join(OUT, "corners.json"), "w") as fh:
     json.dump(meshes, fh)
-print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "seconds": round(time.time() - t0, 1), "passes": timings}}))
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings}}))
