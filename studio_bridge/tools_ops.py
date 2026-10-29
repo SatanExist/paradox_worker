@@ -553,6 +553,11 @@ HIDDEN_RINGS = 5
 HIDDEN_RINGS_AT_HOLES = 15  # around faces found showing through a cut (_game_prep)
 SEE_THROUGH_HOLE_PX = 4  # a patch this big in one 384-px view is a hole (the knight's slit by the fist: 12)
 SEE_THROUGH_MENDS = 3
+# Texture in streaks on more than this much of the surface (game_look.torn), looked for only where the cut
+# loosened UV seams to reach its budget: only then can it draw a texture across a gap. The pump's 1.6% at
+# 20k showed plainly up close, the snowman's 5.9% and the Rodin knight's 4.9% at 50k came the same way;
+# cuts that kept their seams read up to 1.2% (mech at 200k) from texture laid out unevenly, not streaks.
+TORN_OK_PCT = 0.5
 HIDDEN_MIN_SHARE = 0.005  # less than this left out isn't worth a step
 HIDDEN_RAYS_PER_CALL = 1_500_000  # rays a process casts at once (a few hundred MB at most)
 # libigl's caster keeps Python's lock: one core, ~0.7M rays a second (the necromutant's search took 112 s,
@@ -988,12 +993,26 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
 
 # The auto budget, set by eye (2026-10-26): on the six bench models a person marked the first budget that
 # looks fine in a game. Below 20k every model looked crumpled however few pixels differed, so 20k is the
-# floor (a model already lighter is left as it is); above it, the budget grows until no more than 5.5% of the
+# floor for a detailed model (a simple one may go under it: below); above it, the budget grows until no more than 5.5% of the
 # picture differs at a glance (game_look.noticeablePct). That reproduces all six marks: camera, drill and
 # watch 20k, mech and scorpion 35k, the sword untouched. With normal-map baking the floor should come down.
 AUTO_FLOOR_TRIS = 20000
 AUTO_BUDGETS = (20000, 35000, 50000, 75000, 100000, 150000, 200000)
 NOTICEABLE_OK_PCT = 5.5
+
+# What looked crumpled under 20k was the shading, not the outline: camera and drill at 10k differ in 1-2% of
+# the picture, but light falls on them 3.79 and 4.53% off the original, against 2.66 and 2.8% at the 20k the
+# eye passed (2026-10-28, current cut). So a simple model may go under the floor, down to 2k, while its
+# shading stays as close as theirs did at 20k: lowpoly and spellbook 10k (0.93, 0.47%) do, the pistol 10k
+# (3.68%) doesn't. Every bench mark under 20k is over 3.79%.
+AUTO_LOW_BUDGETS = (2000, 5000, 10000)
+LOW_LIGHT_OK_PCT = 3.0
+# Creases the original hasn't (game_look.CREASE), share of the surface. Marked by eye in clay (2026-10-29):
+# crumpled at 3.43-7.98% (Pixal3D knight 20k/50k, TRELLIS statue 100k), fine up to 1.43% (TRELLIS armor
+# and chest 20k, statue 200k, Pixal3D knight 100k); 2.5 sits between. The Hi3DGen dog at 20k read 1.06%
+# and looked bad all the same: its wrinkles went flat, which a bake gives back and creases don't count.
+# Judged at 384 px, so for regular and hero; background (128 px) keeps its look alone.
+CREASE_OK_PCT = 2.5
 
 # What the model is for decides how big it shows on screen, so how much of it can be seen: the look is
 # judged at that size (px per view side). Marked by eye on the bench models (2026-10-26):
@@ -1008,8 +1027,8 @@ NOTICEABLE_OK_PCT = 5.5
 # scorpion 10k (13.84%). Any threshold from 6.7 to 9.1% splits them; 7% keeps to the safe side.
 # Background with baking is not marked yet: its plain threshold stands in.
 PURPOSES: dict[str, dict[str, Any]] = {
-    "regular": {"res": 384, "floor": AUTO_FLOOR_TRIS, "okPct": NOTICEABLE_OK_PCT, "ladder": AUTO_BUDGETS,
-                "bakeFloor": 5000, "bakeOkPct": 7.0, "bakeLadder": (5000, 10000, *AUTO_BUDGETS)},
+    "regular": {"res": 384, "floor": AUTO_LOW_BUDGETS[0], "okPct": NOTICEABLE_OK_PCT, "ladder": (*AUTO_LOW_BUDGETS, *AUTO_BUDGETS),
+                "lightFloor": AUTO_FLOOR_TRIS, "lowLightPct": LOW_LIGHT_OK_PCT, "creaseOkPct": CREASE_OK_PCT, "bakeFloor": 5000, "bakeOkPct": 7.0, "bakeLadder": (5000, 10000, *AUTO_BUDGETS)},
     "background": {"res": 128, "floor": 5000, "okPct": 8.85, "ladder": (5000, 10000, 20000, 35000, 50000, 100000),
                    "bakeFloor": 2000, "bakeOkPct": 8.85, "bakeLadder": (2000, 5000, 10000, 20000, 35000, 50000, 100000)},
 }
@@ -1045,7 +1064,8 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
             cut = _game_mjs(in_path, Path(name), job)
             if kind == "baked":
                 _bake(in_path, Path(name), cut["shift"], min(texture_size, QUICK_BAKE_PX), high)
-            seen = look(in_path, Path(name), cut["shift"], res=res)["noticeablePct"]
+            looked = look(in_path, Path(name), cut["shift"], res=res)
+            seen = looked["noticeablePct"]
             tangles = _tangled_over(in_path, Path(name))
         finally:
             try:
@@ -1053,12 +1073,25 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
             except OSError:  # Windows: still held
                 pass
         if "noticeablePct" not in step or seen < step["noticeablePct"]:
-            step.update({"triangles": cut["after"]["triangles"], "noticeablePct": seen, "baked": kind == "baked", **tangles})
+            step.update({"triangles": cut["after"]["triangles"], "noticeablePct": seen, "lightPct": looked["lightPct"],
+                         "creasePct": looked["creasePct"],
+                         "baked": kind == "baked", **tangles})
     return step
 
 
 def _too_tangled(measured: dict[str, Any]) -> bool:
     return measured.get("tangledPct", 0) - measured.get("originalTangledPct", 0) > TANGLED_OK_PCT
+
+
+def _crumpled(budget: int, looked: dict[str, Any], purpose: dict[str, Any], baked: bool) -> bool:
+    """A plain cut with creases the original hasn't on more than CREASE_OK_PCT of it, or under the floor the
+    eye set with shading further off than LOW_LIGHT_OK_PCT. A baked cut is judged by its look alone: the
+    relief its normal map draws reads as creases (the pump baked at 10k, clean to the eye: 1.4%)."""
+    if baked:
+        return False
+    if looked.get("creasePct", 0) > purpose.get("creaseOkPct", math.inf):
+        return True
+    return budget < purpose.get("lightFloor", 0) and looked["lightPct"] > purpose["lowLightPct"]
 
 
 def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
@@ -1090,8 +1123,13 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
             bake: bool, bake_ok_pct: float | None, ladder: list[int], high: Path | None) -> dict[str, Any]:
     tried: list[dict[str, Any]] = []
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
+    # Most models pass at the floor the eye set, and one whose shading is off there can't go under it (fewer
+    # triangles only shade worse), so that rung is looked at first: one look settles the dog, the snowman,
+    # the knights; the camera needs three, as before.
+    floor = ladder.index(purpose["lightFloor"]) if not bake and purpose.get("lightFloor") in ladder[:-1] else None
+    first = floor
     while lo < hi:
-        mid = (lo + hi) // 2
+        mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
         step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high)
         seen = step["noticeablePct"]
         limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct
@@ -1110,9 +1148,12 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
             seen = step["fullNoticeablePct"] = full["after"]["look"]["noticeablePct"]
             limit = bake_ok_pct if full["after"].get("bake", {}).get("used") and bake_ok_pct else ok_pct
             step.update({k: full["after"][k] for k in ("tangledPct", "originalTangledPct") if k in full["after"]})
+            step.update({k: full["after"]["look"][k] for k in ("lightPct", "creasePct")})
         tried.append(step)
-        if seen <= limit and not _too_tangled(step):
+        if seen <= limit and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False)):
             hi = mid
+            if floor is not None and mid >= floor and step["lightPct"] > purpose["lowLightPct"]:
+                lo = max(lo, floor)
         else:
             lo = mid + 1
     return {"picked": ladder[lo], "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), "tried": tried}
@@ -1197,7 +1238,7 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
     # MOVING_BEND_OK_PCT, the next rung up is cut (the whole model always passes). Not a halving search:
     # bending isn't steady in the budget (the fox broke worse at 450 triangles than at 300).
     # Likewise a cut that still shows through after its holes were mended (_game_prep): the harbor, the TRELLIS
-    # bust and knight at 20k, which looked well off anyway.
+    # bust and knight at 20k, which looked well off anyway; and one whose texture went into streaks (TORN_OK_PCT).
     looked = auto["picked"]
     whole = _triangles_in_file(in_path)
     ladder = purpose["bakeLadder" if bake else "ladder"]
@@ -1208,6 +1249,8 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
             found["bendPct"] = after["moving"]["bendPct"]
         if (after.get("seeThrough") or {}).get("seeThroughPatchPx", 0) >= SEE_THROUGH_HOLE_PX:
             found["seeThroughPatchPx"] = after["seeThrough"]["seeThroughPatchPx"]
+        if (after.get("torn") or {}).get("tornPct", 0) > TORN_OK_PCT:
+            found["tornPct"] = after["torn"]["tornPct"]
         return found
 
     bent: list[dict[str, Any]] = []
@@ -1220,10 +1263,12 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
     if bent:
         auto["bentAt"] = bent
     why = [f"broke {bent[0]['bendPct']:g}% where it bends" if "bendPct" in bent[0] else "",
-           f"showed through ({bent[0]['seeThroughPatchPx']} pixels)" if "seeThroughPatchPx" in bent[0] else ""] if bent else []
+           f"showed through ({bent[0]['seeThroughPatchPx']} pixels)" if "seeThroughPatchPx" in bent[0] else "",
+           f"had its texture in streaks ({bent[0]['tornPct']:g}%)" if "tornPct" in bent[0] else ""] if bent else []
     report["after"]["autoBudget"] = auto
     report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different"
-                           + (f", bend right and don't show through ({looked} looked right but {' and '.join(w for w in why if w)})" if bent else ""))
+                           + (f", bend right, don't show through and keep their texture whole ({looked} looked right but "
+                              f"{' and '.join(w for w in why if w)})" if bent else ""))
     return report
 
 
@@ -1415,7 +1460,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     if job.get("forBake"):
         baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
-                     else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map ({baked['seconds']:g} s)")
+                     else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map"
+                          f"{', glow' if 'emissive' in baked.get('passes', {}) else ''} ({baked['seconds']:g} s)")
         result["after"] = {**result["after"], "textures": len(_glb_json(out_path).get("textures", [])), "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
         if baked.get("vertexCacheMisses") and result["after"].get("vertexCache"):  # the bake's seams, ordered again
             result["after"]["vertexCache"] = {**result["after"]["vertexCache"], "after": baked["vertexCacheMisses"]}
@@ -1456,11 +1502,24 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
                     "the auto budget picks the fewest triangles that don't"
                 )
             # The asked budget, not the count: a 20k cut can land a few triangles short of 20000.
+            elif _crumpled(after["targetTris"], after["look"], purpose, bool(job.get("forBake"))):
+                steps.append(f"looks crumpled: creases the original hasn't on {after['look']['creasePct']:g}% of it, light "
+                             f"{after['look']['lightPct']:g}% off; baking or more triangles smooth it")
             elif after["targetTris"] < (floor := purpose["bakeFloor" if job.get("forBake") else "floor"]) < result["before"]["triangles"]:
                 steps.append(f"under {floor // 1000}k triangles detailed models tend to look crumpled at this size")
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
+    try:
+        from studio_bridge.game_look import torn
+
+        if result.get("seamsLoosened") and (stretched := torn(in_path, out_path, result["shift"])) is not None:
+            after["torn"] = stretched
+            if stretched["tornPct"] > TORN_OK_PCT and not params.get("maxErrorPct"):
+                steps.append(f"texture stretched into streaks on {stretched['tornPct']:g}% of the surface (pieces of the texture "
+                             "sewn together to reach the budget): baking or more triangles keep it whole")
+    except Exception as exc:  # as above
+        steps.append(f"texture streaks not measured: {str(exc)[:120]}")
     try:
         after.update(_tangled_over(in_path, out_path))
         if _too_tangled(after) and not params.get("maxErrorPct"):

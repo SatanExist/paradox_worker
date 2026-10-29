@@ -81,7 +81,12 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
         mat = getattr(geom.visual, "material", None)
         factor = getattr(mat, "baseColorFactor", None)
         metal, rough = getattr(mat, "metallicFactor", None), getattr(mat, "roughnessFactor", None)
+        glow = getattr(mat, "emissiveFactor", None)
         mats.append({
+            # Light a part gives off: Rodin's models carry all their colour there (black base colour), and
+            # unread, the pump looked plain white to every check.
+            "glowFactor": np.asarray(glow if glow is not None else [0, 0, 0], np.float32)[:3],
+            "glow": image(getattr(mat, "emissiveTexture", None)),
             "factor": np.asarray(factor if factor is not None else [255, 255, 255, 255], np.float32)[:3] / 255,
             "base": image(getattr(mat, "baseColorTexture", None)),
             "normal": image(getattr(mat, "normalTexture", None)),
@@ -140,12 +145,15 @@ def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tup
     uv = (m["UV"][corners] * w).sum(1)
 
     albedo = np.ones((len(f), 3), np.float32)
+    glow = np.zeros((len(f), 3), np.float32)
     metal, rough = np.zeros(len(f)), np.ones(len(f))
     for i, mat in enumerate(m["mats"]):
         sel = m["owner"][f] == i
         if not sel.any():
             continue
         albedo[sel] = mat["factor"]
+        if mat["glowFactor"].any():
+            glow[sel] = mat["glowFactor"] * (_sample(mat["glow"], uv[sel]) if mat["glow"] is not None else 1)
         if mat["base"] is not None:
             albedo[sel] *= _sample(mat["base"], uv[sel])
         metal[sel], rough[sel] = mat["metal"], mat["rough"]
@@ -173,8 +181,8 @@ def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tup
 
     pictures = {}
     for key, colour in (
-        ("look", (albedo * (1 - metal[:, None]) * lambert + shiny).clip(0, 1)),
-        ("texture", albedo),
+        ("look", (albedo * (1 - metal[:, None]) * lambert + shiny + glow).clip(0, 1)),
+        ("texture", (albedo + glow).clip(0, 1) if glow.any() else albedo),
         ("light", np.repeat(lambert * 0.7, 3, 1)),
     ):
         img = np.zeros((len(origins), 3), np.float32)
@@ -259,6 +267,66 @@ def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str
     return {"seeThroughPx": total, "seeThroughPatchPx": biggest, "originalFaces": sorted(faces)}
 
 
+TORN_STRETCH = 4.0  # a triangle whose texture is this many times bigger or smaller than the original's there
+
+
+def torn(original: Path, result: Path, shift) -> dict[str, float] | None:
+    """How much of the result's surface (%) shows its texture stretched or squeezed TORN_STRETCH times or
+    more against the original at the same spot: texture pixels per area of each result triangle over the
+    original's on the face nearest it, each material's usual ratio taken as 1 (a baked atlas has a scale
+    of its own). A cut that joins pieces of a texture laid out apart ("UV seams loosened") lays triangles
+    across the gap and draws the gap's strip on them: the Rodin pump at 20k and 10k, 1.3 and 2.5% of it
+    in streaks up close, against 0.2% at most on cuts that kept their seams or were baked. The six views
+    above blur the streaks into their surroundings. None when the original has no texture."""
+    import igl
+    import numpy as np
+
+    a, b = _load(Path(original)), _load(Path(result))
+    if not any(m["base"] is not None or m["glow"] is not None for m in a["mats"]):
+        return None
+    b["V"] = b["V"] - np.asarray(shift, float)
+
+    def density(m):
+        p, t = m["V"][m["F"]], m["UV"][m["F"]]
+        area = np.linalg.norm(np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), axis=1) / 2
+        d1, d2 = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+        return area, np.abs(d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]) / 2
+
+    area_a, uv_a = density(a)
+    area_b, uv_b = density(b)
+    _, near, _ = igl.point_mesh_squared_distance(b["V"][b["F"]].mean(1), a["V"], a["F"])
+    seen = (area_b > 0) & (area_a[near] > 0) & (uv_a[near] > 0)
+    ratio = np.zeros(len(area_b))
+    ratio[seen] = (uv_b[seen] / area_b[seen]) / (uv_a[near][seen] / area_a[near][seen])
+    off = seen & (ratio == 0)  # texture squeezed to a line: a streak of one colour
+    for owner in np.unique(b["owner"]):
+        mine = seen & (b["owner"] == owner) & (ratio > 0)
+        if not mine.any():
+            continue
+        order = np.argsort(ratio[mine])  # the usual ratio: the area-weighted median
+        weights = np.cumsum(area_b[mine][order])
+        usual = ratio[mine][order][np.searchsorted(weights, weights[-1] / 2)]
+        rel = ratio[mine] / usual
+        off[np.flatnonzero(mine)] = (rel > TORN_STRETCH) | (rel < 1 / TORN_STRETCH)
+    total = area_b[seen].sum()
+    return {"tornPct": round(100 * float(area_b[off].sum() / total), 2) if total > 0 else 0.0}
+
+
+# How sharply light turns between neighbouring pixels (0..1 picture, Sobel / 8) for a crease to count:
+# camera, drill and watch at 10k (marked crumpled by eye) had new creases on 1.3-2.1% of their surface,
+# at 20k (marked fine) 0.45-0.67%, the Rodin pump crumpled at 10-20k 3-3.6%; the low-poly dragon at 2k,
+# faceted like its original, 0.8% (2026-10-29).
+CREASE = 0.01
+
+
+def _sharpness(img):
+    import numpy as np
+    from scipy import ndimage
+
+    g = img.mean(-1)
+    return np.hypot(ndimage.sobel(g, 0), ndimage.sobel(g, 1)) / 8
+
+
 def compare(original: Path, result: Path, shift, preview: Path | None = None, res: int = RES) -> dict[str, Any]:
     """The look numbers (in %), and a picture original | result | difference per view when `preview`
     is given. `shift` is how far game.mjs moved the result; it is moved back over the original."""
@@ -278,9 +346,14 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None, re
         diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
         glance = np.where(ma ^ mb, 1.0, np.abs(pa["look"] - pb["look"]).mean(-1))
         glance = ndimage.uniform_filter(glance, 5)
+        # Creases the original hasn't: light that turns sharply on the result where the original's is smooth
+        # (its sharpness spread over 5 px, so a crease moved by a pixel or two is the same crease).
+        inner = ndimage.binary_erosion(both, iterations=2)
+        new = ndimage.uniform_filter(_sharpness(pb["light"]), 3) - ndimage.maximum_filter(_sharpness(pa["light"]), 5)
         per_view[name] = {
             "silhouette": float((ma ^ mb).sum() / max(union.sum(), 1)),
             "noticeable": float((glance[union] > NOTICE).mean()) if union.any() else 0.0,
+            "crease": float((new[inner] > CREASE).mean()) if inner.any() else 0.0,
             **diff,
         }
         if preview is not None:
@@ -302,5 +375,6 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None, re
         "lightPct": pct("light"),
         "noticeablePct": pct("noticeable"),
         "noticeableMaxPct": round(100 * max(v["noticeable"] for v in per_view.values()), 2),
+        "creasePct": pct("crease"),
         "worstView": worst,
     }

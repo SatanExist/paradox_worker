@@ -505,6 +505,7 @@ if (maxError !== null) {
   steps.push(`triangles cut within ${maxError * 100}% of the model's size`);
 }
 if (keep) steps.push(`kept ${keepPoints(prims)} vertices where a first cut lost detail`);
+let seamsLoosened = false;
 if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.
@@ -515,6 +516,7 @@ if (triangleCount(prims) > targetTris) {
     // Only then let it collapse across seams: the budget is met, textures near seams may shift.
     cut(prims, targetTris / triangleCount(prims), ["Permissive", ...EVEN]);
     steps.push("UV seams loosened to reach the budget");
+    seamsLoosened = true;
   }
 }
 let emptied = 0;
@@ -532,7 +534,9 @@ if (emptied) steps.push(`${emptied} parts too small for the budget left out`);
 
 if (before.textureMaxPx > textureSize) {
   await doc.transform(textureCompress({ encoder: sharp, resize: [textureSize, textureSize] }));
-  steps.push(`textures shrunk to ${textureSize}px`);
+  // Said plainly: the user asked for it to save memory, but up close it shows (the spellbook's 4096 px
+  // engraving at 1024 looked smeared to the eye, 2026-10-28).
+  steps.push(`textures shrunk from ${before.textureMaxPx}px to ${textureSize}px: up close they look softer than the original's`);
 }
 
 // On the floor: centred on X/Z, lowest point at Y=0 (glTF is Y up, metres).
@@ -564,6 +568,8 @@ process.stdout.write(
     before,
     after,
     budgetReached: after.triangles <= targetTris * 1.05,
+    // Textures may now be drawn across where their pieces lay apart (tools_ops checks for streaks).
+    seamsLoosened,
     specks,
     trianglesAfterCleanup: cleaned,
     // How far the model was moved, so the caller can lay the original over it and measure.

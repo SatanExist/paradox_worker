@@ -15,6 +15,7 @@ import os
 import sys
 import time
 
+import bmesh
 import bpy
 import numpy as np
 from mathutils import Vector
@@ -27,19 +28,23 @@ SIZE = int(PARAMS.get("size", 2048))
 # Baked into one atlas, BrainStem's 59 flat colours came out 86% of the picture off.
 NORMAL_ONLY = bool(PARAMS.get("normalOnly"))
 SAMPLES = int(PARAMS.get("samples", 8))
-# How far rays look for the heavy surface, as a share of the model's size: the cut moved the surface
-# by well under 1% on our models, a little more covers thin parts without catching the far side.
-REACH = float(PARAMS.get("reach", 0.02))
+# How far rays look for the heavy surface, as a share of the model's size: they start this far out and
+# look as far in. At 2% rays from the Rodin pump's wall met the hose hanging in front of it first and drew
+# the hose onto the wall, and a groove's walls drew each other; at 0.5% the pump came out clean (2.62 ->
+# 1.89% noticeable) and mech, drill and watch closer too (6.79 -> 6.51, 1.84 -> 1.80, 4.92 -> 4.70).
+# A cage per corner, pushed out as far as the heavy surface lay near it, cleaned the pump as well but
+# took mech to 13.11% whatever its cap (2026-10-29).
+REACH = float(PARAMS.get("reach", 0.005))
 # Baked this many times bigger, then shrunk: new UVs spend the texture less thriftily than the
 # generator's own, and fine engraving came out noisy at the final size.
 SUPER = int(PARAMS.get("supersample", 1))
 BAKE = SIZE * SUPER
-# Islands lie GAP texels apart and the bake paints MARGIN texels past their edges, filling the gaps so
-# mip-maps don't bleed the background in. The gap is per island: smart_project's own margin (32 px a side
-# at 2048) left 1-16% of the texture to the model once a cut had thousands of islands, and the more
-# triangles, the blurrier it got.
-GAP = max(2, BAKE // 512)
-MARGIN = 2 * GAP
+# Islands lie GAP texels apart, so one island's edge doesn't take its neighbour's colour, and the bake paints
+# MARGIN texels past their edges, so mip-maps don't bleed the background in. The gap is per island and
+# thousands of islands pay it: on the pump at 10k, 1 texel left 59% of the texture to the model, 2 left
+# 54%, 4 left 49% (none: 63%). smart_project's own margin (32 px a side at 2048) left it 1-16%.
+GAP = max(1, BAKE // 2048)
+MARGIN = max(2, BAKE // 256)
 
 t0 = time.time()
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -107,7 +112,44 @@ for o in low:
 bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
-bpy.ops.uv.pack_islands(rotate=True, rotate_method="ANY", scale=True, margin_method="FRACTION", margin=GAP / BAKE, shape_method="CONCAVE")
+
+
+def overlapping():
+    """Select the faces whose UVs lie over others' (the selection shared with the mesh), and count them.
+    Slivers of next to no area are left out: projected on their own they came out as needles that took
+    room on the texture from everything else."""
+    bpy.context.scene.tool_settings.use_uv_select_sync = True
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.uv.select_overlap()
+    count = 0
+    for o in low:
+        mesh = bmesh.from_edit_mesh(o.data)
+        for f in mesh.faces:
+            if f.select and f.calc_area() < 1e-6 * extent**2:
+                f.select_set(False)
+            count += f.select
+        bmesh.update_edit_mesh(o.data)
+    return count
+
+
+# Projected flat, a fold of the light surface lands on itself: where the cut joined the pump's thin spout
+# to the wall behind it at 10k, spout and wall shared texels and the wall, baked last, drew dark streaks
+# down the spout. Faces lying over others are projected again on their own, once, at a narrower angle: a
+# second round met only slivers of no area, which came out as needles across the whole texture.
+overlapped = [overlapping()]
+if overlapped[0]:
+    bpy.ops.uv.smart_project(angle_limit=math.radians(45), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+# The packer moves selected UVs only, and smart_project leaves none selected: until 2026-10-29 it moved
+# nothing and the islands touched.
+bpy.context.scene.tool_settings.use_uv_select_sync = False
+bpy.ops.mesh.select_all(action="SELECT")
+bpy.ops.uv.select_all(action="SELECT")
+# smart_project spreads what it projects over the whole square: projected again on their own, the pump's
+# 104 overlapping faces (1.4% of its surface) came out as big as all the rest and took 43% of the texels.
+bpy.ops.uv.average_islands_scale()
+# Quarter turns only: turned any way, lettering ran across the texel grid (the pump 2.48% noticeable, 1.61 so).
+bpy.ops.uv.pack_islands(rotate=True, rotate_method="CARDINAL", scale=True, margin_method="FRACTION", margin=GAP / BAKE, shape_method="CONCAVE")
+overlapped.append(overlapping())
 bpy.ops.object.mode_set(mode="OBJECT")
 
 
@@ -163,8 +205,26 @@ def shine(socket_name):
             p.inputs["Emission Strength"].default_value = 1.0
 
 
+def glows():
+    """Whether the heavy model gives off light of its own: Rodin's models carry all their colour that way
+    (black base colour, the picture in the emissive texture), and baked without it the pump came out black."""
+    for o in high:
+        for material in o.data.materials:
+            p = principled(material)
+            if p and p.inputs["Emission Strength"].default_value > 0 and (
+                    p.inputs["Emission Color"].links or any(p.inputs["Emission Color"].default_value[:3])):
+                return True
+    return False
+
+
 timings = {}
 maps = {}
+# Its own glow first, before shine() below rewires the emission to bake the other maps.
+if not NORMAL_ONLY and glows():
+    t = time.time()
+    maps["emissive"] = image("emissive", True)
+    run("EMIT", maps["emissive"])
+    timings["emissive"] = round(time.time() - t, 1)
 for name, kind, colour, extra in [
     *([] if NORMAL_ONLY else [("roughness", "ROUGHNESS", False, {})]),
     ("normal", "NORMAL", False, {"normal_space": "TANGENT"}),
@@ -207,7 +267,7 @@ if not NORMAL_ONLY:
 # Out go the baked maps and, for every light mesh, each triangle corner as Blender holds it: position,
 # normal (the smooth ones the normal map was baked against) and new UV. tools_node/graft.mjs puts them
 # into the light model itself; exporting from Blender instead redid rigs: CesiumMan stood 57% off.
-for name in ("normal",) if NORMAL_ONLY else ("baseColor", "metallicRoughness", "normal"):
+for name in ("normal",) if NORMAL_ONLY else ("baseColor", "metallicRoughness", "normal", *(("emissive",) if "emissive" in maps else ())):
     img = maps[name]
     img.filepath_raw = os.path.join(OUT, name + ".png")
     img.file_format = "PNG"
@@ -232,4 +292,4 @@ for o in low:
 np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
 with open(os.path.join(OUT, "corners.json"), "w") as fh:
     json.dump(meshes, fh)
-print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "seconds": round(time.time() - t0, 1), "passes": timings}}))
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "seconds": round(time.time() - t0, 1), "passes": timings}}))

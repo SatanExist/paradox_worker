@@ -117,6 +117,8 @@ const material = normalOnly
     .setNormalTexture(normalMap)
     .setMetallicFactor(1)
     .setRoughnessFactor(1);
+// A model that gave off light of its own (Rodin's: all its colour is there) keeps its glow, baked too.
+if (material && existsSync(join(bakeDir, "emissive.png"))) material.setEmissiveTexture(texture("emissive")).setEmissiveFactor([1, 1, 1]);
 
 let corners = 0;
 let vertices = 0;
