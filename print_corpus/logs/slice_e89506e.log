@@ -1,0 +1,44 @@
+recipe e89506e: 42 to slice
+[1/42] direct3ds2_knight          6h 44m 43s   66.2 g (support  31.9) outline smoothed  0.29 % lost  0.07 %  39s
+[2/42] hi3dgen_dog                8h 30m 59s  110.2 g (support  50.8) outline smoothed  0.08 % lost  0.02 %  32s
+[3/42] hi3dgen_dragon             9h 14m 29s  107.8 g (support  39.8) outline smoothed  0.18 % lost  0.02 %  34s
+[4/42] hi3dgen_snowman            2h 11m 14s   27.5 g (support   5.7) outline smoothed  0.53 % lost  0.10 %  10s
+[5/42] hi3dgen_space_bust          7h 0m 37s   86.1 g (support  31.8) outline smoothed  0.23 % lost  0.04 %  29s
+[6/42] hunyuan31_camera            4h 54m 2s  108.3 g (support   4.5) outline smoothed  0.40 % lost  0.07 %  17s
+[7/42] hunyuan31_drill             3h 4m 54s   41.1 g (support   5.6) outline smoothed  0.15 % lost  0.02 %  14s
+[8/42] hunyuan31_mech            14h 10m 58s  190.8 g (support  95.8) outline smoothed  0.26 % lost  0.06 %  58s
+[9/42] hunyuan31_scorpion         6h 30m 38s   73.1 g (support  40.2) outline smoothed  0.50 % lost  0.10 %  27s
+[10/42] hunyuan31_watch            1h 13m 46s   10.9 g (support   2.8) outline smoothed  0.88 % lost  0.17 %  8s
+[11/42] hunyuan_crystals           4h 37m 57s   52.7 g (support   6.7) outline smoothed  0.54 % lost  0.17 %  14s
+[12/42] hunyuan_lighthouse         4h 40m 33s   53.6 g (support  21.1) outline smoothed  0.28 % lost  0.07 %  22s
+[13/42] hunyuan_lowpoly             2h 25m 1s   24.9 g (support  10.4) outline smoothed  0.62 % lost  0.07 %  9s
+[14/42] hunyuan_magnum              3h 10m 5s   50.3 g (support  11.9) outline smoothed  0.76 % lost  0.20 %  8s
+[15/42] hunyuan_necromutant      1d 5h 3m 24s  265.5 g (support  91.8) outline smoothed  0.12 % lost  0.07 %  206s
+[16/42] hunyuan_operative          4h 30m 49s   55.5 g (support  19.5) outline smoothed  0.25 % lost  0.03 %  31s
+[17/42] hunyuan_truck              8h 36m 52s  137.1 g (support  16.2) outline smoothed  0.44 % lost  0.08 %  21s
+[18/42] meshy_pistol               3h 44m 31s   56.9 g (support   9.6) outline smoothed  0.48 % lost  0.17 %  12s
+[19/42] meshy_rover               13h 29m 32s  169.7 g (support  95.1) outline smoothed  0.94 % lost  0.26 %  70s
+[20/42] pixal3d_knight             3h 25m 23s   36.4 g (support  16.1) outline smoothed  0.48 % lost  0.05 %  17s
+[21/42] rodin_computer             6h 19m 31s  100.7 g (support  14.0) outline smoothed  0.54 % lost  0.13 %  28s
+[22/42] rodin_knight                8h 7m 45s   71.1 g (support  22.9) outline smoothed  0.22 % lost  0.18 %  45s
+[23/42] rodin_pump                 1h 58m 52s   28.7 g (support   4.5) outline smoothed  0.25 % lost  0.00 %  12s
+[24/42] rodin_skeleton              2h 43m 9s   34.3 g (support  16.0) outline smoothed  0.29 % lost  0.01 %  13s
+[25/42] rodin_spider               3h 56m 32s   52.5 g (support  14.3) outline smoothed  0.10 % lost  0.07 %  16s
+[26/42] step1x_knight               3h 17m 7s   38.2 g (support  13.9) outline smoothed  0.26 % lost  0.04 %  14s
+[27/42] trellis2_aquarium          2h 39m 43s   61.6 g (support   1.2) outline smoothed  0.24 % lost  0.00 %  8s
+[28/42] trellis2_armor             3h 30m 12s   39.0 g (support  17.9) outline smoothed  0.59 % lost  0.05 %  15s
+[29/42] trellis2_bust               8h 4m 12s  101.3 g (support  43.3) outline smoothed  0.38 % lost  0.05 %  45s
+[30/42] trellis2_chest              5h 3m 37s   75.4 g (support  16.2) outline smoothed  0.25 % lost  0.04 %  25s
+[31/42] trellis2_chest_low         4h 40m 20s   73.6 g (support  14.4) outline smoothed  0.35 % lost  0.03 %  19s
+[32/42] trellis2_crown             3h 44m 27s   28.7 g (support   7.8) outline smoothed  0.31 % lost  0.08 %  19s
+[33/42] trellis2_dragon            3h 35m 23s   45.2 g (support  12.3) outline smoothed  0.35 % lost  0.10 %  7s
+[34/42] trellis2_harbor         1d 4h 17m 27s  386.4 g (support  63.9) outline smoothed  0.67 % lost  0.20 %  111s
+[35/42] trellis2_knight            3h 43m 57s   40.6 g (support  19.2) outline smoothed  0.54 % lost  0.07 %  19s
+[36/42] trellis2_lattice       FAILED All objects are outside of the print volume.
+
+[37/42] trellis2_statue            9h 46m 28s   92.8 g (support  31.3) outline smoothed  0.54 % lost  0.06 %  53s
+[38/42] tripo_blaster              5h 39m 10s   67.1 g (support  27.3) outline smoothed  0.19 % lost  0.04 %  28s
+[39/42] tripo_pack                 2h 54m 12s   36.8 g (support   8.3) outline smoothed  0.44 % lost  0.04 %  10s
+[40/42] tripo_spellbook            2h 14m 35s   29.9 g (support   2.1) outline smoothed  0.37 % lost  0.02 %  13s
+[41/42] tripo_sword                   58m 29s   10.0 g (support   3.4) outline smoothed  2.00 % lost  0.59 %  5s
+[42/42] triposr_knight             2h 58m 34s   33.1 g (support  13.2) outline smoothed  0.22 % lost  0.01 %  10s
