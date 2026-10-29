@@ -68,6 +68,12 @@ CUT_STEP_MM = 0.1
 HOLD_MM2 = 20.0  # plate contact for the first layer to hold (upright models; one lying down is held by supports)
 LIP_MM2 = 25.0  # a cut may shave this much of a bottom ledge thin (soles: 2-20 mm²; a book cover, a bust rim: 60-100)
 BASE_MM = 2.0  # height of an added base
+SUPPORT_SLOPE_DEG = 40.0  # a face sloping less than this down from flat gets support (PrusaSlicer's MK4 default)
+SUPPORT_CELL_MM = 1.0  # a support column stands on the first surface below it within a cell this wide
+SUPPORT_SAMPLES_PER_MM2 = 8.0  # surface points for the support estimate (fewer, and big models read wrong)
+TURN_CONTACT_MM2 = 50.0  # turned for printing, it must still sit on the plate with this much
+TURN_GAIN = 0.3  # turning is suggested only for this much less support (the estimate reads high by ~0.7x)
+TURN_MIN_CM3 = 3.0  # and at least this much
 
 
 @dataclass(frozen=True)
@@ -1150,6 +1156,80 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
                  "cutCm3": round(cut_cm3, 3)})
     log(f" stand: {info}")
     return res, T, info
+
+
+# --- turning for print ---------------------------------------------------------------------------
+
+def _support(pts, nrm, per, down):
+    """Support for printing with `down` pointing at the plate, from surface points: (volume mm³, plate contact
+    mm², height mm). A point whose face slopes down less than SUPPORT_SLOPE_DEG off flat and is above the plate
+    needs a column down to the first face below it in its SUPPORT_CELL_MM cell, or to the plate; the volume is
+    the columns under each point's footprint. Against PrusaSlicer on the corpus (auto supports, 0.20 mm
+    STRUCTURAL): about 0.41 g of support per cm³ of this, r 0.86."""
+    import numpy as np
+    import trimesh
+
+    R = trimesh.geometry.align_vectors(down, [0, -1.0, 0])[:3, :3]
+    P, N = pts @ R.T, nrm @ R.T
+    y = P[:, 1] - P[:, 1].min()
+    facing = -N[:, 1]  # 1 straight down
+    over = (facing > np.cos(np.radians(SUPPORT_SLOPE_DEG))) & (y > 0.2)
+    cell = np.floor(P[:, [0, 2]] / SUPPORT_CELL_MM).astype(np.int64)
+    key = (cell[:, 0] - cell[:, 0].min()) * 1_000_003 + (cell[:, 1] - cell[:, 1].min())
+    order = np.lexsort((y, key))
+    k, yy = key[order], y[order]
+    start = np.r_[True, k[1:] != k[:-1]]
+    lift = (np.cumsum(start) - 1) * 1e6  # each cell its own range, so the running max doesn't cross cells
+    floor = np.maximum.accumulate(np.where(N[order, 1] > 0, yy + lift, lift - 1.0)) - lift  # highest up-facing so far
+    below = np.r_[-1.0, floor[:-1]]
+    below[start] = -1.0
+    column = np.zeros(len(y))
+    column[order] = yy - np.maximum(below, 0.0)
+    return (float((per * facing * column)[over].sum()), float(per * ((y < 0.2) & (facing > 0.9)).sum()), float(np.ptp(y)))
+
+
+def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
+    """How to turn the model on the plate for less support. A figure prints as it stands, but an object stood
+    or laid for the shelf often needs far less support another way up: hunyuan31_drill lying on its side 19.6 g
+    -> 5.3 g of support (PrusaSlicer), hunyuan_truck upside down 34 -> 16 g. Down directions tried: as it
+    stands, the 40 biggest faces of its hull, 100 spread over the sphere; turned, it must keep TURN_CONTACT_MM2
+    on the plate. A quick pass on a few points picks six, the full estimate (SUPPORT_SAMPLES_PER_MM2) decides:
+    sparse points read trellis2_harbor 15 % better on its side, PrusaSlicer says 56 % worse, and so do dense
+    points. Suggested only past TURN_GAIN, as the estimate reads gains high (drill 84 % -> 73 % for real,
+    rodin_spider 41 % -> 13 %). `m` is closed, in mm, Y up as it stands. Returns {"supportCm3": as it stands,
+    and when turning pays, "turned": {"down": the direction to put down (unit, the file's axes), "rotation":
+    3x3 taking the file's axes to the turned ones (down -> -Y), "supportCm3", "contactMm2", "heightMm"}}.
+    Only for FDM: resin prints hang off the plate on supports whichever way up."""
+    import numpy as np
+    import trimesh
+
+    t0 = time.time()
+    k = np.arange(100) + 0.5
+    phi, th = np.arccos(1 - 2 * k / 100), np.pi * (1 + 5**0.5) * k
+    hull = m.convex_hull
+    downs = np.vstack([[[0, -1.0, 0]], hull.face_normals[np.argsort(-hull.area_faces, kind="stable")[:40]],
+                       np.c_[np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)]])
+    nrm = np.asarray(m.face_normals, np.float64)
+
+    def estimate(count, which):
+        pts, fi = trimesh.sample.sample_surface(m, count, seed=SEED)
+        return {i: _support(pts, nrm[fi], float(m.area) / count, downs[i]) for i in which}
+
+    quick = estimate(100_000, range(len(downs)))
+    fits = [i for i in quick if i == 0 or quick[i][1] >= TURN_CONTACT_MM2]
+    six = sorted(fits, key=lambda i: (quick[i][0], i))[:6]
+    full = estimate(int(np.clip(float(m.area) * SUPPORT_SAMPLES_PER_MM2, 100_000, 2_000_000)), sorted({0, *six}))
+    fits = [i for i in full if i == 0 or full[i][1] >= TURN_CONTACT_MM2]
+    best = min(fits, key=lambda i: (round(full[i][0] / 1000, 1), full[i][2], i))
+    stands, turned = full[0][0], full[best][0]
+    info: dict[str, Any] = {"supportCm3": round(stands / 1000, 1)}
+    if best != 0 and turned <= (1 - TURN_GAIN) * stands and stands - turned >= TURN_MIN_CM3 * 1000:
+        R = trimesh.geometry.align_vectors(downs[best], [0, -1.0, 0])[:3, :3]
+        info["turned"] = {"down": [round(float(v), 4) for v in downs[best]], "rotation": np.round(R, 5).tolist(),
+                          "supportCm3": round(turned / 1000, 1), "contactMm2": round(full[best][1]),
+                          "heightMm": round(full[best][2], 1)}
+    log(f" print turn: {info} ({time.time() - t0:.0f}s)")
+    return info
 
 
 # --- floating pieces -------------------------------------------------------------------------------

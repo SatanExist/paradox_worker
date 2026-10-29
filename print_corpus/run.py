@@ -132,6 +132,7 @@ def run_one(m: dict, rec: str, printer: str = "fdm") -> dict:
         "fineDetail": report.get("fineDetail"),
         "thinSpots": report.get("thinSpots"),
         "stand": report.get("stand"),
+        "printTurn": report.get("printTurn"),
     })
     pick = next((c for c in solid.get("candidates", []) if c.get("method") == row["method"]), {})
     row["changedShare"], row["lostShare"] = pick.get("changedShare"), pick.get("lostShare")

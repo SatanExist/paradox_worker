@@ -3,7 +3,8 @@
   python slice_check.py [id ...]       results in out/ not yet sliced for the current recipe
   python slice_check.py --again ...    re-slice even if this recipe already has a row
 
-Each result (out/<id>.glb, the print-ready body) goes to PrusaSlicer's command line as a Z-up STL, with a
+Each result (out/<id>.glb, the print-ready body) goes to PrusaSlicer's command line as a Z-up STL, turned the
+way up the report suggests (printTurn) if it does, with a
 stock profile (Original Prusa MK4 Input Shaper, 0.4 mm nozzle, 0.20 mm STRUCTURAL, Prusament PLA) and
 automatic supports. From the G-code: print time, filament in grams (and how much of it is support), layers,
 and how much of the model's outline the nozzle actually traces: on each layer the model's own cross-section
@@ -48,11 +49,16 @@ NOT_MODEL = ("Support material", "Support material interface", "Skirt/Brim", "Wi
 TIME_LIMIT_S = 15 * 60
 
 
-def stl_of(glb: Path, stl: Path) -> trimesh.Trimesh:
-    """The body in mm, Z up (glTF is Y up, metres), standing on z = 0."""
+def stl_of(glb: Path, stl: Path, turn=None) -> trimesh.Trimesh:
+    """The body in mm, Z up (glTF is Y up, metres), standing on z = 0; turned first by `turn` (3x3, the report's
+    printTurn rotation: the way up it prints with least support) when given."""
     sc = trimesh.load(glb)
     m = (sc.geometry.get("body") if isinstance(sc, trimesh.Scene) else sc).copy()
     m.apply_scale(1000.0)
+    if turn is not None:
+        R = np.eye(4)
+        R[:3, :3] = np.asarray(turn, np.float64)
+        m.apply_transform(R)
     m.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
     m.apply_translation([0, 0, -m.bounds[0, 2]])
     m.export(stl)
@@ -190,16 +196,16 @@ def coverage(man, shift, layers):
     return share(smoothed), share(missed), [z for c, z in worst[:5] if c]
 
 
-def slice_one(mid: str, rec: str) -> dict:
+def slice_one(mid: str, rec: str, turn=None) -> dict:
     t0 = time.time()
     with tempfile.TemporaryDirectory() as tmp:
         stl, gcode = Path(tmp) / f"{mid}.stl", Path(tmp) / f"{mid}.gcode"
-        m = stl_of(HERE / "out" / f"{mid}.glb", stl)
+        m = stl_of(HERE / "out" / f"{mid}.glb", stl, turn)
         # placed by the slicer itself (its --center refuses some large models as outside the bed)
         cmd = [str(PRUSA), "--datadir", DATADIR, *PROFILE, "--export-gcode", "--support-material",
                "--support-material-auto", "--output", str(gcode), str(stl)]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIME_LIMIT_S)
-        row: dict = {"id": mid, "recipe": rec, "profile": PROFILE[1::2]}
+        row: dict = {"id": mid, "recipe": rec, "profile": PROFILE[1::2], "turned": turn is not None}
         if p.returncode != 0 or not gcode.exists():
             row.update({"ok": False, "error": (p.stderr or p.stdout)[-400:], "secs": round(time.time() - t0)})
             return row
@@ -239,9 +245,13 @@ def main() -> None:
         done = {(r["id"], r["recipe"]) for r in map(json.loads, path.read_text(encoding="utf-8").splitlines())}
     todo = ids or sorted(f.stem for f in (HERE / "out").glob("*.glb") if "." not in f.stem and not f.stem.endswith("-alternate"))
     todo = [i for i in todo if again or (i, rec) not in done]
+    turns = {}  # the way up results.jsonl suggests for this recipe
+    for r in map(json.loads, (HERE / "results.jsonl").read_text(encoding="utf-8").splitlines()):
+        if r.get("recipe") == rec and ((r.get("printTurn") or {}).get("turned")):
+            turns[r["id"]] = r["printTurn"]["turned"]["rotation"]
     print(f"recipe {rec}: {len(todo)} to slice", flush=True)
     for k, mid in enumerate(todo, 1):
-        row = slice_one(mid, rec)
+        row = slice_one(mid, rec, turns.get(mid))
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
         print(f"[{k}/{len(todo)}] {mid:22} " + (f"{row['printTime']:>14} {row['filamentG']:6.1f} g (support {row['supportG']:5.1f}) "
