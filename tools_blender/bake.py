@@ -1,0 +1,331 @@
+"""Bake a heavy model's look onto its light game version, in Blender (headless).
+
+  blender -b --factory-startup -P tools_blender/bake.py -- <high.glb> <low.glb> <out dir> '{"size":2048}'
+
+The light version gets new UVs of its own (its cut ignored the old seams) and textures baked from the
+heavy one, ray by ray: base colour, roughness, metalness and a tangent normal map that carries the shape
+the cut took away. Writes the maps (PNG) and the light model's triangle corners with their new UVs and
+normals into <out dir>, for tools_node/graft.mjs to put into the light model. Same files and settings
+give the same pixels: Cycles on the CPU with a fixed seed and sample count. Prints a JSON line on stdout.
+"""
+
+import json
+import math
+import os
+import sys
+import time
+
+import bmesh
+import bpy
+import numpy as np
+from mathutils import Vector
+
+argv = sys.argv[sys.argv.index("--") + 1:]
+HIGH, LOW, OUT = argv[:3]
+PARAMS = json.loads(argv[3]) if len(argv) > 3 else {}
+SIZE = int(PARAMS.get("size", 2048))
+# A model coloured by its materials alone, no textures: only the normal map is baked, the materials stay.
+# Baked into one atlas, BrainStem's 59 flat colours came out 86% of the picture off.
+NORMAL_ONLY = bool(PARAMS.get("normalOnly"))
+SAMPLES = int(PARAMS.get("samples", 8))
+# How far rays look for the heavy surface, as a share of the model's size: they start this far out and
+# look as far in. At 2% rays from the Rodin pump's wall met the hose hanging in front of it first and drew
+# the hose onto the wall, and a groove's walls drew each other; at 0.5% the pump came out clean (2.62 ->
+# 1.89% noticeable) and mech, drill and watch closer too (6.79 -> 6.51, 1.84 -> 1.80, 4.92 -> 4.70).
+# A cage per corner, pushed out as far as the heavy surface lay near it, cleaned the pump as well but
+# took mech to 13.11% whatever its cap (2026-10-29).
+REACH = float(PARAMS.get("reach", 0.005))
+# Baked this many times bigger, then shrunk: new UVs spend the texture less thriftily than the
+# generator's own, and fine engraving came out noisy at the final size.
+SUPER = int(PARAMS.get("supersample", 1))
+BAKE = SIZE * SUPER
+# Islands lie GAP texels apart, so one island's edge doesn't take its neighbour's colour, and the bake paints
+# MARGIN texels past their edges, so mip-maps don't bleed the background in. The gap is per island and
+# thousands of islands pay it: on the pump at 10k, 1 texel left 59% of the texture to the model, 2 left
+# 54%, 4 left 49% (none: 63%). smart_project's own margin (32 px a side at 2048) left it 1-16%.
+GAP = max(1, BAKE // 2048)
+MARGIN = max(2, BAKE // 256)
+
+t0 = time.time()
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def imported(path):
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=path)
+    # Meshes of the model only: for a rigged model the importer adds a sphere to draw the bones with, in a
+    # collection it keeps out of renders (glTF_not_exported).
+    return [o for o in bpy.data.objects if o not in before and o.type == "MESH" and o.data.polygons
+            and not o.hide_render and not any(c.hide_render for c in o.users_collection)]
+
+
+high = imported(HIGH)
+# game.mjs stood the light one on the floor: move the heavy one the same way (glTF's Y up is Blender's Z).
+sx, sy, sz = PARAMS.get("shift", [0, 0, 0])
+for o in bpy.data.objects:
+    if o.parent is None:
+        o.location += Vector((sx, -sz, sy))
+bpy.context.view_layer.update()
+low = imported(LOW)
+if not high or not low:
+    raise SystemExit("no meshes to bake")
+
+# Rigged and morphing models are baked as they stand at rest: bones in their bind pose, shape keys off.
+armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+for arm in armatures:
+    arm.data.pose_position = "REST"
+for o in high + low:
+    o.show_only_shape_key = bool(o.data.shape_keys)
+    o.active_shape_key_index = 0
+bpy.context.view_layer.update()
+
+corners = [o.matrix_world @ Vector(c) for o in high for c in o.bound_box]
+extent = max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)) or 1.0
+
+scene = bpy.context.scene
+scene.render.engine = "CYCLES"
+scene.cycles.device = "CPU"
+scene.cycles.samples = SAMPLES
+scene.cycles.seed = 0
+scene.cycles.use_denoising = False
+bake = scene.render.bake
+bake.use_selected_to_active = True
+bake.use_cage = False
+bake.cage_extrusion = REACH * extent
+bake.max_ray_distance = 2 * REACH * extent
+bake.margin = MARGIN
+bake.margin_type = "EXTEND"
+
+# The light version: smooth normals from its own shape (what the normal map is measured against),
+# new UVs shared by all its parts, old UVs gone.
+bpy.ops.object.select_all(action="DESELECT")
+for o in low:
+    o.select_set(True)
+    bpy.context.view_layer.objects.active = o
+    o.data.shade_smooth()
+    if o.data.has_custom_normals:
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    for layer in list(o.data.uv_layers):
+        o.data.uv_layers.remove(layer)
+    o.data.uv_layers.new(name="UVMap")
+bpy.ops.object.mode_set(mode="EDIT")
+bpy.ops.mesh.select_all(action="SELECT")
+bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+# Edges sharper than SHARP degrees stay sharp (normals split there), so the normal map needn't bend a
+# smoothed corner back: the Rodin computer at 200k shaded 1.94 -> 1.78% off, creases 1.06 -> 0.58%, its
+# panels' edges crisp again. Cutting the texture along them as well took 13% of its texels and drew dark
+# jags on the edges (look 1.52 -> 2.84%).
+SHARP = float(PARAMS.get("sharp", 45))
+if SHARP:
+    bpy.ops.mesh.select_mode(type="EDGE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.mesh.edges_select_sharp(sharpness=math.radians(SHARP))
+    bpy.ops.mesh.mark_sharp()
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="SELECT")
+
+
+def overlapping():
+    """Select the faces whose UVs lie over others' (the selection shared with the mesh), and count them.
+    Slivers of next to no area are left out: projected on their own they came out as needles that took
+    room on the texture from everything else."""
+    bpy.context.scene.tool_settings.use_uv_select_sync = True
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.uv.select_overlap()
+    count = 0
+    for o in low:
+        mesh = bmesh.from_edit_mesh(o.data)
+        for f in mesh.faces:
+            if f.select and f.calc_area() < 1e-6 * extent**2:
+                f.select_set(False)
+            count += f.select
+        bmesh.update_edit_mesh(o.data)
+    return count
+
+
+# Projected flat, a fold of the light surface lands on itself: where the cut joined the pump's thin spout
+# to the wall behind it at 10k, spout and wall shared texels and the wall, baked last, drew dark streaks
+# down the spout. Faces lying over others are projected again on their own, once, at a narrower angle: a
+# second round met only slivers of no area, which came out as needles across the whole texture.
+overlapped = [overlapping()]
+if overlapped[0]:
+    bpy.ops.uv.smart_project(angle_limit=math.radians(45), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+# The packer moves selected UVs only, and smart_project leaves none selected: until 2026-10-29 it moved
+# nothing and the islands touched.
+bpy.context.scene.tool_settings.use_uv_select_sync = False
+bpy.ops.mesh.select_all(action="SELECT")
+bpy.ops.uv.select_all(action="SELECT")
+# smart_project spreads what it projects over the whole square: projected again on their own, the pump's
+# 104 overlapping faces (1.4% of its surface) came out as big as all the rest and took 43% of the texels.
+bpy.ops.uv.average_islands_scale()
+# Quarter turns only: turned any way, lettering ran across the texel grid (the pump 2.48% noticeable, 1.61 so).
+bpy.ops.uv.pack_islands(rotate=True, rotate_method="CARDINAL", scale=True, margin_method="FRACTION", margin=GAP / BAKE, shape_method="CONCAVE")
+overlapped.append(overlapping())
+bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def image(name, colour):
+    img = bpy.data.images.new(name, BAKE, BAKE, alpha=False, float_buffer=False)
+    img.colorspace_settings.name = "sRGB" if colour else "Non-Color"
+    return img
+
+
+# Every light part gets one material whose active node is the image being baked into.
+target = bpy.data.materials.new("baked")
+target.use_nodes = True
+nodes = target.node_tree.nodes
+slot = nodes.new("ShaderNodeTexImage")
+nodes.active = slot
+for o in low:
+    o.data.materials.clear()
+    o.data.materials.append(target)
+
+
+def principled(material):
+    return next((n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if material and material.use_nodes else None
+
+
+def run(kind, img, **extra):
+    slot.image = img
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in high:
+        o.select_set(True)
+    for i, o in enumerate(low):
+        o.select_set(True)
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.bake(type=kind, use_clear=(i == 0), margin=MARGIN, **extra)
+        o.select_set(False)
+
+
+def shine(socket_name):
+    """Make the heavy model glow with one of its inputs (as it is, texture or value) and nothing else."""
+    for o in high:
+        for material in o.data.materials:
+            p = principled(material)
+            if not p:
+                continue
+            tree = material.node_tree
+            for link in list(p.inputs["Emission Color"].links):
+                tree.links.remove(link)
+            given = p.inputs[socket_name]
+            if given.links:
+                tree.links.new(given.links[0].from_socket, p.inputs["Emission Color"])
+            else:
+                v = given.default_value
+                p.inputs["Emission Color"].default_value = tuple(v) if hasattr(v, "__len__") else (v, v, v, 1)
+            p.inputs["Emission Strength"].default_value = 1.0
+
+
+def glows():
+    """Whether the heavy model gives off light of its own: Rodin's models carry all their colour that way
+    (black base colour, the picture in the emissive texture), and baked without it the pump came out black."""
+    for o in high:
+        for material in o.data.materials:
+            p = principled(material)
+            if p and p.inputs["Emission Strength"].default_value > 0 and (
+                    p.inputs["Emission Color"].links or any(p.inputs["Emission Color"].default_value[:3])):
+                return True
+    return False
+
+
+timings = {}
+maps = {}
+# Its own glow first, before shine() below rewires the emission to bake the other maps.
+if not NORMAL_ONLY and glows():
+    t = time.time()
+    maps["emissive"] = image("emissive", True)
+    run("EMIT", maps["emissive"])
+    timings["emissive"] = round(time.time() - t, 1)
+for name, kind, colour, extra in [
+    *([] if NORMAL_ONLY else [("roughness", "ROUGHNESS", False, {})]),
+    ("normal", "NORMAL", False, {"normal_space": "TANGENT"}),
+]:
+    t = time.time()
+    maps[name] = image(name, colour)
+    run(kind, maps[name], **extra)
+    timings[name] = round(time.time() - t, 1)
+
+# Base colour and metalness are baked as light the heavy model gives off: Cycles' diffuse colour pass
+# is base colour x (1 - metalness), which turned metal parts black.
+for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Color", True), ("metallic", "Metallic", False)]:
+    t = time.time()
+    shine(socket_name)
+    maps[name] = image(name, colour)
+    run("EMIT", maps[name])
+    timings[name] = round(time.time() - t, 1)
+
+# The normal map tilts the light model's surface at most TILT degrees. Steeper texels are rays that met the
+# side walls of a groove or a step the cut flattened: they drew white streaks and black rims along the Rodin
+# computer's vents and screen bars and ragged spots on its screws, which went at 30 (light 1.78 -> 1.58%,
+# creases 0.58 -> 0.28%; 45 and 60 left the black rims). The bench stayed level, the dog's wrinkles too
+# (1.17%), the crown came closer (4.00 -> 3.83%); drill and watch moved 0.07 the other way (2026-10-29).
+# Round parts a very light cut leaves to the map lose little: at 2k the magnum's cylinder shaded 1.68 -> 1.77%
+# off, the same to the eye, and camera and watch came closer. Capping only strips up to 2 or 4 texels wide
+# left most of the computer's streaks (light 1.76, 1.71%): they are broader than that.
+TILT = float(PARAMS.get("tilt", 30))
+steep = np.zeros(0, dtype=bool)
+if TILT:
+    img = maps["normal"]
+    a = np.empty(img.size[0] * img.size[1] * 4, dtype=np.float32)
+    img.pixels.foreach_get(a)
+    a = a.reshape(-1, 4)
+    v = a[:, :3] * 2 - 1
+    lim = math.cos(math.radians(TILT))
+    steep = v[:, 2] < lim
+    xy = v[steep, :2]
+    v[steep, :2] = xy * (math.sqrt(1 - lim * lim) / np.linalg.norm(xy, axis=1, keepdims=True).clip(1e-6))
+    v[steep, 2] = lim
+    a[:, :3] = (v + 1) / 2
+    img.pixels.foreach_set(a.ravel())
+
+# glTF keeps roughness in G and metalness in B of one texture.
+for img in maps.values():
+    if SUPER > 1:
+        img.scale(SIZE, SIZE)
+
+
+def pixels(img):
+    a = np.empty(SIZE * SIZE * 4, dtype=np.float32)
+    img.pixels.foreach_get(a)
+    return a.reshape(-1, 4)
+
+
+if not NORMAL_ONLY:
+    packed = np.zeros((SIZE * SIZE, 4), dtype=np.float32)
+    packed[:, 1] = pixels(maps["roughness"])[:, 0]
+    packed[:, 2] = pixels(maps["metallic"])[:, 0]
+    packed[:, 3] = 1.0
+    maps["metallicRoughness"] = bpy.data.images.new("metallicRoughness", SIZE, SIZE, alpha=False, float_buffer=False)
+    maps["metallicRoughness"].colorspace_settings.name = "Non-Color"
+    maps["metallicRoughness"].pixels.foreach_set(packed.ravel())
+
+# Out go the baked maps and, for every light mesh, each triangle corner as Blender holds it: position,
+# normal (the smooth ones the normal map was baked against) and new UV. tools_node/graft.mjs puts them
+# into the light model itself; exporting from Blender instead redid rigs: CesiumMan stood 57% off.
+for name in ("normal",) if NORMAL_ONLY else ("baseColor", "metallicRoughness", "normal", *(("emissive",) if "emissive" in maps else ())):
+    img = maps[name]
+    img.filepath_raw = os.path.join(OUT, name + ".png")
+    img.file_format = "PNG"
+    img.save()
+meshes = []
+corners = []
+for o in low:
+    mesh = o.data
+    if any(len(poly.vertices) != 3 for poly in mesh.polygons):
+        raise SystemExit("the light model came in with faces that aren't triangles")
+    n = len(mesh.loops)
+    co = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co)
+    loop_vertex = np.empty(n, dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loop_vertex)
+    normals = np.empty(n * 3, dtype=np.float32)
+    mesh.corner_normals.foreach_get("vector", normals)
+    uv = np.empty(n * 2, dtype=np.float32)
+    mesh.uv_layers.active.data.foreach_get("uv", uv)
+    corners.append(np.hstack([co.reshape(-1, 3)[loop_vertex], normals.reshape(-1, 3), uv.reshape(-1, 2)]).astype(np.float32))
+    meshes.append({"name": mesh.name, "corners": n})
+np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
+with open(os.path.join(OUT, "corners.json"), "w") as fh:
+    json.dump(meshes, fh)
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings}}))

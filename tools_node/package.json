@@ -2,12 +2,14 @@
   "name": "paradox-tools-node",
   "private": true,
   "type": "module",
-  "description": "glTF helpers for the tools worker: unpack Draco / meshopt / quantized GLBs so trimesh and pymeshlab can read them.",
+  "description": "glTF helpers for the tools worker: unpack Draco / meshopt / quantized GLBs so trimesh and pymeshlab can read them; game prep (game.mjs: simplify, shrink textures with sharp; graft.mjs: put baked maps on the cut; pose.mjs: the model in its clips, with three.js).",
   "dependencies": {
     "@gltf-transform/core": "^4.2.1",
     "@gltf-transform/extensions": "^4.2.1",
     "@gltf-transform/functions": "^4.5.1",
     "draco3dgltf": "^1.5.7",
-    "meshoptimizer": "^0.22.0"
+    "meshoptimizer": "^1.3.0",
+    "sharp": "^0.35.5",
+    "three": "0.170.0"
   }
 }

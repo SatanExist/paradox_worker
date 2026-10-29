@@ -58,6 +58,7 @@ from studio_bridge.geo import HunyuanGeoBlocked, country_from_headers  # noqa: E
 from studio_bridge.product_multi_ux import studio_copy_bundle  # noqa: E402
 from studio_bridge.r2_public import R2NotConfiguredError, upload_public_file  # noqa: E402
 from studio_bridge.text2image import Text2ImageNotConfiguredError  # noqa: E402
+from studio_bridge.tools_advisor import AdviceError, advise  # noqa: E402
 from studio_bridge.tools_jobs import (  # noqa: E402
     ToolsNotConfiguredError,
     create_tool_job,
@@ -146,6 +147,17 @@ class ToolJobRequest(BaseModel):
     modelUrl: str
     params: dict = Field(default_factory=dict)
     outputKey: str
+
+
+class AdviceView(BaseModel):
+    label: str = Field(max_length=80)
+    png: str = Field(max_length=6_000_000)  # base64
+
+
+class AdviceRequest(BaseModel):
+    reports: list[dict] = Field(min_length=1, max_length=10)
+    views: list[AdviceView] = Field(default_factory=list, max_length=8)
+    goal: str | None = Field(default=None, max_length=300)
 
 
 class CreateJobRequest(BaseModel):
@@ -453,6 +465,28 @@ def post_tool_job(body: ToolJobRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+
+
+@app.post("/api/tools/advise")
+def post_tool_advice(body: AdviceRequest) -> dict:
+    """Claude's advice on a game_prep result: verdict, issues, the run to try next. Advice only."""
+    import base64
+    import binascii
+
+    import anthropic
+
+    try:
+        views = [(v.label, base64.b64decode(v.png, validate=True)) for v in body.views]
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="views must be base64 PNG") from exc
+    try:
+        return advise(body.reports, views, body.goal)
+    except anthropic.AuthenticationError as exc:
+        raise HTTPException(status_code=501, detail="Claude API key is not set up") from exc
+    except (AdviceError, anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs/{job_id}")

@@ -3,16 +3,16 @@
 # Tags: ghcr.io/satanexist/paradox_worker:tools-sha-<short>
 #
 # Kept small on purpose: trimesh + pymeshlab cover print prep, libigl (its CGAL booleans) + cgal (Alpha Wrap) the
-# solid, scikit-image the voxel fallback; Node + gltf-transform only unpack
-# compressed GLBs (Draco / meshopt / quantized) before trimesh reads them. Blender (headless)
-# goes in when the first tool that needs it does, not before.
+# solid, scikit-image the voxel fallback; Node + gltf-transform unpack compressed GLBs
+# (Draco / meshopt / quantized) before trimesh reads them and run game prep
+# (game.mjs: simplify + sharp for textures). Blender (headless) goes in its own image.
 
 # gltf-transform and its decoders are plain JS + wasm: installed here, copied over with the node binary.
 FROM node:20-slim AS tools_node
 WORKDIR /app/tools_node
 COPY tools_node/package.json tools_node/package-lock.json ./
 RUN npm ci --omit=dev
-COPY tools_node/decode.mjs ./
+COPY tools_node/decode.mjs tools_node/game.mjs tools_node/graft.mjs tools_node/pose.mjs ./
 
 FROM python:3.11-slim
 
@@ -44,7 +44,7 @@ COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
 RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
-    cd /app/tools_node && node -e "import('@gltf-transform/core').then(() => console.log('gltf-transform ok'))"
+    cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp'), import('three')]).then(([, s, t]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp, 'three', t.REVISION))"
 
 ARG PARADOX_BUILD_SHA=dev
 ENV PARADOX_BUILD_SHA=${PARADOX_BUILD_SHA}
