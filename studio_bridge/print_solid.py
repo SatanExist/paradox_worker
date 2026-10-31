@@ -889,7 +889,10 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         try:
             m, extra = fn(orig, repaired, shared, log)
         except Exception as exc:
-            log(f"  {name} failed: {exc}")
+            import traceback
+
+            where = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno} {f.name}" for f in reversed(traceback.extract_tb(exc.__traceback__)[-4:]))
+            log(f"  {name} failed: {exc} (at {where})")
             return
         t2 = time.time()
         c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree), **extra, "secs": round(time.time() - t1, 1)}
