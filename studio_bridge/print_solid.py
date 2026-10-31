@@ -30,8 +30,6 @@ When every result is paper the report says so (thinWalls). Lengths are in mm at 
 
 from __future__ import annotations
 
-import os
-import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -401,13 +399,22 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
             iv.append(c)
             polys.append(iv)
         alpha_wrap_3(pts, polys, alpha, offset, P)
-    fd, name = tempfile.mkstemp(suffix=".off")
-    os.close(fd)
-    try:
-        P.write_to_file(name)  # the bindings have no array export; OFF is a few seconds even at 1M faces
-        return trimesh.load(name, process=False)
-    finally:
-        os.unlink(name)
+    # The bindings have no array export. Their OFF writer took longer than the wraps themselves on big shells
+    # (25 s at 0.86M faces, harbor 204 s over 8 wraps), so the mesh is read off the handles, in the writer's
+    # order and rounded to the 5 significant digits it wrote: the same vertices and faces, byte for byte.
+    X = []
+    for i, v in enumerate(P.vertices()):
+        v.set_id(i)
+        p = v.point()
+        X.append((p.x(), p.y(), p.z()))
+    Fo = []
+    for f in P.facets():
+        h = f.halfedge()
+        a = h.vertex().id()
+        h = h.next()
+        Fo.append((a, h.vertex().id(), h.next().vertex().id()))
+    V5 = np.array([float(f"{x:.5g}") for x in np.asarray(X, np.float64).ravel()], np.float64).reshape(-1, 3)
+    return trimesh.Trimesh(V5, np.asarray(Fo, np.int64).reshape(-1, 3), process=False)
 
 
 def _bridge(m, log: Log, reach: float = BRIDGE_REACH_MM):
@@ -424,12 +431,19 @@ def _bridge(m, log: Log, reach: float = BRIDGE_REACH_MM):
     main = parts[0]
     cent = main.triangles_center
     pieces, bridged = [main], 0
-    for q in parts[1:]:
+    # every piece's distance to the body in one call: the body's tree is built once, not once a piece
+    ends = np.cumsum([len(q.vertices) for q in parts[1:]])
+    d2 = igl.point_mesh_squared_distance(np.vstack([q.vertices for q in parts[1:]]), main.vertices, main.faces)[0]
+    for q, lo_i, hi_i in zip(parts[1:], np.r_[0, ends[:-1]], ends):
         pieces.append(q)
-        gap = float(np.sqrt(igl.point_mesh_squared_distance(q.vertices, main.vertices, main.faces)[0].min()))
+        gap = float(np.sqrt(d2[lo_i:hi_i].min()))
         if gap > reach or gap < 1e-3:  # too far to tie, or already touching: the union joins those
             continue
-        near = np.sqrt(igl.point_mesh_squared_distance(cent, q.vertices, q.faces)[0]) < gap + 1.0
+        # only body faces inside the piece's box grown by the reach can be that close
+        lo, hi = q.bounds[0] - (gap + 1.0), q.bounds[1] + (gap + 1.0)
+        box = np.nonzero(((cent >= lo) & (cent <= hi)).all(axis=1))[0]
+        near = np.zeros(len(cent), dtype=bool)
+        near[box] = np.sqrt(igl.point_mesh_squared_distance(cent[box], q.vertices, q.faces)[0]) < gap + 1.0
         patch = trimesh.Trimesh(main.vertices, main.faces[near], process=False)
         patch.remove_unreferenced_vertices()
         both = trimesh.util.concatenate([q, patch])
@@ -1280,24 +1294,32 @@ def split_floating(mesh, mm_per_unit: float, printer: Printer = PRINTERS[DEFAULT
     BV = np.asarray(mesh.vertices, np.float64)
     bF = F[in_body]
     base = float(BV[np.unique(bF), 1].min())
-    floating = []
+    # each piece's faces, in their order in the mesh; the body's trees are built once for all pieces, not per piece
+    order = np.argsort(lab, kind="stable")
+    ends = np.cumsum(np.bincount(lab, minlength=n))
+    starts = ends - np.bincount(lab, minlength=n)
+    faces_of = lambda k: F[order[starts[k]:ends[k]]]  # noqa: E731
+    apart = []
     for k in np.argsort(-vol):
         if k == body or vol[k] <= 0:  # inside-out shells are pockets, not pieces
             continue
-        f = F[lab == k]
-        v = BV[np.unique(f)]
-        if _rests_on_plate(BV[f], base, mm_per_unit, printer.layer_mm):  # a separate part, not debris
+        if _rests_on_plate(BV[faces_of(k)], base, mm_per_unit, printer.layer_mm):  # a separate part, not debris
             continue
-        if igl.winding_number(BV, bF, v[:1])[0] > 0.5:  # inside the body
-            continue
-        floating.append(k)
+        apart.append(k)
+    if apart:  # a vertex of each piece: inside the body or not
+        inside = igl.winding_number(BV, bF, BV[[int(faces_of(k).min()) for k in apart]]) > 0.5
+        floating = [k for k, i in zip(apart, inside) if not i]
+    else:
+        floating = []
     if not floating:
         return _lean(mesh), None, []
     about = []
-    for k in floating:
-        v = BV[np.unique(F[lab == k])]
-        probe = v[:: max(1, len(v) // 500)]
-        gap = float(np.sqrt(igl.point_mesh_squared_distance(probe, BV, bF)[0].min()))
+    verts = [BV[np.unique(faces_of(k))] for k in floating]
+    probes = [v[:: max(1, len(v) // 500)] for v in verts]
+    d2 = igl.point_mesh_squared_distance(np.vstack(probes), BV, bF)[0]
+    at = np.cumsum([0] + [len(p) for p in probes])
+    for j, (k, v) in enumerate(zip(floating, verts)):
+        gap = float(np.sqrt(d2[at[j]:at[j + 1]].min()))
         lo, hi = v.min(0), v.max(0)
         about.append({
             "volumeCm3": round(float(vol[k]) * mm_per_unit**3 / 1000, 3),
