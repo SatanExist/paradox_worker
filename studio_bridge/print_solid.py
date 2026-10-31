@@ -30,6 +30,7 @@ When every result is paper the report says so (thinWalls). Lengths are in mm at 
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -491,11 +492,173 @@ def _finish(m, log: Log, shared: dict[str, Any]):
     return m, {"piecesBridged": bridged}
 
 
+_WRAP_CHILD = r"""
+import os, sys, threading, time
+def alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    import ctypes
+    k = ctypes.windll.kernel32
+    h = k.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
+    if not h:
+        return False
+    try:
+        return k.WaitForSingleObject(h, 0) != 0  # not signalled: still running
+    finally:
+        k.CloseHandle(h)
+def watch(pid):  # between C calls: gone with its parent
+    while alive(pid):
+        time.sleep(0.5)
+    os._exit(1)
+if sys.platform.startswith("linux"):  # and during them: the kernel kills it with its parent
+    import ctypes, signal
+    ctypes.CDLL(None).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
+threading.Thread(target=watch, args=(int(sys.argv[4]),), daemon=True).start()
+sys.path.insert(0, sys.argv[1])
+import numpy as np
+from studio_bridge.print_solid import _wrap
+with np.load(sys.argv[2]) as d:
+    V, F, alpha, offset = d["V"], d["F"], float(d["alpha"]), float(d["offset"])
+m = _wrap(V, F, alpha, offset)
+np.savez(sys.argv[3] + ".part.npz", V=np.asarray(m.vertices, np.float64), F=np.asarray(m.faces, np.int64))
+os.replace(sys.argv[3] + ".part.npz", sys.argv[3])
+"""
+
+# Kills the wrap child once the whole tool (this process and its children) passes its budget: the memory guard
+# counts the child too, and a tool stopped there is rerun coarser, so the wrap made beside the repair must never
+# be what pushes it over. A process of its own: a thread here can't run while a C call holds the GIL.
+_WRAP_WATCH = r"""
+import os, sys, time
+from pathlib import Path
+tool, child, limit = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3])
+if sys.platform.startswith("linux"):
+    import ctypes, signal
+    ctypes.CDLL(None).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG: gone with the tool
+try:
+    import psutil
+except ImportError:
+    psutil = None
+def tree(pid):  # (resident bytes of pid and all below it, pids of its direct children)
+    if psutil is not None:
+        p = psutil.Process(pid)
+        return sum(q.memory_info().rss for q in [p, *p.children(recursive=True)]), {q.pid for q in p.children()}
+    total, todo, page, kids = 0, [pid], os.sysconf("SC_PAGE_SIZE"), set()
+    while todo:
+        p = todo.pop()
+        try:
+            total += int(Path(f"/proc/{p}/statm").read_text().split()[1]) * page
+            for task in Path(f"/proc/{p}/task").iterdir():
+                below = [int(c) for c in (task / "children").read_text().split()]
+                todo += below
+                if p == pid:
+                    kids.update(below)
+        except (OSError, ValueError):
+            if p == pid:
+                raise ProcessLookupError(pid)
+    return total, kids
+while True:
+    try:
+        used, kids = tree(tool)
+    except Exception:
+        sys.exit(0)  # the tool is gone
+    if child not in kids:
+        sys.exit(0)  # the wrap is done and reaped
+    if used > limit:
+        if psutil is not None:
+            c = psutil.Process(child)
+            for q in [*c.children(recursive=True), c]:
+                q.kill()
+        else:
+            os.kill(child, 9)
+        sys.exit(0)
+    time.sleep(0.2)
+"""
+# The tool's budget with the wrap child beside it: a quarter of the guard's limit (TOOLS_MEMORY_GB, read the
+# same way) kept for what the repair still grows by between two looks.
+WRAP_BESIDE_SHARE = 0.75
+
+
+class _WrapLater:
+    """A _wrap made by another Python while this one goes on: the shell of a model that came open is needed by
+    both wrap and solidify, and it depends on nothing the local repair does, so it is wrapped beside the repair
+    instead of after it. The same function on the same arrays: the same mesh. The child goes when this process
+    does, even when it is killed (the memory guard): on Linux the kernel kills it (PR_SET_PDEATHSIG; a watching
+    thread can't run while the wrap holds the GIL), elsewhere it notices between calls. A venv's python.exe on
+    Windows is a launcher whose child dies with it. (Watching stdin instead hung the child at start on Windows:
+    a thread blocked on the pipe stalls the imports.) Not used when it can't start: `result` is then None and
+    the caller wraps here."""
+
+    def __init__(self, V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        import numpy as np
+
+        self.dir = tempfile.mkdtemp(prefix="wrap-")
+        self.out = str(Path(self.dir) / "out.npz")
+        inp = str(Path(self.dir) / "in.npz")
+        np.savez(inp, V=np.asarray(V, np.float64), F=np.asarray(F, np.int64), alpha=alpha, offset=offset)
+        self.proc = subprocess.Popen([sys.executable, "-c", _WRAP_CHILD, str(Path(__file__).resolve().parent.parent), inp, self.out,
+                                      str(os.getpid())],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        limit = WRAP_BESIDE_SHARE * float(os.getenv("TOOLS_MEMORY_GB") or 7.0) * 2**30
+        self.watch = subprocess.Popen([sys.executable, "-c", _WRAP_WATCH, str(os.getpid()), str(self.proc.pid), str(limit)],
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def result(self):
+        import numpy as np
+        import trimesh
+
+        try:
+            if self.proc.wait() != 0:
+                return None
+            with np.load(self.out) as d:
+                return trimesh.Trimesh(d["V"], d["F"], process=False)
+        except Exception:  # noqa: BLE001 - the caller wraps here instead
+            return None
+        finally:
+            self.cancel()
+
+    def cancel(self) -> None:
+        import shutil
+        from pathlib import Path
+
+        if not Path(self.dir).is_dir():
+            return
+        for proc in (self.proc, getattr(self, "watch", None)):
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        for _ in range(20):  # the launcher's real child may hold its input a moment longer
+            shutil.rmtree(self.dir, ignore_errors=True)
+            if not Path(self.dir).exists():
+                break
+            time.sleep(0.25)
+
+    def __del__(self):
+        try:
+            self.cancel()
+        except Exception:  # noqa: BLE001 - interpreter shutting down
+            pass
+
+
 def _shell(orig, shared: dict[str, Any], log: Log):
-    """The wrap of the original: built once, used by both wrap and solidify."""
+    """The wrap of the original: built once, used by both wrap and solidify (started early, see _WrapLater)."""
     if "shell" not in shared:
         t = time.time()
-        shared["shell"] = _wrap(orig.vertices, orig.faces, shared["printer"].wrap_alpha_mm)
+        job = shared.pop("shellJob", None)
+        shell = job.result() if job is not None else None
+        if job is not None and shell is None:
+            log("  wrap beside the repair stopped (memory) or failed: wrapped here")
+        shared["shell"] = shell if shell is not None else _wrap(orig.vertices, orig.faces, shared["printer"].wrap_alpha_mm)
         log(f"  wrap {time.time() - t:.0f}s")
         _tick(shared, "wrap", t)
     return shared["shell"].copy()
@@ -567,7 +730,35 @@ def _open_share(V, F, pts, normals):
     return 1.0 - np.asarray(igl.embree.ambient_occlusion(V, F, pts + normals * 1e-3, normals, VIS_RAYS), np.float64)
 
 
-def _measure(orig, orig_pts, m, printer: Printer) -> dict[str, Any]:
+def _winding(V, F, Q):
+    """Winding numbers of points Q in the mesh V, F, as good as libigl's exact ones wherever they are compared with
+    0.5. The exact one builds a tree that costs 15 s on harbor's 3M faces even for one point; the fast one (Barill
+    et al.) took 4 s for 600k points and stayed within 0.011 of it, down to 0.01 mm off the surface, so it decides
+    alone, and only points it puts within 0.1 of 0.5 are worked out exactly."""
+    import igl
+    import numpy as np
+
+    V = np.ascontiguousarray(V, np.float64)
+    F = np.ascontiguousarray(F, np.int64)
+    Q = np.ascontiguousarray(Q, np.float64)
+    w = np.asarray(igl.fast_winding_number(V, F, Q), np.float64)
+    unsure = np.abs(w - 0.5) < 0.1
+    if unsure.any():
+        w[unsure] = igl.winding_number(V, F, Q[unsure])
+    return w
+
+
+def _tree(m):
+    """libigl's distance tree of a mesh, built once for every candidate measured against it (2 s at 2M faces)."""
+    import igl
+    import numpy as np
+
+    t = igl.AABB()
+    t.init(np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64))
+    return t
+
+
+def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None) -> dict[str, Any]:
     """'changed': result surface seen from outside that sits more than 0.3 mm off the original; surface moved out
     of sight (the walls of a filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more
     than 1 mm from the result and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
@@ -578,14 +769,16 @@ def _measure(orig, orig_pts, m, printer: Printer) -> dict[str, Any]:
     V = np.asarray(m.vertices, np.float64)
     F = np.asarray(m.faces, np.int64)
     pts, fi = trimesh.sample.sample_surface(m, SAMPLES, seed=SEED)
-    moved = np.sqrt(igl.point_mesh_squared_distance(pts, orig.vertices, orig.faces)[0]) > 0.3
+    if orig_tree is None:
+        orig_tree = _tree(orig)
+    moved = np.sqrt(orig_tree.squared_distance(np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64), pts)[0]) > 0.3
     out = 1.0 if float(m.volume) >= 0 else -1.0  # normals are fixed on the winner only: aim the rays outward here
     seen = _seen(V, F, pts, out * np.asarray(m.face_normals, np.float64)[fi])
     gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts, V, F)[0])
     far = gone > 0.3
     outside = np.ones(len(orig_pts), dtype=bool)
     if far.any():
-        outside[far] = igl.winding_number(V, F, orig_pts[far]) < 0.5
+        outside[far] = _winding(V, F, orig_pts[far]) < 0.5
     lost = gone * outside
     watertight = bool(m.is_watertight)
     wall = _thickness(m)
@@ -656,6 +849,13 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     came_closed = bool(orig.is_watertight)
     orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
     _lean(orig)  # kept to the end for measuring, which needs only its vertices and faces
+    orig_tree = _tree(orig)
+    shell_job = None
+    if not came_closed:  # wrap and solidify will want its shell: wrapped beside the repair
+        try:
+            shell_job = _WrapLater(orig.vertices, orig.faces, printer.wrap_alpha_mm)
+        except Exception as exc:  # noqa: BLE001 - wrapped here when it's needed
+            log(f" shell wrap not started beside the repair: {exc}")
     stages: dict[str, float] = {"prepare": round(time.time() - t0, 1)}
 
     t1 = time.time()
@@ -676,6 +876,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         builders.append(("wrap", _wrapped))
     cands: list[dict[str, Any]] = []
     shared: dict[str, Any] = {"printer": printer}
+    if shell_job is not None:
+        shared["shellJob"] = shell_job
 
     def build(name: str, fn: Callable) -> None:
         t1 = time.time()
@@ -687,7 +889,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             log(f"  {name} failed: {exc}")
             return
         t2 = time.time()
-        c = {"method": name, **_measure(orig, orig_pts, m, printer), **extra, "secs": round(time.time() - t1, 1)}
+        c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree), **extra, "secs": round(time.time() - t1, 1)}
         _tick(shared, "measure", t2)
         c["stages"] = shared.pop("stages")
         log(f"  {name}: {c}")
@@ -702,10 +904,13 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         build(name, fn)
         if name == "repair" and full is not None and not any(c["method"] == "repair" and c["watertight"] for c in cands):
             log(" repair didn't close the lighter mesh: again from the full one")
+            if "shellJob" in shared:  # the shell of the lighter mesh: wrapped again from the full one when needed
+                shared.pop("shellJob").cancel()
             t1 = time.time()
             orig = _weld(trimesh.Trimesh(np.asarray(full.vertices, np.float64) * mm_per_unit, np.asarray(full.faces), process=False))
             orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
             _lean(orig)
+            orig_tree = _tree(orig)
             cands[:] = [c for c in cands if c["method"] != "repair"]
             try:
                 repaired = _local_repair(orig.copy(), log)
@@ -727,6 +932,9 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         log(" no solid result: trying solidify after all")
         build("solidify", _solidified)
 
+    if "shellJob" in shared:  # neither wrap nor solidify was built
+        shared.pop("shellJob").cancel()
+    shell_job = None
     best, note = _pick(cands)
     if best is None:
         raise RuntimeError(note)
@@ -739,7 +947,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         except Exception as exc:  # the model stays as picked; its thin spots are still reported
             log(f" thicken failed: {exc}")
         if thickened:  # measured against the original like the candidates, so the report says what it cost
-            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer).items() if not k.startswith("_")})
+            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer, orig_tree).items() if not k.startswith("_")})
             log(f" thickened: {thickened}")
         stages["thicken"] = round(time.time() - t1, 1)
     out.apply_scale(1.0 / mm_per_unit)
@@ -1307,7 +1515,7 @@ def split_floating(mesh, mm_per_unit: float, printer: Printer = PRINTERS[DEFAULT
             continue
         apart.append(k)
     if apart:  # a vertex of each piece: inside the body or not
-        inside = igl.winding_number(BV, bF, BV[[int(faces_of(k).min()) for k in apart]]) > 0.5
+        inside = _winding(BV, bF, BV[[int(faces_of(k).min()) for k in apart]]) > 0.5
         floating = [k for k, i in zip(apart, inside) if not i]
     else:
         floating = []
