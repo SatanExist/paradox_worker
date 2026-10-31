@@ -730,17 +730,20 @@ def _open_share(V, F, pts, normals):
     return 1.0 - np.asarray(igl.embree.ambient_occlusion(V, F, pts + normals * 1e-3, normals, VIS_RAYS), np.float64)
 
 
-def _winding(V, F, Q):
+def _winding(V, F, Q, closed: bool):
     """Winding numbers of points Q in the mesh V, F, as good as libigl's exact ones wherever they are compared with
     0.5. The exact one builds a tree that costs 15 s on harbor's 3M faces even for one point; the fast one (Barill
     et al.) took 4 s for 600k points and stayed within 0.011 of it, down to 0.01 mm off the surface, so it decides
-    alone, and only points it puts within 0.1 of 0.5 are worked out exactly."""
+    alone, and only points it puts within 0.1 of 0.5 are worked out exactly. That was measured on closed meshes: on
+    an open one (a losing candidate) it moved a share in the report, so there every point is worked out exactly."""
     import igl
     import numpy as np
 
     V = np.ascontiguousarray(V, np.float64)
     F = np.ascontiguousarray(F, np.int64)
     Q = np.ascontiguousarray(Q, np.float64)
+    if not closed:
+        return np.asarray(igl.winding_number(V, F, Q), np.float64)
     w = np.asarray(igl.fast_winding_number(V, F, Q), np.float64)
     unsure = np.abs(w - 0.5) < 0.1
     if unsure.any():
@@ -774,13 +777,13 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None) -> dict[str, A
     moved = np.sqrt(orig_tree.squared_distance(np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64), pts)[0]) > 0.3
     out = 1.0 if float(m.volume) >= 0 else -1.0  # normals are fixed on the winner only: aim the rays outward here
     seen = _seen(V, F, pts, out * np.asarray(m.face_normals, np.float64)[fi])
+    watertight = bool(m.is_watertight)
     gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts, V, F)[0])
     far = gone > 0.3
     outside = np.ones(len(orig_pts), dtype=bool)
     if far.any():
-        outside[far] = _winding(V, F, orig_pts[far]) < 0.5
+        outside[far] = _winding(V, F, orig_pts[far], watertight) < 0.5
     lost = gone * outside
-    watertight = bool(m.is_watertight)
     wall = _thickness(m)
     parts = _pieces(m)
     volume = float(m.volume)
@@ -1515,7 +1518,7 @@ def split_floating(mesh, mm_per_unit: float, printer: Printer = PRINTERS[DEFAULT
             continue
         apart.append(k)
     if apart:  # a vertex of each piece: inside the body or not
-        inside = _winding(BV, bF, BV[[int(faces_of(k).min()) for k in apart]]) > 0.5
+        inside = _winding(BV, bF, BV[[int(faces_of(k).min()) for k in apart]], bool(mesh.is_watertight)) > 0.5
         floating = [k for k, i in zip(apart, inside) if not i]
     else:
         floating = []
