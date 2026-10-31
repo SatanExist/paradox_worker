@@ -10,6 +10,7 @@ import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { prune, reorder } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer";
+import sharp from "sharp";
 
 const [lowPath, bakeDir, outPath] = process.argv.slice(2);
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -103,22 +104,31 @@ function picked(accessor, pick) {
   return doc.createAccessor().setType(accessor.getType()).setArray(out).setNormalized(accessor.getNormalized()).setBuffer(accessor.getBuffer());
 }
 
-function texture(name, mime = "image/png") {
-  return doc.createTexture(name).setImage(new Uint8Array(readFileSync(join(bakeDir, `${name}.png`)))).setMimeType(mime);
+// Colour, roughness/metalness and glow go in as JPEG, like the originals carry them: as Blender's PNGs the
+// light model's file came out heavier than the original (mech: 14.2 MB against 8.1; its colour 4.5 MB as PNG,
+// 0.95 as JPEG). Quality 90 with full-resolution colour: halved colour would smear roughness into metalness,
+// which share a pixel in different channels. The normal map stays PNG, as JPEG's blocks would show up as
+// shading, but packed harder: Blender writes it loosely, and the same pixels took a fifth less room (computer
+// 4.4 -> 3.4 MB). No `effort` there: in sharp it turns on a palette, which moved half the pixels by up to 19.
+async function texture(name, jpeg = false) {
+  const png = sharp(readFileSync(join(bakeDir, `${name}.png`))).removeAlpha();
+  const image = await (jpeg ? png.jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })
+    : png.png({ compressionLevel: 9, adaptiveFiltering: true })).toBuffer();
+  return doc.createTexture(name).setImage(new Uint8Array(image)).setMimeType(jpeg ? "image/jpeg" : "image/png");
 }
 // Only a normal map (the model had no textures): each part keeps its own material and gets the map.
 const normalOnly = !existsSync(join(bakeDir, "baseColor.png"));
-const normalMap = texture("normal");
+const normalMap = await texture("normal");
 const material = normalOnly
   ? null
   : doc.createMaterial("baked")
-    .setBaseColorTexture(texture("baseColor"))
-    .setMetallicRoughnessTexture(texture("metallicRoughness"))
+    .setBaseColorTexture(await texture("baseColor", true))
+    .setMetallicRoughnessTexture(await texture("metallicRoughness", true))
     .setNormalTexture(normalMap)
     .setMetallicFactor(1)
     .setRoughnessFactor(1);
 // A model that gave off light of its own (Rodin's: all its colour is there) keeps its glow, baked too.
-if (material && existsSync(join(bakeDir, "emissive.png"))) material.setEmissiveTexture(texture("emissive")).setEmissiveFactor([1, 1, 1]);
+if (material && existsSync(join(bakeDir, "emissive.png"))) material.setEmissiveTexture(await texture("emissive", true)).setEmissiveFactor([1, 1, 1]);
 
 let corners = 0;
 let vertices = 0;
