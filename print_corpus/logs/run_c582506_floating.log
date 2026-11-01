@@ -1,0 +1,6 @@
+recipe c582506: 5 to run
+[1/5] trellis2_harbor            384s  5.02GB  solidify watertight=True parts=1 stand=upright/35.8 changed=0.0633 lost=7e-05
+[2/5] trellis2_lattice            99s  4.64GB  wrap     watertight=True parts=33 stand=upright/42.6 changed=0.4668 lost=0.03785
+[3/5] trellis2_dragon              8s  0.22GB  repair   watertight=True parts=1 stand=upright/10.4 changed=0.0124 lost=0.0
+[4/5] rodin_knight               112s  3.38GB  repair   watertight=True parts=1 stand=upright/9.9 changed=0.004 lost=0.0
+[5/5] meshy_rover                363s  5.76GB  repair   watertight=True parts=1 stand=upright/35.8 changed=0.0416 lost=0.0
