@@ -71,6 +71,7 @@ SUPPORT_SLOPE_DEG = 40.0  # a face sloping less than this down from flat gets su
 SUPPORT_CELL_MM = 1.0  # a support column stands on the first surface below it within a cell this wide
 SUPPORT_SAMPLES_PER_MM2 = 8.0  # surface points for the support estimate (fewer, and big models read wrong)
 TURN_CONTACT_MM2 = 50.0  # turned for printing, it must still sit on the plate with this much
+TURN_APART_DEG = 15.0  # candidates closer than this to one another or to how it stands are the same way up
 TURN_GAIN = 0.3  # turning is suggested only for this much less support (the estimate reads high by ~0.7x)
 TURN_MIN_CM3 = 3.0  # and at least this much
 
@@ -1421,7 +1422,10 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
     or laid for the shelf often needs far less support another way up: hunyuan31_drill lying on its side 19.6 g
     -> 5.3 g of support (PrusaSlicer), hunyuan_truck upside down 34 -> 16 g. Down directions tried: as it
     stands, the 40 biggest faces of its hull, 100 spread over the sphere; turned, it must keep TURN_CONTACT_MM2
-    on the plate. A quick pass on a few points picks six, the full estimate (SUPPORT_SAMPLES_PER_MM2) decides:
+    on the plate and not topple (FALLS_TIP_DEG: tripo_blaster's first pick tipped at 2 deg, a steadier one printed
+    12 min faster). A quick pass on a few points picks six ways up at least TURN_APART_DEG apart (the hull's
+    faces often lie a degree off how it stands, and took all the places), the full estimate
+    (SUPPORT_SAMPLES_PER_MM2) decides:
     sparse points read trellis2_harbor 15 % better on its side, PrusaSlicer says 56 % worse, and so do dense
     points. Suggested only past TURN_GAIN, as the estimate reads gains high (drill 84 % -> 73 % for real,
     rodin_spider 41 % -> 13 %). `m` is closed, in mm, Y up as it stands. Returns {"supportCm3": as it stands,
@@ -1438,14 +1442,27 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
     downs = np.vstack([[[0, -1.0, 0]], hull.face_normals[np.argsort(-hull.area_faces, kind="stable")[:40]],
                        np.c_[np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)]])
     nrm = np.asarray(m.face_normals, np.float64)
+    V = np.asarray(m.vertices, np.float64)
+    com = np.asarray(m.center_mass, np.float64)
 
     def estimate(count, which):
         pts, fi = trimesh.sample.sample_surface(m, count, seed=SEED)
         return {i: _support(pts, nrm[fi], float(m.area) / count, downs[i]) for i in which}
 
+    def holds(i):  # with this way down, its weight stays over what it rests on
+        R = trimesh.geometry.align_vectors(downs[i], [0, -1.0, 0])[:3, :3]
+        P, c = V @ R.T, R @ com
+        low = float(P[:, 1].min())
+        return _tip_deg(P[P[:, 1] < low + 0.2][:, [0, 2]], c[[0, 2]], float(c[1]) - low) >= FALLS_TIP_DEG
+
     quick = estimate(100_000, range(len(downs)))
-    fits = [i for i in quick if i == 0 or quick[i][1] >= TURN_CONTACT_MM2]
-    six = sorted(fits, key=lambda i: (quick[i][0], i))[:6]
+    apart = np.cos(np.radians(TURN_APART_DEG))
+    six: list[int] = []
+    for i in sorted((i for i in quick if i != 0 and quick[i][1] >= TURN_CONTACT_MM2), key=lambda i: (quick[i][0], i)):
+        if len(six) == 6:
+            break
+        if all(downs[i] @ downs[j] < apart for j in [0, *six]) and holds(i):
+            six.append(i)
     full = estimate(int(np.clip(float(m.area) * SUPPORT_SAMPLES_PER_MM2, 100_000, 2_000_000)), sorted({0, *six}))
     fits = [i for i in full if i == 0 or full[i][1] >= TURN_CONTACT_MM2]
     best = min(fits, key=lambda i: (round(full[i][0] / 1000, 1), full[i][2], i))
