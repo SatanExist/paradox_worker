@@ -378,3 +378,107 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None, re
         "creasePct": pct("crease"),
         "worstView": worst,
     }
+
+
+# The look from afar misses what a person sees up close: the Direct3D knight at 10k reads 2.79 and is crumpled.
+# So cameras go right up to the finest relief of the original. Trial of 2026-11-02 against exam marks by eye:
+# all 5 crumpled over 2.65 (knight, dog, watch, rover, Rodin knight, the last marked by eye on these very
+# frames), the 5 great under it; on 12 great models it hadn't seen, 8 stay under, crystals and drill show real
+# damage. One rung up, 7 of 9 fall under. Judged by the same score with the light and paint a viewer sees.
+CLOSE_SPOTS = 12
+CLOSE_RES = 384
+CLOSE_FRAME = 0.05  # half-width of a frame, of the model's diagonal
+CLOSE_TEX = 1024
+CLOSE_SHIFT_PX = 2  # a line moved this far is the same line
+
+
+def _relief_spots(m: dict[str, Any], diag: float) -> list[tuple[Any, Any]]:
+    """The islands of surface that keeps turning, strongest first, each that a viewer can reach from outside
+    (where it sits inside the body, a close camera would be inside too): centre and the side to look from."""
+    import igl.embree
+    import numpy as np
+    from scipy import ndimage
+
+    V, F = np.asarray(m["V"], float), m["F"]
+    n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    area = np.linalg.norm(n, axis=1) / 2
+    n = n / np.maximum(2 * area, 1e-20)[:, None]
+    cell = diag / 256
+    at = np.floor((V[F].mean(1) - V.min(0)) / cell).astype(np.int64)
+    shape = at.max(0) + 2
+    uniq, inv = np.unique(np.ravel_multi_index(at.T, shape), return_inverse=True)
+    inv = inv.reshape(-1)
+    sum_a = np.bincount(inv, area)
+    turn = 1 - np.linalg.norm(np.stack([np.bincount(inv, area * n[:, i]) for i in range(3)], 1), axis=1) / np.maximum(sum_a, 1e-20)
+    hot, power = np.zeros(shape, bool), np.zeros(shape)
+    hot.flat[uniq[(sum_a > 0.1 * cell * cell) & (turn > 0.2)]] = True
+    power.flat[uniq] = sum_a * turn
+    lab, k = ndimage.label(ndimage.binary_closing(hot), structure=np.ones((3, 3, 3)))
+    if not k:
+        return []
+    score = ndimage.sum_labels(power, lab, np.arange(1, k + 1))
+    boxes = ndimage.find_objects(lab)
+    owner = lab[at[:, 0], at[:, 1], at[:, 2]]
+    out: list[tuple[Any, Any]] = []
+    for i in np.argsort(-score, kind="stable"):
+        if max(b.stop - b.start for b in boxes[i]) > 32:  # as big as a body part: not a detail
+            continue
+        mine = owner == i + 1
+        centre = (V[F[mine]].mean(1) * area[mine, None]).sum(0) / max(area[mine].sum(), 1e-20)
+        if any(np.linalg.norm(centre - o[0]) <= 1.5 * CLOSE_FRAME * diag for o in out):
+            continue
+        side = (n[mine] * area[mine, None]).sum(0)
+        side = side / max(np.linalg.norm(side), 1e-9)
+        for d in (side, -side):
+            hit = igl.embree.line_mesh_intersection((centre + d * 2 * diag)[None], -d[None], V, F)[0]
+            if hit[0] < 0:
+                continue
+            w = np.array([1 - hit[1] - hit[2], hit[1], hit[2]])
+            if np.linalg.norm((V[F[int(hit[0])]] * w[:, None]).sum(0) - centre) < CLOSE_FRAME * diag:
+                out.append((centre, d))
+                break
+        if len(out) == CLOSE_SPOTS:
+            break
+    return out
+
+
+def _off_by_more(a, b, r: int):
+    """How far each pixel of b is from everything within r pixels of it in a, and back."""
+    import numpy as np
+    from scipy import ndimage
+
+    size = (2 * r + 1, 2 * r + 1, 1)
+    one = np.maximum(np.maximum(b - ndimage.maximum_filter(a, size), ndimage.minimum_filter(a, size) - b), 0)
+    two = np.maximum(np.maximum(a - ndimage.maximum_filter(b, size), ndimage.minimum_filter(b, size) - a), 0)
+    return np.maximum(one, two).mean(-1)
+
+
+def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
+    """How far the result is from the original right up at its finest details, % of the picture, over the frames
+    of CLOSE_SPOTS spots, each from straight on and from the side. Relief under dark paint counts less, as the
+    paint hides it. Deterministic: no random numbers, the spots come from the original alone."""
+    import numpy as np
+    from scipy import ndimage
+
+    a, b = _load(Path(original), CLOSE_TEX), _load(Path(result), CLOSE_TEX)
+    b["V"] = b["V"] - np.asarray(shift, float)
+    diag = float(np.linalg.norm(a["V"].max(0) - a["V"].min(0)))
+
+    def seen(p):
+        return p["light"] * np.clip(p["texture"].mean(-1, keepdims=True) * 2, 0.15, 1)
+
+    frames = []
+    spots = _relief_spots(a, diag)
+    for at, n in spots:
+        across = np.cross(n, [0.0, 1.0, 0.0] if abs(n[1]) < 0.9 else [1.0, 0.0, 0.0])
+        across /= np.linalg.norm(across)
+        for view in (n, n * 0.8 + across * 0.6):
+            ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES)
+            mb, pb = _draw(b, at, CLOSE_FRAME * diag, view, CLOSE_RES)
+            union = ma | mb
+            if union.mean() < 0.1:
+                continue
+            light = _off_by_more(seen(pa), seen(pb), CLOSE_SHIFT_PX)
+            outline = _off_by_more(ma[..., None].astype(float), mb[..., None].astype(float), CLOSE_SHIFT_PX)
+            frames.append(float((ndimage.uniform_filter(np.maximum(light, outline), 3) > NOTICE)[union].mean()))
+    return {"closePct": round(100 * float(np.mean(frames)), 2) if frames else 0.0, "spots": len(spots), "frames": len(frames)}

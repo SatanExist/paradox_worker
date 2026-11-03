@@ -56,6 +56,9 @@ function bakedTriangles(axes) {
   return { at, cells };
 }
 
+// A needle's two near corners both fall within reach of one baked corner, so each point is given its own.
+const ORDERS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+
 /** The baked triangle over these three points, and which of its corners each point is; null if none. */
 function findTriangle(found, points) {
   const close = (corner, p) => Math.abs(found.at[corner * 3] - p[0]) + Math.abs(found.at[corner * 3 + 1] - p[1]) + Math.abs(found.at[corner * 3 + 2] - p[2]) <= 3 * GRID;
@@ -63,8 +66,8 @@ function findTriangle(found, points) {
     const [i, j, k] = p0.map((v) => Math.round(v / GRID));
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let d = -1; d <= 1; d++) {
       for (const t of found.cells.get(`${i + a},${j + b},${k + d}`) ?? []) {
-        const which = points.map((p) => [0, 1, 2].find((q) => close(3 * t + q, p)));
-        if (which.every((q) => q !== undefined) && new Set(which).size === 3) return { t, which };
+        const which = ORDERS.find((order) => order.every((q, n) => close(3 * t + q, points[n])));
+        if (which) return { t, which };
       }
     }
   }

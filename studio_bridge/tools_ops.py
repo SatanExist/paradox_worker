@@ -1044,9 +1044,8 @@ def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 # it: the marks were made on full cuts, and the second pass can bring a borderline cut back under.
 RECHECK_MARGIN = 1.15
 
-
-# A quick bake is looked at with textures at game_look.TEX (512): baking it bigger shows nothing more.
-QUICK_BAKE_PX = 1024
+# More of the picture than this off at the finest details (game_look.close_up): a rung up. Marked by eye, there.
+CLOSE_OK_PCT = 2.65
 
 
 def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None) -> dict[str, Any]:
@@ -1063,7 +1062,8 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
                 job["dropFile"] = found["file"]
             cut = _game_mjs(in_path, Path(name), job)
             if kind == "baked":
-                _bake(in_path, Path(name), cut["shift"], min(texture_size, QUICK_BAKE_PX), high)
+                # At the size the model ships with: a bake at 1024 read far off what 2048 gives (statue 200k: 8.3 -> 3.4%).
+                _bake(in_path, Path(name), cut["shift"], texture_size, high)
             looked = look(in_path, Path(name), cut["shift"], res=res)
             seen = looked["noticeablePct"]
             tangles = _tangled_over(in_path, Path(name))
@@ -1130,7 +1130,12 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
     first = floor
     while lo < hi:
         mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
-        step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high)
+        try:
+            step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high)
+        except RuntimeError as exc:  # this budget couldn't be baked: a bigger one still may, and the report says so
+            tried.append({"targetTris": ladder[mid], "failed": str(exc)[:160]})
+            lo = mid + 1
+            continue
         seen = step["noticeablePct"]
         limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct
         if limit < seen <= limit * RECHECK_MARGIN:
@@ -1233,12 +1238,15 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
     auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake, bake_ok_pct=bake_ok_pct)
     auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
+    plain["closeCheck"] = bake and purpose_name != "background"  # a far-off prop is never seen up close
     report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
     # The look is judged standing still. A model that moves also has to bend right: while it breaks more than
     # MOVING_BEND_OK_PCT, the next rung up is cut (the whole model always passes). Not a halving search:
     # bending isn't steady in the budget (the fox broke worse at 450 triangles than at 300).
     # Likewise a cut that still shows through after its holes were mended (_game_prep): the harbor, the TRELLIS
-    # bust and knight at 20k, which looked well off anyway; and one whose texture went into streaks (TORN_OK_PCT).
+    # bust and knight at 20k, which looked well off anyway; one whose texture went into streaks (TORN_OK_PCT);
+    # and one off up close (CLOSE_OK_PCT), though that never goes as far as the whole model: past the top rung
+    # the report says so.
     looked = auto["picked"]
     whole = _triangles_in_file(in_path)
     ladder = purpose["bakeLadder" if bake else "ladder"]
@@ -1251,6 +1259,8 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
             found["seeThroughPatchPx"] = after["seeThrough"]["seeThroughPatchPx"]
         if (after.get("torn") or {}).get("tornPct", 0) > TORN_OK_PCT:
             found["tornPct"] = after["torn"]["tornPct"]
+        if (after.get("closeUp") or {}).get("closePct", 0) > CLOSE_OK_PCT and any(auto["picked"] < b < whole for b in ladder):
+            found["closePct"] = after["closeUp"]["closePct"]
         return found
 
     bent: list[dict[str, Any]] = []
@@ -1264,11 +1274,16 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
         auto["bentAt"] = bent
     why = [f"broke {bent[0]['bendPct']:g}% where it bends" if "bendPct" in bent[0] else "",
            f"showed through ({bent[0]['seeThroughPatchPx']} pixels)" if "seeThroughPatchPx" in bent[0] else "",
-           f"had its texture in streaks ({bent[0]['tornPct']:g}%)" if "tornPct" in bent[0] else ""] if bent else []
+           f"had its texture in streaks ({bent[0]['tornPct']:g}%)" if "tornPct" in bent[0] else "",
+           f"was off up close ({bent[0]['closePct']:g}%)" if "closePct" in bent[0] else ""] if bent else []
     report["after"]["autoBudget"] = auto
     report["steps"].insert(1, f"budget picked: {auto['picked']} triangles, the fewest that don't look noticeably different"
                            + (f", bend right, don't show through and keep their texture whole ({looked} looked right but "
                               f"{' and '.join(w for w in why if w)})" if bent else ""))
+    if (report["after"].get("closeUp") or {}).get("closePct", 0) > CLOSE_OK_PCT:
+        report["steps"].append(f"still off up close at the top budget ({report['after']['closeUp']['closePct']:g}% of the picture at its finest details)")
+    if failed := [step["targetTris"] for step in auto["tried"] if "failed" in step]:
+        report["steps"].append(f"couldn't be baked at {', '.join(map(str, failed))} triangles: those budgets were passed over")
     return report
 
 
@@ -1510,6 +1525,13 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     except Exception as exc:  # a report extra: never worth failing the tool for
         Path(preview_name).unlink(missing_ok=True)
         steps.append(f"look not measured: {str(exc)[:120]}")
+    try:
+        if params.get("closeCheck") and job.get("forBake"):
+            from studio_bridge.game_look import close_up
+
+            after["closeUp"] = close_up(in_path, out_path, result["shift"])
+    except Exception as exc:  # as above
+        steps.append(f"not looked at up close: {str(exc)[:120]}")
     try:
         from studio_bridge.game_look import torn
 
