@@ -38,6 +38,14 @@ REACH = float(PARAMS.get("reach", 0.005))
 # Baked this many times bigger, then shrunk: new UVs spend the texture less thriftily than the
 # generator's own, and fine engraving came out noisy at the final size.
 SUPER = int(PARAMS.get("supersample", 1))
+# The normal map is baked this many times bigger, then shrunk: each texel meets the heavy surface at one point,
+# so a thin groove's edge came out in steps of texels (mech, knight). At 2 most steps go for 3.8-4.5 GB of Blender's
+# memory where 1 took 1.1-3.7; 4 is a little cleaner still, but the bake holds about 190 bytes a texel: 15-16 GB,
+# with the other maps at the final size or not. Look and light stay level (2026-11-04). More samples give the
+# normal map nothing: rays pick each texel's point once, and at 1 the pass takes half as long (mech 13.5 -> 6.7 s)
+# with no more noise and the same to the eye.
+NORMAL_SUPER = int(PARAMS.get("normalSuper", 2))
+NORMAL_SAMPLES = 1
 BAKE = SIZE * SUPER
 # Islands lie GAP texels apart, so one island's edge doesn't take its neighbour's colour, and the bake paints
 # MARGIN texels past their edges, so mip-maps don't bleed the background in. The gap is per island and
@@ -167,8 +175,8 @@ overlapped.append(overlapping())
 bpy.ops.object.mode_set(mode="OBJECT")
 
 
-def image(name, colour):
-    img = bpy.data.images.new(name, BAKE, BAKE, alpha=False, float_buffer=False)
+def image(name, colour, size=None):
+    img = bpy.data.images.new(name, size or BAKE, size or BAKE, alpha=False, float_buffer=False)
     img.colorspace_settings.name = "sRGB" if colour else "Non-Color"
     return img
 
@@ -190,13 +198,14 @@ def principled(material):
 
 def run(kind, img, **extra):
     slot.image = img
+    margin = MARGIN * img.size[0] // BAKE
     bpy.ops.object.select_all(action="DESELECT")
     for o in high:
         o.select_set(True)
     for i, o in enumerate(low):
         o.select_set(True)
         bpy.context.view_layer.objects.active = o
-        bpy.ops.object.bake(type=kind, use_clear=(i == 0), margin=MARGIN, **extra)
+        bpy.ops.object.bake(type=kind, use_clear=(i == 0), margin=margin, **extra)
         o.select_set(False)
 
 
@@ -244,8 +253,10 @@ for name, kind, colour, extra in [
     ("normal", "NORMAL", False, {"normal_space": "TANGENT"}),
 ]:
     t = time.time()
-    maps[name] = image(name, colour)
+    maps[name] = image(name, colour, BAKE * NORMAL_SUPER if name == "normal" else None)
+    scene.cycles.samples = NORMAL_SAMPLES if name == "normal" else SAMPLES
     run(kind, maps[name], **extra)
+    scene.cycles.samples = SAMPLES
     timings[name] = round(time.time() - t, 1)
 
 # Base colour and metalness are baked as light the heavy model gives off: Cycles' diffuse colour pass
@@ -283,7 +294,7 @@ if TILT:
 
 # glTF keeps roughness in G and metalness in B of one texture.
 for img in maps.values():
-    if SUPER > 1:
+    if img.size[0] != SIZE:
         img.scale(SIZE, SIZE)
 
 

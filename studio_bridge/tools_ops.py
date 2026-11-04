@@ -946,12 +946,14 @@ def _blender() -> str | None:
     return os.getenv("BLENDER_BIN") or shutil.which("blender")
 
 
-def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None) -> dict[str, Any]:
+def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False) -> dict[str, Any]:
     """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
     bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
     tools_node/graft.mjs puts them into the cut itself, so its nodes, skins, clips and morph targets stay
     as they were. Deterministic: Cycles on the CPU, fixed seed and samples (two runs, the same bytes).
-    `high`: the original already unpacked, when the caller bakes several times."""
+    `high`: the original already unpacked, when the caller bakes several times. `quick`: for the budget search,
+    the normal map without its doubled size: the look reads the same (mech 6.13, knight 0.68 and 0.69, pistol 1.09),
+    for less time and memory."""
     plain = high or _unpacked(in_path)
     work = Path(tempfile.mkdtemp(prefix="bake-"))
     fd, name = tempfile.mkstemp(suffix=".glb")
@@ -960,7 +962,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures")})],
+             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {})})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -1063,7 +1065,7 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
             cut = _game_mjs(in_path, Path(name), job)
             if kind == "baked":
                 # At the size the model ships with: a bake at 1024 read far off what 2048 gives (statue 200k: 8.3 -> 3.4%).
-                _bake(in_path, Path(name), cut["shift"], texture_size, high)
+                _bake(in_path, Path(name), cut["shift"], texture_size, high, quick=True)
             looked = look(in_path, Path(name), cut["shift"], res=res)
             seen = looked["noticeablePct"]
             tangles = _tangled_over(in_path, Path(name))
