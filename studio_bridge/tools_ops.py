@@ -15,8 +15,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               sides grow on both, unless params["thinDetails"] is "keep". What is still thin is reported as
               spots ("thinSpots"). It is stood steady (print_solid.stand: bottom cut flat, laid down, or a
               base; "stand" in the report), unless params["stand"] is "keep"; params["base"] "none" adds no
-              base. For FDM, the way up it prints with least support is suggested ("printTurn": the file
-              stays as it stands). params["printer"]
+              base. For FDM, a way up that PrusaSlicer finds faster and lighter is suggested ("printTurn": the
+              file stays as it stands; no slicer, no suggestion). params["printer"]
               is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
 """
 
@@ -378,8 +378,10 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         try:
             turn = print_turn(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False), printer)
             if "turned" in turn:
-                steps.append(f"prints with less support turned another way up: about {turn['turned']['supportCm3']:g} cm³ "
-                             f"of support instead of {turn['supportCm3']:g} (estimate)")
+                from studio_bridge.print_slicer import PROFILE
+
+                steps.append(f"prints {turn['turned']['savedMinutes']:.0f} min faster with {turn['turned']['savedGrams']:g} g less plastic "
+                             f"turned another way up (PrusaSlicer: {PROFILE})")
         except Exception as exc:  # a report extra: never worth failing the print for
             print(f"print turn not checked: {exc}")
     timings["printTurn"] = round(time.time() - t, 1)

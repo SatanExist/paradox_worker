@@ -15,7 +15,9 @@ a third of its outline, is there, 0.4-0.5 mm off); further, it is lost: detail t
 for the nozzle (a 0.04 mm fin, a needle tip) — it won't be on the print.
 
 Rows go to slice.jsonl, tagged with the recipe (as run.py's) so they line up with results.jsonl.
-PrusaSlicer: D:/tools/PrusaSlicer (portable 2.9.6), datadir D:/tools/prusa_datadir (PRUSA_DIR / PRUSA_DATADIR).
+PrusaSlicer: D:/tools/PrusaSlicer (portable 2.9.6, PRUSA_DIR), settings studio_bridge/print_mk4.ini. Rows before
+recipe 2026-11-04's print_mk4.ini ran on the default printer (the profile flags only took the print profile): their
+plastic is right, their times 10-13 % long.
 """
 from __future__ import annotations
 
@@ -37,9 +39,7 @@ from run import recipe
 
 HERE = Path(__file__).resolve().parent
 PRUSA = Path(os.environ.get("PRUSA_DIR", "D:/tools/PrusaSlicer/PrusaSlicer-2.9.6")) / "prusa-slicer-console.exe"
-DATADIR = os.environ.get("PRUSA_DATADIR", "D:/tools/prusa_datadir")
-PROFILE = ["--printer-profile", "Original Prusa MK4 Input Shaper 0.4 nozzle",
-           "--print-profile", "0.20mm STRUCTURAL @MK4IS 0.4", "--material-profile", "Prusament PLA @PGIS"]
+SETTINGS = HERE.parent / "studio_bridge" / "print_mk4.ini"
 FILAMENT_MM2 = np.pi * (1.75 / 2) ** 2
 PLA_G_PER_MM3 = 1.24e-3
 STEP_MM = 0.1  # outline sampling
@@ -202,10 +202,9 @@ def slice_one(mid: str, rec: str, turn=None) -> dict:
         stl, gcode = Path(tmp) / f"{mid}.stl", Path(tmp) / f"{mid}.gcode"
         m = stl_of(HERE / "out" / f"{mid}.glb", stl, turn)
         # placed by the slicer itself (its --center refuses some large models as outside the bed)
-        cmd = [str(PRUSA), "--datadir", DATADIR, *PROFILE, "--export-gcode", "--support-material",
-               "--support-material-auto", "--output", str(gcode), str(stl)]
+        cmd = [str(PRUSA), "--datadir", str(Path(tmp) / "data"), "--load", str(SETTINGS), "--export-gcode", "--output", str(gcode), str(stl)]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIME_LIMIT_S)
-        row: dict = {"id": mid, "recipe": rec, "profile": PROFILE[1::2], "turned": turn is not None}
+        row: dict = {"id": mid, "recipe": rec, "profile": SETTINGS.name, "turned": turn is not None}
         if p.returncode != 0 or not gcode.exists():
             row.update({"ok": False, "error": (p.stderr or p.stdout)[-400:], "secs": round(time.time() - t0)})
             return row
