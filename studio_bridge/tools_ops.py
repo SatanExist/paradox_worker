@@ -1050,9 +1050,11 @@ RECHECK_MARGIN = 1.15
 CLOSE_OK_PCT = 2.65
 
 
-def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None) -> dict[str, Any]:
-    """A quick cut (no second pass) looked at from the six views, baked when baking is on."""
-    from studio_bridge.game_look import compare as look
+def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None,
+                close_under: float | None = None) -> dict[str, Any]:
+    """A quick cut (no second pass) looked at from the six views, baked when baking is on, and up close when
+    from afar no more than `close_under` of it differs: past that the rung is lost anyway."""
+    from studio_bridge.game_look import close_up, compare as look
 
     step: dict[str, Any] = {"targetTris": budget}
     for kind in ("baked",) if bake else ("plain",):
@@ -1069,6 +1071,8 @@ def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: b
             looked = look(in_path, Path(name), cut["shift"], res=res)
             seen = looked["noticeablePct"]
             tangles = _tangled_over(in_path, Path(name))
+            if close_under is not None and seen <= close_under:
+                step["closePct"] = close_up(in_path, Path(name), cut["shift"])["closePct"]
         finally:
             try:
                 Path(name).unlink(missing_ok=True)
@@ -1130,10 +1134,12 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
     # the knights; the camera needs three, as before.
     floor = ladder.index(purpose["lightFloor"]) if not bake and purpose.get("lightFloor") in ladder[:-1] else None
     first = floor
+    # Up close is part of the search: climbing a rung at a time after it, each with a full bake, took the watch 10 bakes.
+    close_under = bake_ok_pct * RECHECK_MARGIN if bake and bake_ok_pct and purpose_name != "background" else None
     while lo < hi:
         mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
         try:
-            step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high)
+            step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
         except RuntimeError as exc:  # this budget couldn't be baked: a bigger one still may, and the report says so
             tried.append({"targetTris": ladder[mid], "failed": str(exc)[:160]})
             lo = mid + 1
@@ -1157,7 +1163,9 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
             step.update({k: full["after"][k] for k in ("tangledPct", "originalTangledPct") if k in full["after"]})
             step.update({k: full["after"]["look"][k] for k in ("lightPct", "creasePct")})
         tried.append(step)
-        if seen <= limit and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False)):
+        # Off up close never goes as far as the whole model, ladder[-1]: at the top rung the report says so.
+        close_off = step.get("closePct", 0) > CLOSE_OK_PCT and mid < len(ladder) - 2
+        if seen <= limit and not close_off and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False)):
             hi = mid
             if floor is not None and mid >= floor and step["lightPct"] > purpose["lowLightPct"]:
                 lo = max(lo, floor)
@@ -1227,6 +1235,9 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
         return _game_prep_job(in_path, out_path, params)
     finally:
         _forget_hidden(in_path)  # what's hidden was worked out once for every cut of this job
+        from studio_bridge.game_look import forget_close
+
+        forget_close(in_path)
 
 
 def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:

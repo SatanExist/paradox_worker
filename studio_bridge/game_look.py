@@ -453,6 +453,42 @@ def _off_by_more(a, b, r: int):
     return np.maximum(one, two).mean(-1)
 
 
+# Per job: the original's file -> its close frames. They are the same for every budget tried.
+_CLOSE_FRAMES: dict[tuple, tuple[list[tuple], int]] = {}
+
+
+def _seen_close(p: dict[str, Any]) -> Any:
+    import numpy as np
+
+    return p["light"] * np.clip(p["texture"].mean(-1, keepdims=True) * 2, 0.15, 1)
+
+
+def _close_frames(original: Path) -> tuple[list[tuple], int]:
+    """The original right up at CLOSE_SPOTS spots of its finest relief, each from straight on and from the side."""
+    import numpy as np
+
+    stat = original.stat()
+    key = (str(original), stat.st_mtime_ns, stat.st_size)
+    if key not in _CLOSE_FRAMES:
+        a = _load(original, CLOSE_TEX)
+        diag = float(np.linalg.norm(a["V"].max(0) - a["V"].min(0)))
+        frames = []
+        spots = _relief_spots(a, diag)
+        for at, n in spots:
+            across = np.cross(n, [0.0, 1.0, 0.0] if abs(n[1]) < 0.9 else [1.0, 0.0, 0.0])
+            across /= np.linalg.norm(across)
+            for view in (n, n * 0.8 + across * 0.6):
+                ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES)
+                frames.append((at, CLOSE_FRAME * diag, view, ma, _seen_close(pa)))
+        _CLOSE_FRAMES[key] = (frames, len(spots))
+    return _CLOSE_FRAMES[key]
+
+
+def forget_close(original: Path) -> None:
+    for key in [k for k in _CLOSE_FRAMES if k[0] == str(original)]:
+        del _CLOSE_FRAMES[key]
+
+
 def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
     """How far the result is from the original right up at its finest details, % of the picture, over the frames
     of CLOSE_SPOTS spots, each from straight on and from the side. Relief under dark paint counts less, as the
@@ -460,25 +496,16 @@ def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
     import numpy as np
     from scipy import ndimage
 
-    a, b = _load(Path(original), CLOSE_TEX), _load(Path(result), CLOSE_TEX)
+    originals, spots = _close_frames(Path(original))
+    b = _load(Path(result), CLOSE_TEX)
     b["V"] = b["V"] - np.asarray(shift, float)
-    diag = float(np.linalg.norm(a["V"].max(0) - a["V"].min(0)))
-
-    def seen(p):
-        return p["light"] * np.clip(p["texture"].mean(-1, keepdims=True) * 2, 0.15, 1)
-
     frames = []
-    spots = _relief_spots(a, diag)
-    for at, n in spots:
-        across = np.cross(n, [0.0, 1.0, 0.0] if abs(n[1]) < 0.9 else [1.0, 0.0, 0.0])
-        across /= np.linalg.norm(across)
-        for view in (n, n * 0.8 + across * 0.6):
-            ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES)
-            mb, pb = _draw(b, at, CLOSE_FRAME * diag, view, CLOSE_RES)
-            union = ma | mb
-            if union.mean() < 0.1:
-                continue
-            light = _off_by_more(seen(pa), seen(pb), CLOSE_SHIFT_PX)
-            outline = _off_by_more(ma[..., None].astype(float), mb[..., None].astype(float), CLOSE_SHIFT_PX)
-            frames.append(float((ndimage.uniform_filter(np.maximum(light, outline), 3) > NOTICE)[union].mean()))
-    return {"closePct": round(100 * float(np.mean(frames)), 2) if frames else 0.0, "spots": len(spots), "frames": len(frames)}
+    for at, half, view, ma, seen_a in originals:
+        mb, pb = _draw(b, at, half, view, CLOSE_RES)
+        union = ma | mb
+        if union.mean() < 0.1:
+            continue
+        light = _off_by_more(seen_a, _seen_close(pb), CLOSE_SHIFT_PX)
+        outline = _off_by_more(ma[..., None].astype(float), mb[..., None].astype(float), CLOSE_SHIFT_PX)
+        frames.append(float((ndimage.uniform_filter(np.maximum(light, outline), 3) > NOTICE)[union].mean()))
+    return {"closePct": round(100 * float(np.mean(frames)), 2) if frames else 0.0, "spots": spots, "frames": len(frames)}

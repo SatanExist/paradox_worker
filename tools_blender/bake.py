@@ -39,9 +39,10 @@ REACH = float(PARAMS.get("reach", 0.005))
 # generator's own, and fine engraving came out noisy at the final size.
 SUPER = int(PARAMS.get("supersample", 1))
 # The normal map is baked this many times bigger, then shrunk: each texel meets the heavy surface at one point,
-# so a thin groove's edge came out in steps of texels (mech, knight). At 2 most steps go for 3.8-4.5 GB of Blender's
-# memory where 1 took 1.1-3.7; 4 is a little cleaner still, but the bake holds about 190 bytes a texel: 15-16 GB,
-# with the other maps at the final size or not. Look and light stay level (2026-11-04). More samples give the
+# so a thin groove's edge came out in steps of texels (mech, knight). At 2 most steps go; 4 is a little cleaner still,
+# but the bake holds about 190 bytes a texel: 15-16 GB, with the other maps at the final size or not. So it is baked
+# in four parts: the pistol's peak 3.3 -> 1.3 GB, the watch's 4.7 -> 3.8 (the rest is the model), for 1-7 s, with no
+# line at the joins and the same look and light. Look and light stay level (2026-11-04). More samples give the
 # normal map nothing: rays pick each texel's point once, and at 1 the pass takes half as long (mech 13.5 -> 6.7 s)
 # with no more noise and the same to the eye.
 NORMAL_SUPER = int(PARAMS.get("normalSuper", 2))
@@ -196,9 +197,9 @@ def principled(material):
     return next((n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if material and material.use_nodes else None
 
 
-def run(kind, img, **extra):
+def run(kind, img, margin=None, **extra):
     slot.image = img
-    margin = MARGIN * img.size[0] // BAKE
+    margin = MARGIN * img.size[0] // BAKE if margin is None else margin
     bpy.ops.object.select_all(action="DESELECT")
     for o in high:
         o.select_set(True)
@@ -207,6 +208,38 @@ def run(kind, img, **extra):
         bpy.context.view_layer.objects.active = o
         bpy.ops.object.bake(type=kind, use_clear=(i == 0), margin=margin, **extra)
         o.select_set(False)
+
+
+def run_in_parts(kind, img, **extra):
+    """Into img, a quarter at a time: each part has room around it for the margin, cut off when put together."""
+    whole = img.size[0]
+    part = whole // 2
+    pad = MARGIN * whole // BAKE
+    side = part + 2 * pad
+    piece = image("normal_part", False, side)
+    uvs = []
+    for o in low:
+        uv = np.empty(len(o.data.loops) * 2, dtype=np.float64)
+        o.data.uv_layers.active.data.foreach_get("uv", uv)
+        uvs.append(uv)
+    done = np.empty((whole, whole, 4), dtype=np.float32)
+    got = np.empty((side, side, 4), dtype=np.float32)
+    for y in range(2):
+        for x in range(2):
+            for o, uv in zip(low, uvs):
+                moved = uv.copy()
+                moved[0::2] = (uv[0::2] * whole - x * part + pad) / side
+                moved[1::2] = (uv[1::2] * whole - y * part + pad) / side
+                o.data.uv_layers.active.data.foreach_set("uv", moved)
+                o.data.update()
+            run(kind, piece, margin=pad, **extra)
+            piece.pixels.foreach_get(got.ravel())
+            done[y * part:(y + 1) * part, x * part:(x + 1) * part] = got[pad:pad + part, pad:pad + part]
+    for o, uv in zip(low, uvs):
+        o.data.uv_layers.active.data.foreach_set("uv", uv)
+        o.data.update()
+    img.pixels.foreach_set(done.ravel())
+    bpy.data.images.remove(piece)
 
 
 def shine(socket_name):
@@ -255,7 +288,7 @@ for name, kind, colour, extra in [
     t = time.time()
     maps[name] = image(name, colour, BAKE * NORMAL_SUPER if name == "normal" else None)
     scene.cycles.samples = NORMAL_SAMPLES if name == "normal" else SAMPLES
-    run(kind, maps[name], **extra)
+    (run_in_parts if name == "normal" and NORMAL_SUPER > 1 else run)(kind, maps[name], **extra)
     scene.cycles.samples = SAMPLES
     timings[name] = round(time.time() - t, 1)
 
