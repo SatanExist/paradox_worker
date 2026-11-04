@@ -111,19 +111,21 @@ for o in low:
     o.data.uv_layers.new(name="UVMap")
 bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
-bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
-# Edges sharper than SHARP degrees stay sharp (normals split there), so the normal map needn't bend a
-# smoothed corner back: the Rodin computer at 200k shaded 1.94 -> 1.78% off, creases 1.06 -> 0.58%, its
-# panels' edges crisp again. Cutting the texture along them as well took 13% of its texels and drew dark
-# jags on the edges (look 1.52 -> 2.84%).
+# Edges sharper than SHARP degrees stay sharp, and no texture island crosses one: the mesh is split apart there
+# before the unwrap, as artists split UVs at hard edges. Crossed by an island, the normal map has to jump along a
+# slanted line, which it draws in steps of texels: the white dashes on the snowman and the dragon (2026-11-04).
+# Marked as seams instead, the packer ignores them. The computer's panels stay crisp: at 200k it shaded 1.94 ->
+# 1.78% off and creases 1.06 -> 0.58% with sharp edges, against smooth ones.
 SHARP = float(PARAMS.get("sharp", 45))
 if SHARP:
     bpy.ops.mesh.select_mode(type="EDGE")
     bpy.ops.mesh.select_all(action="DESELECT")
     bpy.ops.mesh.edges_select_sharp(sharpness=math.radians(SHARP))
     bpy.ops.mesh.mark_sharp()
+    bpy.ops.mesh.edge_split(type="EDGE")
     bpy.ops.mesh.select_mode(type="FACE")
     bpy.ops.mesh.select_all(action="SELECT")
+bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
 
 
 def overlapping():
