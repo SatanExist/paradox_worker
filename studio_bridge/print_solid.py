@@ -73,11 +73,12 @@ SUPPORT_SAMPLES_PER_MM2 = 8.0  # surface points for the support estimate (fewer,
 TURN_CONTACT_MM2 = 50.0  # turned for printing, it must still sit on the plate with this much
 TURN_APART_DEG = 15.0  # candidates closer than this to one another or to how it stands are the same way up
 TURN_POOL = 12  # ways up the full estimate looks at
+TURN_TWIN_SUPPORT = 1.1  # of two ways up that are nearly the same, the steadier goes on with up to this much more support
 TURN_TRIED = 3  # of them, at most this many go to the slicer
 TURN_TRY_GAIN = 0.1  # and only for this much less support by the estimate
 TURN_TRY_MIN_CM3 = 1.0  # and at least this much: nothing goes to the slicer on most models
 TURN_SAVES_MIN = 5.0  # by the slicer, it is suggested only if this much faster
-TURN_SAVES_G = 1.0  # and this much lighter (the slicer wobbles under 1 g from a small change of shape)
+TURN_SAVES_G = 1.0  # and this much lighter. The slicer is touchy: hunyuan31_mech tilted under a degree reads +2, -16, -25 min
 
 
 @dataclass(frozen=True)
@@ -1427,7 +1428,8 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
     stands, the 40 biggest faces of its hull, 100 spread over the sphere, each at least TURN_APART_DEG off how it
     stands; turned, it must keep TURN_CONTACT_MM2 on the plate and not topple (FALLS_TIP_DEG). A quick pass on a
     few points picks TURN_POOL, the full estimate (SUPPORT_SAMPLES_PER_MM2: sparse points read trellis2_harbor 15 %
-    better on its side, PrusaSlicer says 56 % worse) ranks them, those TURN_APART_DEG apart stay.
+    better on its side, PrusaSlicer says 56 % worse) ranks them, those TURN_APART_DEG apart stay (of two closer ones,
+    the steadier if it needs about the same support).
     The estimate finds where to look, and only PrusaSlicer can say if it pays: rodin_spider, trellis2_lattice and
     tripo_blaster all read 40-43 % less support and print +12, +36 and -60 min, as support is only part of the time.
     So the best TURN_TRIED past TURN_TRY_GAIN are sliced, with how it stands, and the one saving the most time is
@@ -1458,11 +1460,11 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
         pts, fi = trimesh.sample.sample_surface(m, count, seed=SEED)
         return {i: _support(pts, nrm[fi], float(m.area) / count, downs[i]) for i in which}
 
-    def holds(i):  # with this way down, its weight stays over what it rests on
+    def tip(i):  # with this way down, how far its weight is inside what it rests on
         R = trimesh.geometry.align_vectors(downs[i], [0, -1.0, 0])[:3, :3]
         P, c = V @ R.T, R @ com
         low = float(P[:, 1].min())
-        return _tip_deg(P[P[:, 1] < low + 0.2][:, [0, 2]], c[[0, 2]], float(c[1]) - low) >= FALLS_TIP_DEG
+        return _tip_deg(P[P[:, 1] < low + 0.2][:, [0, 2]], c[[0, 2]], float(c[1]) - low)
 
     quick = estimate(100_000, range(len(downs)))
     apart = np.cos(np.radians(TURN_APART_DEG))
@@ -1470,15 +1472,20 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
     for i in sorted((i for i in quick if i != 0 and quick[i][1] >= TURN_CONTACT_MM2), key=lambda i: (quick[i][0], i)):
         if len(pool) == TURN_POOL:
             break
-        if downs[i] @ downs[0] < apart and holds(i):
+        if downs[i] @ downs[0] < apart and tip(i) >= FALLS_TIP_DEG:
             pool.append(i)
     full = estimate(int(np.clip(float(m.area) * SUPPORT_SAMPLES_PER_MM2, 100_000, 2_000_000)), [0, *pool])
     stands = full[0][0]
     tried: list[int] = []
     for i in sorted((i for i in pool if full[i][1] >= TURN_CONTACT_MM2), key=lambda i: (round(full[i][0] / 1000, 1), full[i][2], i)):
-        if (len(tried) < TURN_TRIED and full[i][0] <= (1 - TURN_TRY_GAIN) * stands and stands - full[i][0] >= TURN_TRY_MIN_CM3 * 1000
-                and all(downs[i] @ downs[j] < apart for j in tried)):
-            tried.append(i)
+        if full[i][0] > (1 - TURN_TRY_GAIN) * stands or stands - full[i][0] < TURN_TRY_MIN_CM3 * 1000:
+            continue
+        twin = next((n for n, j in enumerate(tried) if downs[i] @ downs[j] >= apart), None)
+        if twin is None:
+            if len(tried) < TURN_TRIED:
+                tried.append(i)
+        elif full[i][0] <= TURN_TWIN_SUPPORT * full[tried[twin]][0] and tip(i) > tip(tried[twin]):
+            tried[twin] = i
     info: dict[str, Any] = {"supportCm3": round(stands / 1000, 1)}
     base = slice_stats(m) if tried else None
     if base is not None:
