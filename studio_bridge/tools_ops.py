@@ -683,6 +683,8 @@ def _seen_faces(V, F, directions: int):
 
 
 def _seen_faces_with(V, F, directions: int, pool, workers: int):
+    from concurrent.futures import BrokenExecutor
+
     import numpy as np
 
     _rays_start(V, F)
@@ -695,13 +697,19 @@ def _seen_faces_with(V, F, directions: int, pool, workers: int):
     batch: list[tuple[Any, Any]] = []
 
     def cast():
-        if pool is None:
-            seen[_rays_seen(batch)] = True
-        else:  # each process a share of every direction's faces
+        nonlocal pool
+        if pool is not None:  # each process a share of every direction's faces
             split = [(np.array_split(t, workers), d) for t, d in batch]
             shares = [[(parts[w], d) for parts, d in split if len(parts[w])] for w in range(workers)]
-            for found in pool.map(_rays_seen, [s for s in shares if s]):
-                seen[found] = True
+            try:
+                for found in pool.map(_rays_seen, [s for s in shares if s]):
+                    seen[found] = True
+            except (BrokenExecutor, OSError):
+                # A process died (twice, with three heavy jobs at once: a truncated pickle, OSError 22; cause not found).
+                # Here in this process it is slower, and "seen from any direction" comes out the same.
+                pool = None
+        if pool is None:
+            seen[_rays_seen(batch)] = True
         batch.clear()
 
     for d in _sphere(directions):
@@ -946,6 +954,29 @@ def _blender() -> str | None:
     return os.getenv("BLENDER_BIN") or shutil.which("blender")
 
 
+def _without_skin(path: Path) -> Path:
+    """A copy of the model for Blender to read without its skin; the file itself when it has none. Blender's
+    importer moves a skinned mesh into its bind pose, and wherever that isn't the file's own axes graft.mjs can't
+    find the triangles it baked (CesiumMan exported from Blender: 0 of 300, so no budget could be baked). Without
+    the skin every vertex stays where the file has it: the model at rest. CesiumMan 2000, fox 300 and BrainStem
+    15000 bake level with their bind pose (0 and 0, 10.47 and 10.51, 6.25 and 6.27% off, 2026-11-05)."""
+    gltf = _glb_json(path)
+    if not any("skin" in node for node in gltf.get("nodes", [])):
+        return path
+    for node in gltf["nodes"]:
+        node.pop("skin", None)
+    body = json.dumps(gltf, separators=(",", ":")).encode()
+    body += b" " * (-len(body) % 4)
+    with open(path, "rb") as fh:
+        head = fh.read(20)
+        fh.seek(20 + struct.unpack("<I", head[12:16])[0])
+        rest = fh.read()
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(head[:8] + struct.pack("<I", 20 + len(body) + len(rest)) + struct.pack("<I", len(body)) + head[16:20] + body + rest)
+    return Path(name)
+
+
 def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False) -> dict[str, Any]:
     """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
     bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
@@ -959,10 +990,11 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     fd, name = tempfile.mkstemp(suffix=".glb")
     os.close(fd)
     baked = Path(name)
+    heavy_copy, light_copy = _without_skin(plain), _without_skin(out_path)
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(plain), str(out_path), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {})})],
+             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {})})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -986,7 +1018,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
         return info
     finally:
         shutil.rmtree(work, ignore_errors=True)
-        for path in {baked, plain} - {in_path, high}:
+        for path in {baked, plain, heavy_copy, light_copy} - {in_path, high, out_path}:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -999,7 +1031,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
 # picture differs at a glance (game_look.noticeablePct). That reproduces all six marks: camera, drill and
 # watch 20k, mech and scorpion 35k, the sword untouched. With normal-map baking the floor should come down.
 AUTO_FLOOR_TRIS = 20000
-AUTO_BUDGETS = (20000, 35000, 50000, 75000, 100000, 150000, 200000)
+AUTO_BUDGETS = (20000, 35000, 42000, 50000, 60000, 75000, 100000, 150000, 200000)
 NOTICEABLE_OK_PCT = 5.5
 
 # What looked crumpled under 20k was the shading, not the outline: camera and drill at 10k differ in 1-2% of
@@ -1048,6 +1080,10 @@ RECHECK_MARGIN = 1.15
 
 # More of the picture than this off at the finest details (game_look.close_up): a rung up. Marked by eye, there.
 CLOSE_OK_PCT = 2.65
+# ...unless a bigger budget comes no closer than this share of the score: the triangles have stopped helping, and what
+# is left is the texture's own resolution. The watch read 4.14, 3.08, 2.82, 2.70, 2.93, 2.73 at 20k to 75k, went on to
+# 100k for it, and at 35k and up looked the same to the eye (2026-11-05).
+CLOSE_GAIN = 0.9
 
 
 def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None,
@@ -1128,6 +1164,7 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
 def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
             bake: bool, bake_ok_pct: float | None, ladder: list[int], high: Path | None) -> dict[str, Any]:
     tried: list[dict[str, Any]] = []
+    only_close_off: list[dict[str, Any]] = []  # right from afar, off up close
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
     # Most models pass at the floor the eye set, and one whose shading is off there can't go under it (fewer
     # triangles only shade worse), so that rung is looked at first: one look settles the dog, the snowman,
@@ -1139,7 +1176,10 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
     while lo < hi:
         mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
         try:
-            step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
+            try:
+                step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
+            except RuntimeError:  # once more: a passing failure must not make the model heavier
+                step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
         except RuntimeError as exc:  # this budget couldn't be baked: a bigger one still may, and the report says so
             tried.append({"targetTris": ladder[mid], "failed": str(exc)[:160]})
             lo = mid + 1
@@ -1165,13 +1205,23 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
         tried.append(step)
         # Off up close never goes as far as the whole model, ladder[-1]: at the top rung the report says so.
         close_off = step.get("closePct", 0) > CLOSE_OK_PCT and mid < len(ladder) - 2
-        if seen <= limit and not close_off and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False)):
+        fine_afar = seen <= limit and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False))
+        if fine_afar and close_off:
+            only_close_off.append(step)
+        if fine_afar and not close_off:
             hi = mid
             if floor is not None and mid >= floor and step["lightPct"] > purpose["lowLightPct"]:
                 lo = max(lo, floor)
         else:
             lo = mid + 1
-    return {"picked": ladder[lo], "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), "tried": tried}
+    picked, flat = ladder[lo], None
+    measured = {s["targetTris"]: s["closePct"] for s in tried if "closePct" in s}
+    for step in sorted(only_close_off, key=lambda s: s["targetTris"]):
+        above = [b for b in sorted(measured) if step["targetTris"] < b <= picked]
+        if above and measured[above[0]] >= step["closePct"] * CLOSE_GAIN:
+            picked, flat = step["targetTris"], step["closePct"]
+            break
+    return {"picked": picked, "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), **({"closeFlatPct": flat} if flat is not None else {}), "tried": tried}
 
 
 # A model this light is cut both ways, plain and baked, and the closer kept: it takes seconds, and on
@@ -1249,8 +1299,15 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
     bake = bool(params.get("bake")) and _blender() is not None
     bake_ok_pct = float(params.get("maxNoticeablePct") or purpose["bakeOkPct"])
     auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose, bake=bake, bake_ok_pct=bake_ok_pct)
-    auto["purpose"] = purpose_name
     plain = {k: v for k, v in params.items() if k not in ("autoBudget", "maxErrorPct", "maxNoticeablePct")}
+    # No budget could be baked: every failure climbs a rung, so the search ended on the whole model, uncut. A cut
+    # without a bake is lighter, and the plain ladder was marked by eye for it.
+    bake_failed = [step["targetTris"] for step in auto["tried"] if "failed" in step] if auto["tried"] and all("failed" in step for step in auto["tried"]) else []
+    if bake_failed:
+        bake = False
+        plain.pop("bake", None)
+        auto = _auto_budget(in_path, texture_size, ok_pct, purpose_name, purpose)
+    auto["purpose"] = purpose_name
     plain["closeCheck"] = bake and purpose_name != "background"  # a far-off prop is never seen up close
     report = _best_of(in_path, out_path, {**plain, "targetTris": auto["picked"]})
     # The look is judged standing still. A model that moves also has to bend right: while it breaks more than
@@ -1272,8 +1329,14 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
             found["seeThroughPatchPx"] = after["seeThrough"]["seeThroughPatchPx"]
         if (after.get("torn") or {}).get("tornPct", 0) > TORN_OK_PCT:
             found["tornPct"] = after["torn"]["tornPct"]
-        if (after.get("closeUp") or {}).get("closePct", 0) > CLOSE_OK_PCT and any(auto["picked"] < b < whole for b in ladder):
-            found["closePct"] = after["closeUp"]["closePct"]
+        close = (after.get("closeUp") or {}).get("closePct", 0)
+        if close > CLOSE_OK_PCT and any(auto["picked"] < b < whole for b in ladder):
+            # Not when more triangles have stopped bringing it closer: found in the search, or on the way up here.
+            before = next((b["closePct"] for b in reversed(bent) if "closePct" in b), None)
+            if "closeFlatPct" not in auto and (before is None or close < before * CLOSE_GAIN):
+                found["closePct"] = close
+            else:
+                auto.setdefault("closeFlatPct", close)
         return found
 
     bent: list[dict[str, Any]] = []
@@ -1294,8 +1357,11 @@ def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dic
                            + (f", bend right, don't show through and keep their texture whole ({looked} looked right but "
                               f"{' and '.join(w for w in why if w)})" if bent else ""))
     if (report["after"].get("closeUp") or {}).get("closePct", 0) > CLOSE_OK_PCT:
-        report["steps"].append(f"still off up close at the top budget ({report['after']['closeUp']['closePct']:g}% of the picture at its finest details)")
-    if failed := [step["targetTris"] for step in auto["tried"] if "failed" in step]:
+        report["steps"].append(f"still off up close ({report['after']['closeUp']['closePct']:g}% of the picture at its finest details): "
+                               + ("more triangles stopped bringing it closer" if "closeFlatPct" in auto else "this is the top budget"))
+    if bake_failed:
+        report["steps"].append(f"couldn't be baked at {', '.join(map(str, bake_failed))} triangles: cut without baking")
+    elif failed := [step["targetTris"] for step in auto["tried"] if "failed" in step]:
         report["steps"].append(f"couldn't be baked at {', '.join(map(str, failed))} triangles: those budgets were passed over")
     return report
 

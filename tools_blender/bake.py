@@ -79,10 +79,7 @@ low = imported(LOW)
 if not high or not low:
     raise SystemExit("no meshes to bake")
 
-# Rigged and morphing models are baked as they stand at rest: bones in their bind pose, shape keys off.
-armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-for arm in armatures:
-    arm.data.pose_position = "REST"
+# Morphing models are baked as they stand at rest, shape keys off. Rigged ones come here without their skin (tools_ops._without_skin).
 for o in high + low:
     o.show_only_shape_key = bool(o.data.shape_keys)
     o.active_shape_key_index = 0
