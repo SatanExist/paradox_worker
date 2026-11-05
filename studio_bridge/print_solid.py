@@ -68,6 +68,7 @@ STEADY_TIP_DEG = 10.0  # a model that must tilt this far before it falls stands 
 FALLS_TIP_DEG = 3.0  # under this it falls at a breath: laid down, or given a base
 UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down means it was made to stand
 TILT_FREE_DEG = 3.0  # it may be tilted this much onto a face it rests on: nobody sees it
+LYING_TRIES = 6  # laid down: this many of the steadiest hull faces and this many of the biggest are really tried
 CUT_MAX_MM = 2.0  # the bottom is cut flat by at most this much (and 3 % of the height)
 CUT_STEP_MM = 0.1
 HOLD_MM2 = 20.0  # plate contact for the first layer to hold (upright models; one lying down is held by supports)
@@ -1533,7 +1534,7 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     order += [r for r in rows if r[1] >= best - 0.5] + sorted(rows, key=lambda r: -r[1])
     h, below, area = lip
     w = printer.min_wall_mm
-    shaved = lambda d: float(area[(h - below < d) & (d < h) & (h < d + w)].sum())  # noqa: E731
+    shaved = lambda d: float(area[(h - below < d) & (d < h) & (h < d + w)].sum()) if d > 0 else 0.0  # noqa: E731  no cut, nothing shaved
     parts = len(man.decompose())
     whole = lambda r: r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts  # noqa: E731
     pick = next((r for r in order if whole(r)), rows[0])
@@ -1572,8 +1573,8 @@ def _ledges(man, top: float):
 
 
 def _rest_faces(V, com):
-    """Faces of the convex hull it could rest on (centre of mass over them): (outward normal, tip angle, tilt
-    from straight down in degrees), steadiest first."""
+    """Faces of the convex hull: (outward normal, tip angle, tilt from straight down in degrees, area), steadiest
+    first. A tip angle under 0: the centre of mass is not over the face, it does not rest on it as it is."""
     import numpy as np
     import trimesh
 
@@ -1589,8 +1590,7 @@ def _rest_faces(V, com):
         u /= np.linalg.norm(u)
         w = np.cross(nrm, u)
         tip = _tip_deg(np.c_[P @ u, P @ w], np.array([com @ u, com @ w]), float((P[0] - com) @ nrm))
-        if tip > 0:
-            out.append((nrm, tip, float(np.degrees(np.arccos(np.clip(-nrm[1], -1.0, 1.0))))))
+        out.append((nrm, tip, float(np.degrees(np.arccos(np.clip(-nrm[1], -1.0, 1.0)))), float(hull.area_faces[g].sum())))
     return sorted(out, key=lambda r: -r[1])
 
 
@@ -1602,9 +1602,12 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     at a few points, which hold neither the print nor the model. On the corpus a cut of 0.3–1 mm gives most
     figures a flat bottom (trellis2_statue: 0 -> 1737 mm² of contact, steady at 27°). A model that can't stand
     upright even so falls at a breath (under 3°), or only stands on a cut that shaves its bottom ledge thin
-    (see _best_cut). It is tilted up to 3° onto a face of its hull it rests on, if
-    that steadies it; else, if it has such a face near straight down, it was made to stand and gets a round base (`base` "none" leaves it as it is); otherwise it is an object lying about,
-    stood on its tip by the generator (a sword, a blaster), and is laid on the face it lies steadiest on.
+    (see _best_cut). It is tilted up to 3° onto a face of its hull, if that steadies it. A cut that only shaves
+    gives way to the first that doesn't, tilted if need be, as long as the model doesn't fall: wobbly is reported,
+    a base changes the look. If it would still fall and has a footing (a hull face it rests on near straight down,
+    or its centre of mass over what it stands on) it was made to stand and gets a round base (`base` "none" leaves
+    it as it is); otherwise it is an object lying about, stood on its tip by the generator (a sword, a blaster),
+    and is laid on the face it lies steadiest on.
     `m` is closed, in mm, Y up, bottom at 0. Returns (mesh, T, info): T the 4x4 move (rotation and shift) the
     result went through before any cut or base, so pieces kept beside it can follow; mesh None when it was
     left as it was."""
@@ -1641,19 +1644,33 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
         return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, cut, hold=bool(nrm[1] < -0.9)))
 
     if tip < FALLS_TIP_DEG or shaves:
-        rests = _rest_faces(V, com)
-        upright = [r for r in rests if r[2] <= UPRIGHT_TILT_DEG]
-        small = [r for r in upright if r[2] <= TILT_FREE_DEG]
+        hull_faces = _rest_faces(V, com)
+        rests = [r for r in hull_faces if r[1] > 0]
+        small = [r for r in hull_faces if r[2] <= TILT_FREE_DEG]  # the tilt is judged by where it lands, not by this face
         turned = onto(small[0][0]) if small else None
+        # what stands on its footing with its centre of mass over it was made to stand, however weakly
+        made_to_stand = any(r[2] <= UPRIGHT_TILT_DEG for r in rests) or (tip > 0 and contact >= HOLD_MM2)
         if turned and turned[5] >= FALLS_TIP_DEG and not turned[7]:  # a tilt nobody sees puts it on a face it rests on
             T, V, com, man, d, tip, contact = turned[:7]
             info["tiltDeg"] = round(small[0][2], 1)
-        elif upright:
+        elif shaves and clean[1] >= FALLS_TIP_DEG and (not turned or clean[1] >= turned[8][1]):
+            d, tip, contact = clean  # wobbly is no reason for a base: the first cut that shaves nothing
+            shaves = False
+        elif shaves and turned and turned[8][1] >= FALLS_TIP_DEG:
+            T, V, com, man = turned[:4]
+            d, tip, contact = turned[8]
+            info["tiltDeg"] = round(small[0][2], 1)
+            shaves = False
+        elif made_to_stand:
             add_base = base != "none"
             if add_base and shaves:  # the base takes the ledge: no need to shave it
                 d, tip, contact = clean
-        elif rests and tip < FALLS_TIP_DEG:  # an object stood on its tip: laid on the face it lies steadiest on
-            T, V, com, man, d, tip, contact = onto(rests[0][0])[:7]
+        elif rests and tip < FALLS_TIP_DEG:  # an object stood on its tip: laid on the face it really lies steadiest on
+            biggest = sorted(rests, key=lambda r: -r[3])[:LYING_TRIES]  # a hull face's own tip angle says little: try them
+            tried = rests[:LYING_TRIES] + [r for r in biggest if not any(r is x for x in rests[:LYING_TRIES])]
+            lying = [onto(r[0]) for r in tried]
+            best = max([t for t in lying if not t[7]] or lying, key=lambda t: t[5])
+            T, V, com, man, d, tip, contact = best[:7]
             info["pose"] = "lying"
     if d == 0 and not add_base and info["pose"] == "upright" and "tiltDeg" not in info:
         info.update({"tipDeg": round(tip, 1), "contactMm2": round(contact, 1), "cutMm": 0.0})
