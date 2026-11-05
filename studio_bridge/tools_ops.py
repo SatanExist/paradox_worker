@@ -977,6 +977,10 @@ def _without_skin(path: Path) -> Path:
     return Path(name)
 
 
+class _BakeTooLong(RuntimeError):
+    """A bake ran out of its time: a bigger budget won't do better, and neither will the same one again."""
+
+
 def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False) -> dict[str, Any]:
     """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
     bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
@@ -1016,6 +1020,10 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
         if lines:
             info["vertexCacheMisses"] = json.loads(lines[-1])["graft"].get("vertexCacheMisses")
         return info
+    except subprocess.TimeoutExpired as exc:
+        raise _BakeTooLong(f"baking took over {exc.timeout:g} s") from exc
+    except OSError as exc:  # no Blender where it should be, no room on the disk
+        raise RuntimeError(f"could not bake the textures: {type(exc).__name__}") from exc
     finally:
         shutil.rmtree(work, ignore_errors=True)
         for path in {baked, plain, heavy_copy, light_copy} - {in_path, high, out_path}:
@@ -1178,11 +1186,13 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
         try:
             try:
                 step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
+            except _BakeTooLong:
+                raise
             except RuntimeError:  # once more: a passing failure must not make the model heavier
                 step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
         except RuntimeError as exc:  # this budget couldn't be baked: a bigger one still may, and the report says so
             tried.append({"targetTris": ladder[mid], "failed": str(exc)[:160]})
-            lo = mid + 1
+            lo = hi if isinstance(exc, _BakeTooLong) else mid + 1
             continue
         seen = step["noticeablePct"]
         limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct

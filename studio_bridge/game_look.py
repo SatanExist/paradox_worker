@@ -216,9 +216,9 @@ def _origins(centre, radius: float, view, res: int):
     return (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
 
 
-def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
-    """Where a view meets the model at all, and which face turned towards it it meets (-1: none): a viewer
-    draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
+def _drawn(m: dict[str, Any], centre, radius: float, view, res: int, also_met: bool = True):
+    """Where a view meets the model at all (None unless `also_met`), and which face turned towards it it meets (-1:
+    none): a viewer draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
     import igl.embree
     import numpy as np
 
@@ -228,15 +228,27 @@ def _drawn(m: dict[str, Any], centre, radius: float, view, res: int):
     rays = np.repeat(d[None], len(origins), 0)
     V, F = m["V"], m["F"]
     facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
-    met = igl.embree.line_mesh_intersection(origins, rays, V, F)[:, 0] >= 0
+    met = igl.embree.line_mesh_intersection(origins, rays, V, F)[:, 0] >= 0 if also_met else None
     shown = np.full(len(origins), -1, np.int64)
     if len(facing):
         hit = igl.embree.line_mesh_intersection(origins, rays, V, F[facing])[:, 0].astype(np.int64)
         shown[hit >= 0] = facing[hit[hit >= 0]]
-    return met.reshape(res, res), shown.reshape(res, res)
+    return None if met is None else met.reshape(res, res), shown.reshape(res, res)
 
 
 SEE_THROUGH_VIEWS = 26  # all round: a slit shows through from a few angles only (the knight's, from above)
+NO_TEX = 4  # where only the shape is drawn
+
+# Per job, the same for every budget tried: what the original looks like from the views the judges use. The pictures
+# only, not the model: a bake runs between two looks and wants the memory. They took the Direct3D knight's job a fifth
+# of its time, drawn anew each look.
+_SEEN_ORIGINAL: dict[tuple, dict] = {}
+_LOOK_ORIGINAL: dict[tuple, dict] = {}
+
+
+def _file_key(path: Path) -> tuple:
+    stat = path.stat()
+    return (str(path), stat.st_mtime_ns, stat.st_size)
 
 
 def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str, int]:
@@ -249,13 +261,18 @@ def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str
     import numpy as np
     from scipy import ndimage
 
-    a, b = _load(Path(original)), _load(Path(result))
+    views = _SEEN_ORIGINAL.setdefault(_file_key(Path(original)), {})
+    if res not in views:
+        a = _load(Path(original), NO_TEX)
+        lo, hi = a["V"].min(0), a["V"].max(0)
+        centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
+        views[res] = centre, radius, [(view, _drawn(a, centre, radius, view, res, also_met=False)[1]) for view in _sphere(SEE_THROUGH_VIEWS)]
+        del a
+    centre, radius, drawn_views = views[res]
+    b = _load(Path(result), NO_TEX)
     b["V"] = b["V"] - np.asarray(shift, float)
-    lo, hi = a["V"].min(0), a["V"].max(0)
-    centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
     total, biggest, faces = 0, 0, set()
-    for view in _sphere(SEE_THROUGH_VIEWS):
-        _, drawn = _drawn(a, centre, radius, view, res)
+    for view, drawn in drawn_views:
         met, shown = _drawn(b, centre, radius, view, res)
         inside = ndimage.binary_erosion(drawn >= 0, iterations=1)  # not the outline's edge pixels
         through = inside & met & (shown < 0)
@@ -334,13 +351,19 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None, re
     from scipy import ndimage
 
     tex = TEX if res <= RES else 2 * TEX  # the blur that judges "at a glance" stays 5 screen pixels at any size
-    a, b = _load(Path(original), tex), _load(Path(result), tex)
+    views = _LOOK_ORIGINAL.setdefault(_file_key(Path(original)), {})
+    if res not in views:
+        a = _load(Path(original), tex)
+        lo, hi = a["V"].min(0), a["V"].max(0)
+        centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
+        views[res] = centre, radius, {name: _draw(a, centre, radius, view, res) for name, view in VIEWS.items()}
+        del a
+    centre, radius, drawn_views = views[res]
+    b = _load(Path(result), tex)
     b["V"] = b["V"] - np.asarray(shift, float)
-    lo, hi = a["V"].min(0), a["V"].max(0)
-    centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
     per_view, rows = {}, []
     for name, view in VIEWS.items():
-        ma, pa = _draw(a, centre, radius, view, res)
+        ma, pa = drawn_views[name]
         mb, pb = _draw(b, centre, radius, view, res)
         both, union = ma & mb, ma | mb
         diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
@@ -467,8 +490,7 @@ def _close_frames(original: Path) -> tuple[list[tuple], int]:
     """The original right up at CLOSE_SPOTS spots of its finest relief, each from straight on and from the side."""
     import numpy as np
 
-    stat = original.stat()
-    key = (str(original), stat.st_mtime_ns, stat.st_size)
+    key = _file_key(original)
     if key not in _CLOSE_FRAMES:
         a = _load(original, CLOSE_TEX)
         diag = float(np.linalg.norm(a["V"].max(0) - a["V"].min(0)))
@@ -485,8 +507,10 @@ def _close_frames(original: Path) -> tuple[list[tuple], int]:
 
 
 def forget_close(original: Path) -> None:
-    for key in [k for k in _CLOSE_FRAMES if k[0] == str(original)]:
-        del _CLOSE_FRAMES[key]
+    """What was kept of the original for this job goes: the close frames and the judges' pictures."""
+    for kept in (_CLOSE_FRAMES, _SEEN_ORIGINAL, _LOOK_ORIGINAL):
+        for key in [k for k in kept if k[0] == str(original)]:
+            del kept[key]
 
 
 def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
