@@ -125,7 +125,10 @@ bpy.ops.mesh.select_all(action="SELECT")
 # slanted line, which it draws in steps of texels: the white dashes on the snowman and the dragon (2026-11-04).
 # Marked as seams instead, the packer ignores them. The computer's panels stay crisp: at 200k it shaded 1.94 ->
 # 1.78% off and creases 1.06 -> 0.58% with sharp edges, against smooth ones.
-SHARP = float(PARAMS.get("sharp", 45))
+# 60, not 45: split at 45, shallow folds came out as white slashes and wedges, on the skeleton's skull, the
+# computer's screen and the snowman's scarf; at 60 they go and hard panels stay hard. Look on 16 models: truck 5.23 ->
+# 4.75, statue 3.92 -> 3.71, computer 4.11 -> 3.99, pistol 1.08 -> 1.13, crown 26.36 -> 26.53, the rest within 0.04 (2026-11-05).
+SHARP = float(PARAMS.get("sharp", 60))
 if SHARP:
     bpy.ops.mesh.select_mode(type="EDGE")
     bpy.ops.mesh.select_all(action="DESELECT")
@@ -174,6 +177,18 @@ bpy.ops.uv.average_islands_scale()
 bpy.ops.uv.pack_islands(rotate=True, rotate_method="CARDINAL", scale=True, margin_method="FRACTION", margin=GAP / BAKE, shape_method="CONCAVE")
 overlapped.append(overlapping())
 bpy.ops.object.mode_set(mode="OBJECT")
+# Each corner's normal leans towards its bigger faces, so long thin triangles don't bend the shading of the big ones
+# beside them, which the normal map then has to undo. Light and look level or closer on nearly all (statue look 4.14 ->
+# 3.92, pistol 1.09 -> 1.08), files up to 1.5% lighter, no extra time (2026-11-05). A mesh with shape keys can't apply
+# a modifier, so it keeps the plain smooth normals.
+for o in low:
+    if not o.data.shape_keys:
+        bpy.context.view_layer.objects.active = o
+        weighted = o.modifiers.new("weighted", "WEIGHTED_NORMAL")
+        weighted.keep_sharp = True
+        weighted.mode = "FACE_AREA"
+        weighted.weight = 50
+        bpy.ops.object.modifier_apply(modifier=weighted.name)
 
 
 def image(name, colour, size=None):
