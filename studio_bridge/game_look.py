@@ -451,7 +451,11 @@ def _relief_spots(m: dict[str, Any], diag: float) -> list[tuple[Any, Any]]:
         if any(np.linalg.norm(centre - o[0]) <= 1.5 * CLOSE_FRAME * diag for o in out):
             continue
         side = (n[mine] * area[mine, None]).sum(0)
-        side = side / max(np.linalg.norm(side), 1e-9)
+        # Faces looking opposite ways cancel out (a double-sided sheet, trellis2_lattice): no side to look from,
+        # and a camera with no direction hangs the ray tracer for good.
+        if np.linalg.norm(side) < 1e-3 * area[mine].sum():
+            continue
+        side = side / np.linalg.norm(side)
         for d in (side, -side):
             hit = igl.embree.line_mesh_intersection((centre + d * 2 * diag)[None], -d[None], V, F)[0]
             if hit[0] < 0:
