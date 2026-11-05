@@ -31,6 +31,7 @@ When every result is paper the report says so (thinWalls). Lengths are in mm at 
 from __future__ import annotations
 
 import os
+import gc
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -38,6 +39,7 @@ from typing import Any, Callable
 BALL_MM = 3.0  # a chamber is space a ball this size can't reach from outside
 WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
+RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
 BRIDGE_REACH_MM = 1.5  # pieces floating farther than this from the body are left as they are
 CRUMB_MM3 = 1.0
 LOST_MM = 1.0
@@ -55,9 +57,13 @@ THICKNESS_SAMPLES = 100_000  # surface points the wall thickness is measured at
 THICKNESS_CONE_DEG = 20.0  # six rays round the inward normal at this angle, plus the normal itself
 THIN_SPOT_CELL_MM = 2.0  # thin points closer than this belong to the same spot
 THIN_SPOT_MIN_MM2 = 1.0  # smaller thin spots are tips and needle points, not walls: not reported
-THICKEN_SPACING_MM = 0.2  # where walls are thickened, the added material is centred on points this far apart
-THICKEN_MARGIN_MM = 0.05  # added walls are this much over the minimum: the balls leave shallow dips between them
-THICKEN_CLEAR_MM = 0.05  # a ball added out of sight may come this close past the seen surface, no closer
+THICKEN_MARGIN_MM = 0.05  # thickened walls come out this much over the minimum, on each side
+THICKEN_NEAR_MM = 1.2  # how far from a thin wall the surface may move at all
+THICKEN_EDGE_MM = 0.6  # edges there are cut down to this, so the surface can bend
+THICKEN_NARROW_EDGE_MM = 0.3  # and to this where the two sides of a wall cancel: a narrow strap needs vertices in the middle of its sides
+THICKEN_REACH = 9.0  # how far a wall's direction is averaged: about the square root of this many faces
+THICKEN_STAIR_LOSS = 1.5  # a staircase's averaged normal is shorter than one: made up for, to this many times
+THICKEN_TOLERANCE_MM = 0.02  # the thickened mesh is simplified within this, far under a 0.2 mm layer
 STEADY_TIP_DEG = 10.0  # a model that must tilt this far before it falls stands steady; less is wobbly
 FALLS_TIP_DEG = 3.0  # under this it falls at a breath: laid down, or given a base
 UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down means it was made to stand
@@ -700,6 +706,47 @@ def _wrapped(orig, repaired, shared, log: Log):
     return m, {"piecesBridged": bridged}
 
 
+def _lost_faces(orig, m):
+    """The original's faces m lost: a corner or the centre off m by over RESTORE_FAR_MM and outside it. Returns
+    those faces and the same with a ring round them, so what is given back reaches into the body."""
+    import igl
+    import numpy as np
+
+    V, F = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)
+    Vm, Fm = np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64)
+    Q = np.vstack([V, V[F].mean(1)])
+    far = np.sqrt(igl.point_mesh_squared_distance(Q, Vm, Fm)[0]) > RESTORE_FAR_MM
+    out = np.zeros(len(Q), dtype=bool)
+    if far.any():
+        out[far] = _winding(Vm, Fm, Q[far], bool(m.is_watertight)) < 0.5
+    bad_v, bad_c = out[: len(V)], out[len(V):]
+    bad = bad_c | bad_v[F].any(1)
+    grown = bad_v.copy()
+    grown[F[bad].ravel()] = True
+    return bad, grown[F].any(1)
+
+
+def _restored(orig, repaired, shared, log: Log):
+    """The repair keeps the original's own faces but can lose what its cuts took (tripo_pack's strap); the whole
+    wrap keeps everything but leaves teeth on every edge. So: the repair, with only what it lost wrapped and joined
+    back. The teeth stay on those few pieces, and the pick still judges the result by what moved and what is lost."""
+    import trimesh
+
+    t = time.time()
+    m = shared["repairMesh"].copy()
+    bad, patch = _lost_faces(orig, m)
+    if not bad.any():
+        raise RuntimeError("the repair lost nothing")
+    piece = trimesh.Trimesh(orig.vertices, orig.faces[patch], process=False)
+    piece.remove_unreferenced_vertices()
+    m = _drop_pockets(_union(m, _wrap(piece.vertices, piece.faces, shared["printer"].wrap_alpha_mm)))
+    log(f"  given back {int(patch.sum())} faces {time.time() - t:.0f}s")
+    t = _tick(shared, "union", t)
+    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
+    _tick(shared, "bridges", t)
+    return m, {"piecesBridged": bridged, "facesGivenBack": int(patch.sum())}
+
+
 # --- measuring and picking -------------------------------------------------------------------------
 
 
@@ -948,11 +995,24 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         shared.pop("shellJob").cancel()
     shell_job = None
     best, note = _pick(cands)
+    # Only where the wrap is winning: a model the repair already wins stays exactly as it was.
+    if best is not None and best["method"] == "wrap" and not paper:
+        got = next((c for c in cands if c["method"] == "repair"), None)
+        if got is not None:
+            shared["repairMesh"] = got["_mesh"]
+            build("restored", _restored)
+            best, note = _pick(cands)
     if best is None:
         raise RuntimeError(note)
     out = best["_mesh"]
     thickened = None
     if thicken_walls:
+        # the hungriest step: what lost the pick goes first
+        for c in cands:
+            c.pop("_mesh", None)
+        shared.clear()
+        repaired = None
+        gc.collect()
         t1 = time.time()
         try:
             out, thickened = thicken(out, printer, log, seen_too=thicken_seen)
@@ -1079,102 +1139,334 @@ def thin_spots(m, printer: Printer) -> dict[str, Any]:
 
 # --- thickening ------------------------------------------------------------------------------------
 
-def _unref(V, F):
-    """The vertices F uses, and F renumbered to them."""
+def _on_table(V, F):
+    """The mesh with the table under it, for rays: what shows only from below is not seen. hunyuan_lighthouse's rocks
+    are a skin open at the bottom: rays from inside got out there, so 505825 of 580204 points counted as seen from both
+    sides and grew over the seen faces; on the table, 843."""
     import numpy as np
 
-    used, inv = np.unique(F, return_inverse=True)
-    return np.ascontiguousarray(V[used]), inv.reshape(F.shape).astype(np.int64)
+    lo, hi = V.min(0), V.max(0)
+    pad = 3 * float((hi - lo).max())
+    y = lo[1] - 0.01
+    table = np.array([[lo[0] - pad, y, lo[2] - pad], [hi[0] + pad, y, lo[2] - pad], [hi[0] + pad, y, hi[2] + pad], [lo[0] - pad, y, hi[2] + pad]])
+    return np.vstack([V, table]), np.vstack([F, np.array([[0, 2, 1], [0, 3, 2]]) + len(V)])
+
+
+def _halve_edges(V, F, tags, edge_mm):
+    """Edges of the faces tagged 2 (of bits: 1 near a thin wall, 2 cut here) longer than `edge_mm` halved, over and over,
+    the faces round them with them, so the mesh stays closed and flat stays flat. Returns (V, F, tags)."""
+    import numpy as np
+
+    for _ in range(12):
+        E = np.sort(F[:, [[0, 1], [1, 2], [2, 0]]], axis=2).reshape(-1, 2)
+        key, inv = np.unique(E[:, 0] * len(V) + E[:, 1], return_inverse=True)
+        uniq = np.c_[key // len(V), key % len(V)]
+        inv = inv.reshape(-1, 3)
+        mark = np.zeros(len(uniq), bool)
+        mark[inv[(tags & 2) > 0].ravel()] = True
+        mark &= np.linalg.norm(V[uniq[:, 0]] - V[uniq[:, 1]], axis=1) > edge_mm
+        if not mark.any():
+            break
+        mid = np.full(len(uniq), -1, np.int64)
+        mid[mark] = len(V) + np.arange(mark.sum())
+        V = np.vstack([V, V[uniq[mark]].mean(1)])
+        M = mid[inv]  # per face: the new vertex on each of its three edges, or -1
+        cuts = (M >= 0).sum(1)
+        out, kid = [F[cuts == 0]], [tags[cuts == 0]]
+        one = np.nonzero(cuts == 1)[0]
+        if len(one):  # start the face at the cut edge
+            k = np.argmax(M[one] >= 0, axis=1)
+            a, b, c = F[one, k], F[one, (k + 1) % 3], F[one, (k + 2) % 3]
+            m = M[one, k]
+            out += [np.c_[a, m, c], np.c_[m, b, c]]
+            kid += [tags[one]] * 2
+        two = np.nonzero(cuts == 2)[0]
+        if len(two):  # start it just after the edge left whole
+            k = (np.argmax(M[two] < 0, axis=1) + 1) % 3
+            a, b, c = F[two, k], F[two, (k + 1) % 3], F[two, (k + 2) % 3]
+            m1, m2 = M[two, k], M[two, (k + 1) % 3]
+            out += [np.c_[m1, b, m2], np.c_[a, m1, m2], np.c_[a, m2, c]]
+            kid += [tags[two]] * 3
+        three = np.nonzero(cuts == 3)[0]
+        if len(three):
+            a, b, c = F[three].T
+            ab, bc, ca = M[three].T
+            out += [np.c_[a, ab, ca], np.c_[ab, b, bc], np.c_[ca, bc, c], np.c_[ab, bc, ca]]
+            kid += [tags[three]] * 4
+        F, tags = np.vstack(out), np.concatenate(kid)
+    return V, F, tags
+
+
+def _fixed_order(m):
+    """The exact union works in several threads and hands the same faces back in a varying order: one fixed order, so
+    the same model gives the same bytes."""
+    import numpy as np
+    import trimesh
+
+    V, F = np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64)
+    o = np.lexsort((V[:, 2], V[:, 1], V[:, 0]))
+    rank = np.empty(len(o), np.int64)
+    rank[o] = np.arange(len(o))
+    F = rank[F]
+    k = np.argmin(F, axis=1)
+    i = np.arange(len(F))
+    F = np.c_[F[i, k], F[i, (k + 1) % 3], F[i, (k + 2) % 3]]
+    return trimesh.Trimesh(V[o], F[np.lexsort((F[:, 2], F[:, 1], F[:, 0]))], process=False)
+
+
+def _part_touching(m):
+    """After an exact union two solids may touch along an edge: four faces on it, and the mesh no longer counts as
+    closed. Nothing is cut: round each such edge the faces are paired, each with its neighbour across the solid, and each
+    pair gets its own new vertex in the middle of the edge. Every edge then has two faces. Same shape, closed again.
+    A face is split once a round, so one with two such edges takes two rounds."""
+    import numpy as np
+    import trimesh
+
+    V, F = np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64)
+    for _ in range(8):
+        a = F.ravel()
+        b = F[:, [1, 2, 0]].ravel()
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        o = np.lexsort((np.repeat(np.arange(len(F)), 3), hi, lo))
+        lo, hi, face = lo[o], hi[o], np.repeat(np.arange(len(F)), 3)[o]
+        start = np.r_[0, np.nonzero((lo[1:] != lo[:-1]) | (hi[1:] != hi[:-1]))[0] + 1]
+        count = np.diff(np.r_[start, len(lo)])
+        if not (count > 2).any():
+            break
+        fn = trimesh.Trimesh(V, F, process=False).face_normals
+        split = np.zeros(len(F), bool)
+        new_v, new_f = [], []
+        F = F.copy()
+        for s0, c in zip(start[count > 2], count[count > 2]):
+            p, q = int(lo[s0]), int(hi[s0])
+            fs = face[s0:s0 + c]
+            if split[fs].any():
+                continue
+            axis = V[q] - V[p]
+            axis /= np.linalg.norm(axis)
+            other = F[fs][~np.isin(F[fs], [p, q])]
+            away = V[other] - V[p]
+            away -= axis[None] * (away @ axis)[:, None]
+            away /= np.maximum(np.linalg.norm(away, axis=1, keepdims=True), 1e-12)
+            e2 = np.cross(axis, away[0])
+            fs = fs[np.argsort(np.arctan2(away @ e2, away @ away[0]), kind="stable")]
+            away = away[np.argsort(np.arctan2(away @ e2, away @ away[0]), kind="stable")]
+            solid_ahead = (-fn[fs] * np.cross(axis, away)).sum(1) > 0
+            taken = np.zeros(c, bool)
+            for i in range(c):
+                j = (i + 1) % c if solid_ahead[i] else (i - 1) % c
+                if taken[i] or taken[j] or i == j:
+                    continue
+                taken[i] = taken[j] = True
+                mid = len(V) + len(new_v)
+                new_v.append((V[p] + V[q]) / 2)
+                for f in (fs[i], fs[j]):
+                    t = F[f]
+                    k = next(k for k in range(3) if {int(t[k]), int(t[(k + 1) % 3])} == {p, q})
+                    x, y, z = t[k], t[(k + 1) % 3], t[(k + 2) % 3]
+                    F[f] = (x, mid, z)
+                    new_f.append((mid, y, z))
+                    split[f] = True
+        V = np.vstack([V, np.array(new_v)])
+        F = np.vstack([F, np.array(new_f, np.int64)])
+    return trimesh.Trimesh(V, F, process=False)
+
+
+def _spread(W, deg, values):
+    """Each column averaged over a short reach on the graph W: (I + reach L) x = values. CG to a fixed tolerance: the
+    same input gives the same answer."""
+    import numpy as np
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spl
+
+    diag = 1.0 + THICKEN_REACH * deg
+    M = (sp.diags(diag) - THICKEN_REACH * W).tocsr()
+    pre = sp.diags(1.0 / diag)
+    return np.column_stack([spl.cg(M, values[:, c], M=pre, rtol=1e-6, atol=0, maxiter=400)[0] for c in range(values.shape[1])])
+
+
+def _wall_moves(V, F, near, target, lo, seen_too, draft=False):
+    """Steps 2-4 of thicken on a mesh already cut: how far each vertex moves. Returns {x, info, tf, t1, cancel}, cancel
+    being the thin faces at vertices where the two sides cancelled; None when nothing is to move. A `draft` only finds
+    those faces, on what it costs little to know: the wall straight across, shared half and half."""
+    import igl.embree
+    import numpy as np
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spl
+    import trimesh
+
+    s = trimesh.Trimesh(V, F, process=False)
+    fn = np.asarray(s.face_normals, np.float64)
+    nf = np.nonzero(near)[0]
+    centre, inward = np.asarray(s.triangles_center, np.float64)[nf], -fn[nf]
+    ei = igl.embree.EmbreeIntersector()
+    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(F, np.int32), True)
+    start, d32 = (centre + inward * 1e-3).astype(np.float32), inward.astype(np.float32)
+    hit, across = np.full(len(nf), -1), np.full(len(nf), np.inf)
+    for i in range(len(nf)):  # straight across first: only the near-thin faces get the full seven rays
+        f, t, _, _ = ei.intersectRay_first(start[i], d32[i])
+        if f >= 0:
+            hit[i], across[i] = f, t + 1e-3
+    del start, d32
+    th = across.copy()
+    if not draft:
+        maybe = across < 1.5 * lo
+        th[maybe] = _ray_thickness(s, centre[maybe], inward[maybe])
+    thin = (th < lo) & (hit >= 0)
+    if draft:
+        open_p = open_q = np.ones(int(thin.sum()))
+        seen_both = np.zeros(int(thin.sum()), bool)
+        w = np.full(int(thin.sum()), 0.5)
+    else:
+        TV, TF = _on_table(V, F)
+        open_p = _open_share(TV, TF, centre[thin], -inward[thin])
+        open_q = _open_share(TV, TF, centre[thin] + inward[thin] * across[thin][:, None], fn[hit[thin]])
+        seen_both = (open_p > 0) & (open_q > 0)
+        shared = open_p + open_q
+        w = np.where(shared > 0, open_q / np.where(shared > 0, shared, 1.0), 0.5)  # this side's part of the shortfall
+    info: dict[str, Any] = {"toMm": round(target, 2), "behindSeen": int(((open_p > 0) & (open_q <= 0)).sum()),
+                            "bothSeen": int(seen_both.sum()) if seen_too else 0,
+                            "notThickened": 0 if seen_too else int(seen_both.sum())}
+    d = (target - th[thin]) * w
+    which = np.nonzero(thin)[0]
+    if not seen_too:
+        which, d = which[~seen_both], d[~seen_both]
+    if not len(which):
+        return None
+    tf = nf[which]
+    area = np.asarray(s.area_faces, np.float64)[tf]
+    t1 = time.time()
+    # the average, face to face, among faces that look about the same way
+    pos = np.full(len(F), -1, np.int64)
+    pos[nf] = np.arange(len(nf))
+    fa = s.face_adjacency
+    pa, pb = pos[fa[:, 0]], pos[fa[:, 1]]
+    both = (pa >= 0) & (pb >= 0)
+    pa, pb = pa[both], pb[both]
+    agree = ((1 + np.einsum("ij,ij->i", fn[fa[both, 0]], fn[fa[both, 1]])) / 2) ** 2
+    Wf = sp.csr_matrix((np.r_[agree, agree], (np.r_[pa, pb], np.r_[pb, pa])), shape=(len(nf), len(nf)))
+    degf = np.asarray(Wf.sum(1)).ravel()
+    del pos, fa, pa, pb, agree
+    weight = np.zeros(len(nf))
+    weight[which] = area / float(area.mean())
+    wish = np.zeros((len(nf), 4))
+    wish[which] = np.c_[fn[tf] * d[:, None], d] * weight[which][:, None]
+    top = _spread(Wf, degf, wish)[which]
+    bottom = np.maximum(_spread(Wf, degf, weight[:, None])[which, 0], 1e-9)
+    # a vertex: the mean of its thin faces
+    n = len(V)
+    a, sum_x, sum_m = np.zeros(n), np.zeros((n, 3)), np.zeros(n)
+    for c in range(3):
+        v = F[tf, c]
+        np.add.at(a, v, area)
+        np.add.at(sum_x, v, top[:, :3] / bottom[:, None] * area[:, None])
+        np.add.at(sum_m, v, top[:, 3] / bottom * area)
+    x = np.zeros((n, 3))
+    ok = a > 0
+    x[ok] = sum_x[ok] / a[ok][:, None]
+    # a staircase's averaged normal is shorter than one: made up for. A sharp edge's, near nothing, hits the cap and stays small
+    ratio = (sum_m[ok] / a[ok]) / np.maximum(np.linalg.norm(x[ok], axis=1), 1e-9)
+    x[ok] *= np.minimum(THICKEN_STAIR_LOSS, ratio)[:, None]
+    cancelled = np.zeros(n, bool)
+    cancelled[np.nonzero(ok)[0][ratio > THICKEN_STAIR_LOSS]] = True
+    cancel = np.zeros(len(F), bool)
+    cancel[tf[cancelled[F[tf]].any(1)]] = True
+    if draft:
+        return {"cancel": cancel}
+    # what is not thin follows, between the moved rows and the still surface
+    still = np.ones(n, bool)
+    still[F[nf].ravel()] = False
+    still[F[~near].ravel()] = True
+    still[ok] = False
+    free = np.nonzero(~(still | ok))[0]
+    if len(free):
+        E = np.sort(F[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
+        key = np.unique(E[:, 0] * n + E[:, 1])
+        E = np.c_[key // n, key % n]
+        W = sp.csr_matrix((np.ones(len(E) * 2), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
+        deg = np.asarray(W.sum(1)).ravel()
+        L = sp.diags(deg) - W
+        Lff = L[free][:, free].tocsr()
+        rhs = -L[free][:, np.nonzero(ok)[0]] @ x[ok]
+        pre = sp.diags(1.0 / deg[free])
+        for c in range(3):
+            x[free, c] = spl.cg(Lff, rhs[:, c], M=pre, rtol=1e-5, atol=0, maxiter=1500)[0]
+    x[still] = 0
+    return {"x": x, "info": info, "tf": tf, "t1": t1, "cancel": cancel}
 
 
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
-    """Walls thinner than the printer holds made thick enough, keeping the surface you see.
+    """Walls thinner than the printer holds made thick enough by moving their two sides apart, keeping their shape.
 
-    At points 0.2 mm apart over the thin areas the wall is measured as in wall_thickness, and how open each of
-    its two sides is to the outside (_open_share). A ball of the printer's wall goes across it, coming out on
-    each side by a part of the shortfall that shrinks the better that side is seen. Seen on one side only (a
-    skin over a hollow, the outer wall of an open chest): it touches that side from inside, so the side stays
-    where it was. Seen alike from both sides (a blade, a fin, filigree) or from neither: half on each. A panel
-    whose back shows only through a slit grows mostly at the back. `seen_too` False leaves the ones seen on
-    both sides as they are. A ball that would come out of the seen surface further than meant is left out
-    (see below), so that spot stays thin and is reported. The balls become one solid by an Alpha Wrap of their
-    centres at their radius (closed and free of crossings by construction), fused with the model by Manifold;
-    voids the new walls sealed are filled. Walls under 0.4 mm: trellis2_chest 49 % of the surface -> 0.2 %,
-    tripo_blaster 76 % -> 0.2 %; seen surface out by more than 0.1 mm: 1.4 % on the chest, while the blaster's
-    sheets seen from both sides grew on both. `m` is closed, in mm. Returns (mesh, info), info None when
-    nothing was thin."""
-    import igl
-    import igl.embree
+    The surface round a thin wall is often a staircase (near thin walls on tripo_sword and tripo_pack, 26-29 % of the
+    edges bend over 30 degrees), so a face's own normal is noise: moved along it, every step grows. So a patch of wall
+    moves as one piece:
+    1. Edges near thin walls are cut down to 0.6 mm, so the surface can bend there. Where the two sides of a wall then
+       cancel (step 4), down to 0.3 mm and over again: a strap under 0.6 mm wide has no vertex in the middle of its
+       sides otherwise, and nothing there can move. Cutting everything that fine took 19 GB on tripo_blaster.
+    2. Each face there measures its wall as in wall_thickness, and how open its two sides are to the outside
+       (_open_share, the table counting as there). The shortfall is shared by that: the side you see better moves less,
+       a side seen where the other is hidden stays, seen alike or not at all: half each.
+    3. Those wishes (distance times normal) are averaged from face to face over a short reach by one linear solve, and
+       only between faces that look about the same way: a staircase's tread and riser mix, the two sides of a ribbon
+       do not. The steps then ride along unchanged.
+    4. A vertex takes the mean of its thin faces, so at a sharp edge the two sides cancel and the edge stays where it
+       is. What is not thin follows by a second solve, the far surface holding still: a strap's narrow side gets taller,
+       so the strap keeps its width. Nothing goes through the table.
+    5. The moved mesh is simplified within 0.02 mm, far under a 0.2 mm layer, as flat parts need none of the new
+       vertices, and one exact union resolves whatever now crosses.
+    A sharp edge's last fraction of a millimetre stays thin by what it is. `seen_too` False leaves walls seen on both
+    sides as they are. `m` is closed, in mm. Returns (mesh, info), info None when nothing was thin."""
+    import manifold3d as mf
     import numpy as np
     import trimesh
     from scipy.spatial import cKDTree
 
     t0 = time.time()
     lo = printer.min_wall_mm
+    target = lo + 2 * THICKEN_MARGIN_MM
     pts, thick = wall_thickness(m)
     if not (thick < lo).any():
         return m, None
-    # the faces round the thin points, then points dense enough there to lay the new walls on
-    near = cKDTree(pts[thick < lo]).query(m.triangles_center, distance_upper_bound=1.0)[0] < np.inf
-    area = trimesh.Trimesh(m.vertices, m.faces[near], process=False)
-    dense, fi = trimesh.sample.sample_surface(area, int(area.area / THICKEN_SPACING_MM**2), seed=SEED)
-    out_n = 1.0 if float(m.volume) >= 0 else -1.0
-    n = out_n * np.asarray(area.face_normals, np.float64)[fi]
-    del area
-    V = np.asarray(m.vertices, np.float64)
-    F = np.asarray(m.faces, np.int64)
-    ei = igl.embree.EmbreeIntersector()
-    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(F, np.int32), True)
-    start = (dense - n * 1e-3).astype(np.float32)
-    d32 = (-n).astype(np.float32)
-    hit = np.full(len(dense), -1)
-    across = np.full(len(dense), np.inf)
-    for i in range(len(dense)):  # straight across first: only the near-thin points get the full seven rays
-        f, t, _, _ = ei.intersectRay_first(start[i], d32[i])
-        if f >= 0:
-            hit[i], across[i] = f, t + 1e-3
-    maybe = across < 1.5 * lo
-    across[maybe] = _ray_thickness(m, dense[maybe], -n[maybe])
-    thin = (across < lo) & (hit >= 0)
-    p, n, t, hit = dense[thin], n[thin], across[thin], hit[thin]
-    del dense, start, d32, across
-    open_p = _open_share(V, F, p, n)
-    open_q = _open_share(V, F, p - n * t[:, None], out_n * np.asarray(m.face_normals, np.float64)[hit])
-    seen_p, seen_q = open_p > 0, open_q > 0
-    r = lo / 2 + THICKEN_MARGIN_MM
-    # The shortfall 2r - t is shared between the two sides by how open each is: the side you see better moves
-    # less. Seen on one side only, the ball touches that side from inside (the other side's points, hidden and
-    # facing a seen one, are covered by these); a blade seen alike from both sides grows by half on each; a
-    # panel whose back shows only through a slit grows mostly at the back. On neither side: half and half.
-    shared = open_p + open_q
-    w = np.where(shared > 0, open_q / np.where(shared > 0, shared, 1.0), 0.5)  # p's part of the shortfall
-    w[seen_p & ~seen_q] = 0.0
-    out_p = (2 * r - t) * w  # how far the ball comes out past p
-    out_q = (2 * r - t) * (1 - w)  # and past the other side
-    keep = (seen_p | ~seen_q) & (~(seen_p & seen_q) | seen_too)  # hidden facing seen: its partner covers it
-    # A ball must not come out of the seen surface further than it was meant to: in a groove narrower than the
-    # ball it would bulge through the far side, and the bottom of a deep groove can pass for hidden (all 32 rays
-    # blocked) while it shows. On trellis2_chest such balls pushed 27 % of the seen surface out by ~0.2 mm.
-    centres = p - n * (r - out_p)[:, None]
-    allowed = np.maximum(np.where(seen_p, out_p, 0.0), np.where(seen_q, out_q, 0.0))
-    face_seen = _seen(V, F, m.triangles_center, out_n * np.asarray(m.face_normals, np.float64))
-    if face_seen.any():
-        SV, SF = _unref(V, F[face_seen])
-        keep &= (np.sqrt(igl.point_mesh_squared_distance(centres, SV, SF)[0]) >= r - allowed - THICKEN_CLEAR_MM) | (seen_p & seen_q)
-    info: dict[str, Any] = {"toMm": round(2 * r, 2), "behindSeen": int((seen_p & ~seen_q).sum()),
-                            "bothSeen": int((seen_p & seen_q).sum()) if seen_too else 0,
-                            "notThickened": int((~keep & (seen_p | ~seen_q)).sum())}
-    del p, n, t
-    centres = centres[keep]
-    if not len(centres):
+    if float(m.volume) < 0:
+        m = m.copy()
+        m.invert()
+    near = cKDTree(pts[thick < lo]).query(m.triangles_center, distance_upper_bound=THICKEN_NEAR_MM)[0] < np.inf
+    V, F, tags = _halve_edges(np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64), near.astype(np.int8) * 3, THICKEN_EDGE_MM)
+    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too, draft=True)
+    if got is None:
         return m, None
-    t1 = time.time()
-    slab = _wrap(centres, None, r, r)
-    log(f"  thicken: {len(centres)} centres, slab {len(slab.faces)} faces, wrap {time.time() - t1:.0f}s")
-    out = _manifold_union([m, slab])
-    if out is None:
-        out = _union(m, slab)
-    out = _drop_pockets(out)  # gaps between a skin and its core that the new walls closed: filled
+    if got["cancel"].any():
+        V, F, tags = _halve_edges(V, F, (tags & 1) + got["cancel"].astype(np.int8) * 2, THICKEN_NARROW_EDGE_MM)
+    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too)
+    if got is None:
+        return m, None
+    x, info, tf = got["x"], got["info"], got["tf"]
+    t1 = got["t1"]
+    # no growing through the table: on trellis2_chest walls under the flat bottom lifted it, 702 -> 295 mm2 on the bed
+    moved = V + x
+    moved[:, 1] = np.maximum(moved[:, 1], V[:, 1].min())
+    t2 = time.time()
+    moved = trimesh.Trimesh(moved, F, process=False)
+    split_faces = len(F)
+    del got, x, V, F, tags
+    gc.collect()
+    # the flat parts need none of the new vertices, and the union pays for every face. Manifold takes a mesh that
+    # crosses itself as long as it is closed, and keeps it within the tolerance
+    q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(moved.vertices, np.float64), tri_verts=np.ascontiguousarray(moved.faces, np.uint64)))
+    grown = len(moved.faces)
+    if q.status() == mf.Error.NoError:
+        g = q.simplify(THICKEN_TOLERANCE_MM).to_mesh64()
+        moved = trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
+    del q
+    out = _fixed_order(_union(moved))
+    t3 = time.time()
+    if not out.is_watertight:
+        out = _part_touching(out)
+    out = _drop_pockets(out)  # gaps between a skin and its core that the new walls closed, and dust: gone
+    if not out.is_watertight:
+        raise RuntimeError("the moved walls did not close")
+    log(f"  thicken: {len(tf)} thin faces of {split_faces}, moves {t2 - t1:.0f}s, union {t3 - t2:.0f}s, {grown} -> {len(out.faces)} faces")
     info["addedCm3"] = round((float(out.volume) - float(m.volume)) / 1000, 2)
     info["secs"] = round(time.time() - t0, 1)
     return out, info
@@ -1384,7 +1676,7 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     mesh = out.to_mesh64()
     Vo = _yup(np.array(mesh.vert_properties[:, :3], np.float64))
     Vo[:, 1] += lift
-    res = trimesh.Trimesh(Vo, np.array(mesh.tri_verts, np.int64), process=False)
+    res = _drop_pockets(trimesh.Trimesh(Vo, np.array(mesh.tri_verts, np.int64), process=False))  # a cut can leave dust
     T = trimesh.transformations.translation_matrix([0.0, lift, 0.0]) @ T
     info.update({"tipDeg": round(tip, 1), "contactMm2": round(contact, 1), "cutMm": round(d, 2),
                  "cutCm3": round(cut_cm3, 3)})

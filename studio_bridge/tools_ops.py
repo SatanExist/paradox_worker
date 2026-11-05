@@ -52,6 +52,7 @@ FINE_DETAIL_RETRY_MM = 0.05
 GUARDED = {"print_prep"}
 SOLID_STEPS = {
     "repair": "made one closed solid (holes patched)",
+    "restored": "made one closed solid (holes patched, lost pieces given back)",
     "solidify": "made one closed solid (hollow skin filled)",
     "wrap": "made one closed solid (wrapped 0.5 mm)",
 }
