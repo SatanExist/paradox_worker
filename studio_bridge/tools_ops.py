@@ -988,7 +988,13 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     as they were. Deterministic: Cycles on the CPU, fixed seed and samples (two runs, the same bytes).
     `high`: the original already unpacked, when the caller bakes several times. `quick`: for the budget search,
     the normal map without its doubled size: the look reads the same (mech 6.13, knight 0.68 and 0.69, pistol 1.09),
-    for less time and memory."""
+    for less time and memory. The kept bake (not `quick`) first turns the cut's diagonals to lie on the original
+    better (game_turn). The search's quick bakes skip it, so the budget picks stay as they were."""
+    turned = None
+    if not quick:
+        from studio_bridge.game_turn import turn_diagonals
+
+        turned = turn_diagonals(in_path, out_path, shift)
     plain = high or _unpacked(in_path)
     work = Path(tempfile.mkdtemp(prefix="bake-"))
     fd, name = tempfile.mkstemp(suffix=".glb")
@@ -1019,6 +1025,8 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
         lines = [line for line in grafted.stdout.splitlines() if line.startswith("{")]
         if lines:
             info["vertexCacheMisses"] = json.loads(lines[-1])["graft"].get("vertexCacheMisses")
+        if turned is not None:
+            info["diagonalsTurned"] = turned["turned"]
         return info
     except subprocess.TimeoutExpired as exc:
         raise _BakeTooLong(f"baking took over {exc.timeout:g} s") from exc
