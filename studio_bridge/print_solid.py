@@ -40,7 +40,7 @@ BALL_MM = 3.0  # a chamber is space a ball this size can't reach from outside
 WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
-BRIDGE_REACH_MM = 1.5  # pieces floating farther than this from the body are left as they are
+BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own length are left as they are
 CRUMB_MM3 = 1.0
 LOST_MM = 1.0
 LOST_MAX_SHARE = 0.001
@@ -98,7 +98,7 @@ class Printer:
     skin_mm: float  # mean wall (2·volume/area) below this is a paper skin with a hollow to fill
     wrap_alpha_mm: float  # the wrap rounds openings and grooves up to this
     lost_mm: float  # original surface farther than this from the result is lost
-    bridge_reach_mm: float  # pieces floating farther than this from the body are left as they are
+    bridge_reach_mm: float  # pieces floating farther than this and than their own length are left as they are
 
 
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
@@ -311,6 +311,10 @@ def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
     outside = ndimage.distance_transform_edt(~reach).astype(np.float32) * p <= ball_mm  # all those balls sweep
     del reach
     interior = ~skin & ~outside
+    # skin voxels with the outside next to them: a skin only a voxel thick (trellis2_harbor's cliff walls) is
+    # nothing but those, and a block reaching into them came out through the wall as a wavy ridge along the rows
+    # of voxels
+    rim = skin & ndimage.binary_dilation(outside & ~skin)
     del outside
     deep = interior & clear
     del clear
@@ -323,8 +327,8 @@ def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
     cm3 = float(chamber.sum()) * p**3 / 1000
     chamber = ndimage.binary_dilation(chamber, mask=interior)  # the last voxel up to the skin
     del interior
-    chamber = ndimage.binary_dilation(chamber, mask=chamber | skin)  # and one into it
-    del skin
+    chamber = ndimage.binary_dilation(chamber, mask=chamber | (skin & ~rim))  # and one into it, never through it
+    del skin, rim
     field = ndimage.gaussian_filter(chamber.astype(np.float32), 0.6)  # soften the voxel steps
     del chamber
     V, F, _, _ = marching_cubes(field, level=0.5, spacing=(p, p, p))
@@ -431,43 +435,55 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
     return trimesh.Trimesh(V5, np.asarray(Fo, np.int64).reshape(-1, 3), process=False)
 
 
-def _bridge(m, log: Log, reach: float = BRIDGE_REACH_MM):
-    """Pieces floating next to the body (a feather, a bead) get a bridge: a local wrap of the piece plus the
-    patch of body facing it, then one exact union of everything. The rest of the surface is untouched.
+def _bridge(m, log: Log, printer: "Printer | None" = None):
+    """Pieces floating next to the body (a feather, a bead, a block off a rover, a strand by the feet) get a
+    bridge: a round pin, twice the thinnest printable wall across, where piece and body come closest, then one
+    exact union of everything. The rest of the surface is untouched. A piece is tied when the bridge is shorter
+    than the piece is long, or within the printer's bridge reach however small: a bridge longer than the piece
+    would read as a stick. A piece tied (or touching) joins the body, so pieces next to it are tied in the next
+    round: trellis2_lattice's rods hang by other rods, 50-90 mm from the frame they end up on.
     Returns the mesh and how many pieces were bridged."""
     import igl
     import numpy as np
     import trimesh
 
+    printer = printer or PRINTERS[DEFAULT_PRINTER]
     parts = sorted(m.split(only_watertight=False), key=lambda q: -len(q.faces))
     if len(parts) <= 1:
         return _lean(m), 0
-    main = parts[0]
-    cent = main.triangles_center
-    pieces, bridged = [main], 0
-    # every piece's distance to the body in one call: the body's tree is built once, not once a piece
-    ends = np.cumsum([len(q.vertices) for q in parts[1:]])
-    d2 = igl.point_mesh_squared_distance(np.vstack([q.vertices for q in parts[1:]]), main.vertices, main.faces)[0]
-    for q, lo_i, hi_i in zip(parts[1:], np.r_[0, ends[:-1]], ends):
-        pieces.append(q)
-        gap = float(np.sqrt(d2[lo_i:hi_i].min()))
-        if gap > reach or gap < 1e-3:  # too far to tie, or already touching: the union joins those
-            continue
-        # only body faces inside the piece's box grown by the reach can be that close
-        lo, hi = q.bounds[0] - (gap + 1.0), q.bounds[1] + (gap + 1.0)
-        box = np.nonzero(((cent >= lo) & (cent <= hi)).all(axis=1))[0]
-        near = np.zeros(len(cent), dtype=bool)
-        near[box] = np.sqrt(igl.point_mesh_squared_distance(cent[box], q.vertices, q.faces)[0]) < gap + 1.0
-        patch = trimesh.Trimesh(main.vertices, main.faces[near], process=False)
-        patch.remove_unreferenced_vertices()
-        both = trimesh.util.concatenate([q, patch])
-        pieces.append(_wrap(both.vertices, both.faces, alpha=max(0.4, 1.6 * gap)))
-        bridged += 1
     n_parts = len(parts)
-    del parts, cent  # the union below is the peak: nothing it doesn't need stays alive
+    pieces, bridged = [parts[0]], 0
+    r = printer.min_wall_mm  # the pin is two walls across: thinner would be thin wall itself
+    joined, rest = [parts[0]], parts[1:]
+    del parts
+    while joined and rest:
+        # every piece's distance to what joined last round in one call: one tree a round, not one a piece
+        B = joined[0] if len(joined) == 1 else trimesh.util.concatenate(joined)
+        ends = np.cumsum([len(q.vertices) for q in rest])
+        d2, _, near = igl.point_mesh_squared_distance(np.vstack([q.vertices for q in rest]), B.vertices, B.faces)
+        joined, left = [], []
+        for q, lo_i, hi_i in zip(rest, np.r_[0, ends[:-1]], ends):
+            k = lo_i + int(np.argmin(d2[lo_i:hi_i]))
+            gap = float(np.sqrt(d2[k]))
+            if gap > max(printer.bridge_reach_mm, float(q.extents.max())):  # too far to tie
+                left.append(q)
+                continue
+            joined.append(q)
+            if gap < 1e-3:  # already touching: the union joins those
+                continue
+            a, b = np.asarray(q.vertices)[k - lo_i], near[k]
+            u = (b - a) / gap
+            # from inside the piece to inside the body, by the pin's own radius at each end
+            pieces.append(trimesh.creation.cylinder(radius=r, segment=[a - u * r, b + u * r], sections=16))
+            bridged += 1
+        pieces += joined
+        rest = left
+        del B, near
+    pieces += rest
+    del joined, rest  # the union below is the peak: nothing it doesn't need stays alive
     _lean(m)
     out = _union(*pieces)
-    del pieces, main
+    del pieces
     shells = out.split(only_watertight=False)
     if len(shells) > 1:
         out = trimesh.util.concatenate([s for s in shells if s.volume > CRUMB_MM3])  # pockets the union sealed
@@ -499,7 +515,7 @@ def _finish(m, log: Log, shared: dict[str, Any]):
         log(f"  self-union failed, kept as is: {exc}")
     log(f"  self-union {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
-    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
+    m, bridged = _bridge(m, log, shared["printer"])
     log(f"  bridges {time.time() - t:.0f}s")
     _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
@@ -694,7 +710,7 @@ def _solidified(orig, repaired, shared, log: Log):
     m = _drop_pockets(_union(shell, block))  # gaps the block didn't reach are sealed pockets: filled too
     log(f"  fill union {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
-    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
+    m, bridged = _bridge(m, log, shared["printer"])
     _tick(shared, "bridges", t)
     return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged}
 
@@ -702,7 +718,7 @@ def _solidified(orig, repaired, shared, log: Log):
 def _wrapped(orig, repaired, shared, log: Log):
     shell = _shell(orig, shared, log)
     t = time.time()
-    m, bridged = _bridge(shell, log, shared["printer"].bridge_reach_mm)
+    m, bridged = _bridge(shell, log, shared["printer"])
     _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged}
 
@@ -727,23 +743,147 @@ def _lost_faces(orig, m):
     return bad, grown[F].any(1)
 
 
-def _restored(orig, repaired, shared, log: Log):
-    """The repair keeps the original's own faces but can lose what its cuts took (tripo_pack's strap); the whole
-    wrap keeps everything but leaves teeth on every edge. So: the repair, with only what it lost wrapped and joined
-    back. The teeth stay on those few pieces, and the pick still judges the result by what moved and what is lost."""
+def _inward(orig, idx, depth_max: float):
+    """For the original's faces `idx`: which way is in, and how deep. In is the side where the original comes back
+    sooner (a ray each way from the face's centre: an inside-out face of a broken model would otherwise grow
+    outwards), and only as deep as that, up to `depth_max`: a strap thinner than a wall keeps its thickness, the
+    thickening sees to it later. A face with nothing behind it either way (an open sheet) goes in along its normal.
+    Returns `flip` (the face's normal points in) and the depth."""
+    import igl.embree
+    import numpy as np
+
+    V, F = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)[idx]
+    n = np.asarray(orig.face_normals, np.float64)[idx]
+    c = V[F].mean(1)
+    ei = igl.embree.EmbreeIntersector()
+    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(np.asarray(orig.faces), np.int32), True)
+    back = np.full((len(F), 2), np.inf)
+    for j, sgn in enumerate((-1.0, 1.0)):
+        start, d = (c + sgn * n * 1e-3).astype(np.float32), (sgn * n).astype(np.float32)
+        for i in range(len(F)):
+            f, t, _, _ = ei.intersectRay_first(start[i], d[i])
+            if f >= 0:
+                back[i, j] = t + 1e-3
+    flip = back[:, 1] < back[:, 0]
+    return flip, np.clip(np.minimum(back.min(1), depth_max), 0.02, depth_max)
+
+
+def _prisms(V, F, n, flip, depth):
+    """Faces F (vertex rows V, normals n) each as a solid: the face itself outside, a copy pushed in by `depth`."""
+    import numpy as np
     import trimesh
 
+    inward = np.where(flip[:, None], n, -n)
+    outer = V[F]
+    inner = outer + (inward * depth[:, None])[:, None, :]
+    k = len(F)
+    verts = np.concatenate([outer, inner], axis=1).reshape(-1, 3)  # per face: 3 outside, then 3 inside
+    base = (np.arange(k) * 6)[:, None]
+    # outside faces out: wound so its normal points away from `inward`
+    o = np.where(flip[:, None], [[0, 2, 1]], [[0, 1, 2]])
+    tri = [o, o[:, ::-1] + 3]
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        oa, ob = np.take_along_axis(o, np.full((k, 1), a), 1), np.take_along_axis(o, np.full((k, 1), b), 1)
+        tri += [np.hstack([ob, oa, oa + 3]), np.hstack([ob, oa + 3, ob + 3])]
+    faces_out = np.concatenate([t + base for t in tri], axis=0)
+    return [trimesh.Trimesh(verts[i * 6:(i + 1) * 6], faces_out[i::k] - i * 6, process=False) for i in range(k)]
+
+
+def _slabs(orig, faces, depth_max: float, body=None):
+    """The original's own faces `faces` as solids, so the surface stays exactly as modelled: each connected patch
+    is one slab (patches part at an edge of three faces), the patch itself outside, a copy of it pushed in (see
+    _inward) and walls round its rim. One solid per face met its neighbours wall to wall, and the union cut every shared wall into slivers (hunyuan31_scorpion:
+    21k faces given back grew the body by 450k faces and the thickening ran out of memory). A patch that makes no
+    clean slab (its own faces wound against each other, a fold that crosses itself) goes back face by face. Returns
+    the solids, how many are slabs, and how many faces went back one by one.
+    Where the full depth in still lands inside `body` (a sleeve over a core: tripo_sword's grip), the slab goes the
+    full depth: what is behind is solid anyway, and a slab as thin as the gap to the core read as a thin wall, which
+    the thickening blew up into ridges along its edges. Elsewhere (a strap hanging free) it stays as thin as modelled."""
+    import numpy as np
+    import trimesh
+
+    idx = np.flatnonzero(faces)
+    flip, depth = _inward(orig, idx, depth_max)
+    n = np.asarray(orig.face_normals, np.float64)[idx]
+    # full depth lands inside the body: along the normal (fills[:, 1]) or against it (fills[:, 0])
+    fills = np.zeros((len(idx), 2), dtype=bool)
+    if body is not None:
+        cen = np.asarray(orig.vertices, np.float64)[np.asarray(orig.faces, np.int64)[idx]].mean(1)
+        fills = (_winding(body.vertices, body.faces, np.vstack([cen - n * depth_max, cen + n * depth_max]),
+                          bool(body.is_watertight)) > 0.5).reshape(2, -1).T
+    sub = trimesh.Trimesh(np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)[idx], process=False)
+    sub.merge_vertices()
+    V, F = np.asarray(sub.vertices, np.float64), np.asarray(sub.faces, np.int64)
+    area = np.asarray(sub.area_faces, np.float64)
+    sound = (F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 2] != F[:, 0]) & (area > 0)
+    # patches join only across edges of exactly two faces: an edge of three splits them
+    pair = trimesh.grouping.group_rows(np.sort(F[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), 1), require_count=2) // 3
+    pair = pair[sound[pair].all(1)]
+    comps = trimesh.graph.connected_components(pair, nodes=np.flatnonzero(sound), min_len=1)
+    try:
+        import manifold3d as mf
+    except ImportError:
+        mf = None
+    out, loose = [], [np.flatnonzero(~sound)]
+    for c in comps:
+        c = np.asarray(c, np.int64)
+        # In is decided once for the whole patch, by its faces' votes weighted by area: on a thin strap the two
+        # rays come back nearly together and a quarter of the faces voted the wrong way one by one
+        turn = float((area[c] * flip[c]).sum()) > 0.5 * float(area[c].sum())
+        Fc = F[c][:, [0, 2, 1]] if turn else F[c]  # wound outwards
+        inward_c = n[c] if turn else -n[c]
+        e = Fc[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+        _, inv, cnt = np.unique(np.sort(e, 1), axis=0, return_inverse=True, return_counts=True)
+        inv = inv.ravel()
+        if cnt.max() > 2 or len(np.unique(e, axis=0)) < len(e):  # the model's own faces disagree on their winding
+            loose.append(c)
+            continue
+        uv, Fl = np.unique(Fc, return_inverse=True)
+        Fl = Fl.reshape(-1, 3)
+        m = len(uv)
+        vn = np.zeros((m, 3))
+        np.add.at(vn, Fl.ravel(), np.repeat(inward_c * area[c][:, None], 3, 0))
+        ln = np.linalg.norm(vn, axis=1)
+        if (ln < 1e-12).any():
+            loose.append(c)
+            continue
+        vn /= ln[:, None]
+        dv = np.full(m, np.inf)
+        np.minimum.at(dv, Fl.ravel(), np.repeat(np.where(fills[c, int(turn)], depth_max, depth[c]), 3))
+        P = V[uv]
+        rim = Fl[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)[cnt[inv] == 1]
+        a, b = rim[:, :1], rim[:, 1:]
+        tris = np.vstack([Fl, Fl[:, ::-1] + m, np.hstack([b, a, a + m]), np.hstack([b, a + m, b + m])])
+        slab = trimesh.Trimesh(np.vstack([P, P + vn * dv[:, None]]), tris, process=False)
+        if mf is not None:
+            q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(slab.vertices, np.float64),
+                                      tri_verts=np.ascontiguousarray(slab.faces, np.uint64)))
+            if q.status() != mf.Error.NoError or q.volume() <= 0:
+                loose.append(c)
+                continue
+        out.append(slab)
+    loose = np.concatenate(loose)
+    if len(loose):
+        full = fills[loose, flip[loose].astype(int)]
+        out += _prisms(V, F[loose], n[loose], flip[loose], np.where(full, depth_max, depth[loose]))
+    return out, len(out) - len(loose), len(loose)
+
+
+def _restored(orig, repaired, shared, log: Log):
+    """The repair keeps the original's own faces but can lose what its cuts took (tripo_pack's strap, the rim
+    under its flap); the whole wrap keeps everything but leaves teeth on every edge. So: the repair, with the
+    original's own faces it lost given back as they were (see _slabs) and joined in one union. The pick still
+    judges the result by what moved and what is lost."""
     t = time.time()
     m = shared["repairMesh"].copy()
     bad, patch = _lost_faces(orig, m)
     if not bad.any():
         raise RuntimeError("the repair lost nothing")
-    piece = trimesh.Trimesh(orig.vertices, orig.faces[patch], process=False)
-    piece.remove_unreferenced_vertices()
-    m = _drop_pockets(_union(m, _wrap(piece.vertices, piece.faces, shared["printer"].wrap_alpha_mm)))
-    log(f"  given back {int(patch.sum())} faces {time.time() - t:.0f}s")
+    solids, slabs, single = _slabs(orig, patch, shared["printer"].min_wall_mm, body=m)
+    m = _drop_pockets(_union(m, *solids))
+    log(f"  given back {int(patch.sum())} faces as {slabs} slabs and {single} single faces, {len(m.faces)} faces now {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
-    m, bridged = _bridge(m, log, shared["printer"].bridge_reach_mm)
+    m, bridged = _bridge(m, log, shared["printer"])
     _tick(shared, "bridges", t)
     return m, {"piecesBridged": bridged, "facesGivenBack": int(patch.sum())}
 
@@ -887,6 +1027,11 @@ def _pick(cands: list[dict[str, Any]]):
     for c in ok[1:]:
         if c["volumeCm3"] > best["volumeCm3"] * MORE_SOLID:
             best = c
+    # The wrap remakes every face (teeth on every edge); the restored keeps the original's own faces and gives
+    # back what the repair lost as it was modelled. Their changed shares differ by the joins' slivers, not by look.
+    own = [c for c in ok if c["method"] == "restored"]
+    if best["method"] == "wrap" and own:
+        best = own[0]
     return best, note
 
 
