@@ -97,7 +97,8 @@ class _Cost:
         import numpy as np
 
         HV, HF, Hn, tree = self.original
-        keys = [tuple(sorted(t)) for t in T.tolist()]
+        # rotated to start at the smallest corner, which keeps the winding (sorted corners lost it)
+        keys = [tuple(t[t.index(min(t)):] + t[:t.index(min(t))]) for t in T.tolist()]
         todo = sorted({k for k in keys if k not in self.seen})
         if todo:
             A = np.array(todo)
@@ -106,8 +107,9 @@ class _Cost:
             w = self.bary
             points = (a[:, None] * w[:, 0, None] + b[:, None] * w[:, 1, None] + c[:, None] * w[:, 2, None]).reshape(-1, 3)
             d2, nearest, _ = tree.squared_distance(HV, HF, points)
-            # the sign is left out: the sorted key loses the winding; a turned-over face is refused separately
-            dots = np.abs((Hn[nearest] * np.repeat(n, len(w), 0)).sum(1)).reshape(-1, len(w))
+            # Signed: near a surface that faces the other way counts as far off. A thin wall has two such sides
+            # close together; unsigned, the harbour's outer wall was pulled in through its inner side (2026-11-07).
+            dots = (Hn[nearest] * np.repeat(n, len(w), 0)).sum(1).reshape(-1, len(w))
             normal_err = (1 - dots).mean(1) * area
             distance = d2.reshape(-1, len(w)).mean(1) * area
             for k, x, y in zip(todo, normal_err.tolist(), distance.tolist()):
