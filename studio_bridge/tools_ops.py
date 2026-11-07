@@ -1100,6 +1100,8 @@ CLOSE_OK_PCT = 2.65
 # is left is the texture's own resolution. The watch read 4.14, 3.08, 2.82, 2.70, 2.93, 2.73 at 20k to 75k, went on to
 # 100k for it, and at 35k and up looked the same to the eye (2026-11-05).
 CLOSE_GAIN = 0.9
+# Rungs looked at under a pick made by CLOSE_GAIN, at most: each is a quick look (about a minute with a bake).
+FLAT_STEPS_DOWN = 2
 
 
 def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None,
@@ -1189,8 +1191,10 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
     first = floor
     # Up close is part of the search: climbing a rung at a time after it, each with a full bake, took the watch 10 bakes.
     close_under = bake_ok_pct * RECHECK_MARGIN if bake and bake_ok_pct and purpose_name != "background" else None
-    while lo < hi:
-        mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
+
+    def look(mid: int) -> tuple[dict[str, Any], bool, bool]:
+        """One rung looked at: (what was measured, right from afar, off up close). Raises RuntimeError when it
+        couldn't be cut or baked, after it was added to `tried`."""
         try:
             try:
                 step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
@@ -1200,8 +1204,7 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
                 step = _quick_look(in_path, ladder[mid], texture_size, purpose["res"], bake, high, close_under)
         except RuntimeError as exc:  # this budget couldn't be baked: a bigger one still may, and the report says so
             tried.append({"targetTris": ladder[mid], "failed": str(exc)[:160]})
-            lo = hi if isinstance(exc, _BakeTooLong) else mid + 1
-            continue
+            raise
         seen = step["noticeablePct"]
         limit = bake_ok_pct if step.get("baked") and bake_ok_pct else ok_pct
         if limit < seen <= limit * RECHECK_MARGIN:
@@ -1226,6 +1229,15 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
         fine_afar = seen <= limit and not _too_tangled(step) and not _crumpled(ladder[mid], step, purpose, step.get("baked", False))
         if fine_afar and close_off:
             only_close_off.append(step)
+        return step, fine_afar, close_off
+
+    while lo < hi:
+        mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
+        try:
+            step, fine_afar, close_off = look(mid)
+        except RuntimeError as exc:
+            lo = hi if isinstance(exc, _BakeTooLong) else mid + 1
+            continue
         if fine_afar and not close_off:
             hi = mid
             if floor is not None and mid >= floor and step["lightPct"] > purpose["lowLightPct"]:
@@ -1234,11 +1246,40 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
             lo = mid + 1
     picked, flat = ladder[lo], None
     measured = {s["targetTris"]: s["closePct"] for s in tried if "closePct" in s}
+
+    def flat_at(budget: int, close: float) -> bool:
+        """More triangles have stopped helping: some bigger budget was looked at up close, and none of them came
+        closer than CLOSE_GAIN of this one. Against every bigger one, not the next only: compared rung by rung, the
+        lattice crept down 100k -> 75k -> 60k, each step under 10 % off and 12 % off in all (2026-11-07)."""
+        above = [measured[b] for b in measured if b > budget]
+        return bool(above) and min(above) >= close * CLOSE_GAIN
+
     for step in sorted(only_close_off, key=lambda s: s["targetTris"]):
-        above = [b for b in sorted(measured) if step["targetTris"] < b <= picked]
-        if above and measured[above[0]] >= step["closePct"] * CLOSE_GAIN:
+        if step["targetTris"] < picked and flat_at(step["targetTris"], step["closePct"]):
             picked, flat = step["targetTris"], step["closePct"]
             break
+    # The same rule looked at from below. The halving starts in the middle of the ladder and goes up while a rung is off
+    # up close, so a pick made by it has never seen the rungs under it: dragon, Pixal3D knight and armor got 50k, with
+    # 50k to 200k all within 2 % of each other, and 35k or 42k never looked at (exam 4). So a rung at a time down, while
+    # the one under is right from afar and flat_at holds for it; FLAT_STEPS_DOWN looks at most, each a quick look like
+    # the search's own.
+    at = ladder.index(picked)
+    for _ in range(FLAT_STEPS_DOWN if flat is not None else 0):
+        if at == 0:
+            break
+        known = next((s for s in tried if s["targetTris"] == ladder[at - 1]), None)
+        if known is not None:
+            step, fine_afar = known, known in only_close_off
+        else:
+            try:
+                step, fine_afar, _ = look(at - 1)
+            except RuntimeError:
+                break
+        if not fine_afar or "closePct" not in step or not flat_at(ladder[at - 1], step["closePct"]):
+            break
+        at -= 1
+        picked, flat = ladder[at], step["closePct"]
+        measured[picked] = step["closePct"]
     return {"picked": picked, "okPct": ok_pct, **({"bakeOkPct": bake_ok_pct} if bake else {}), **({"closeFlatPct": flat} if flat is not None else {}), "tried": tried}
 
 
