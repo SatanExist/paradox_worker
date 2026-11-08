@@ -286,6 +286,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
 
     # Pieces hanging in mid-air: the user chooses, the default is to remove them. Both files are made, so
     # the choice is instant; the main one follows params["floating"], the other goes out as "alternate".
+    # Only pieces farther from the model than their own length are left by now: the bridge step pins the rest,
+    # chained (a cage's rods hang by other rods), so a fallen-apart cage comes here whole.
     from studio_bridge.print_solid import split_floating
 
     try:
@@ -293,14 +295,6 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     except Exception as exc:  # a report extra: never worth failing the print for
         print(f"floating pieces not checked: {exc}")
         body, pieces, about = mesh, None, []
-    # A biggest shell holding less than the pieces isn't a body: a cage fallen apart would be scaled by its floor
-    # and lose its frame as "floating". All of it is the model, and none of it is offered for removal.
-    separate = None
-    if pieces is not None and float(pieces.volume) > float(body.volume):
-        separate = 1 + len(about)
-        body, pieces, about = mesh, None, []
-        steps.append(f"stays in {separate} separate parts: none of them is a main body, so nothing was removed, "
-                     "and they won't hold together on the plate")
     keep = str(params.get("floating") or "remove") == "keep"
     timings["floating"] = round(time.time() - t, 1)
     t = time.time()
@@ -420,8 +414,6 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         _export_print({"body": body} if keep else with_pieces, alt)
         report["floating"] = floating
         report["extraFiles"] = {"alternate": str(alt)}
-    if separate:
-        report["separateParts"] = separate
     if solid:
         report["solid"] = solid
     if thin is not None:

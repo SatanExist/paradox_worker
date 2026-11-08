@@ -448,7 +448,9 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
     import trimesh
 
     printer = printer or PRINTERS[DEFAULT_PRINTER]
-    parts = sorted(m.split(only_watertight=False), key=lambda q: -len(q.faces))
+    # the body is the biggest piece by volume, as split_floating takes it: by face count a dense small piece
+    # (a smooth moon over a box-like house) would be the body and the house be pinned to it
+    parts = sorted(m.split(only_watertight=False), key=lambda q: (-abs(float(q.volume)), -len(q.faces)))
     if len(parts) <= 1:
         return _lean(m), 0
     n_parts = len(parts)
