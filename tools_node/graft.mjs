@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Logger, NodeIO } from "@gltf-transform/core";
-import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
+import { ALL_EXTENSIONS, KHRMaterialsSpecular } from "@gltf-transform/extensions";
 import { prune, reorder } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer";
 import sharp from "sharp";
@@ -119,6 +119,25 @@ async function texture(name, jpeg = false) {
     : png.png({ compressionLevel: 9, adaptiveFiltering: true })).toBuffer();
   return doc.createTexture(name).setImage(new Uint8Array(image)).setMimeType(jpeg ? "image/jpeg" : "image/png");
 }
+// How strongly the surface reflects (KHR_materials_specular) is in none of the baked maps, and the new material
+// dropped it: Hunyuan writes specularColorFactor 2 (the operative came out darker than its original) or
+// specularFactor 0, no reflections (the low-poly knight came out paler: exam 8, 2026-11-08). Kept when every part
+// says the same and with no texture of its own (that texture would follow the old UVs, which are gone).
+function keptSpecular() {
+  const found = new Set();
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const s = prim.getMaterial()?.getExtension("KHR_materials_specular");
+      found.add(s ? JSON.stringify([s.getSpecularFactor(), s.getSpecularColorFactor(), !!(s.getSpecularTexture() || s.getSpecularColorTexture())]) : "none");
+    }
+  }
+  if (found.size !== 1) return null;
+  const [one] = found;
+  if (one === "none") return null;
+  const [factor, color, textured] = JSON.parse(one);
+  return textured ? null : doc.createExtension(KHRMaterialsSpecular).createSpecular().setSpecularFactor(factor).setSpecularColorFactor(color);
+}
+const specular = keptSpecular();
 // Only a normal map (the model had no textures): each part keeps its own material and gets the map.
 const normalOnly = !existsSync(join(bakeDir, "baseColor.png"));
 const normalMap = await texture("normal");
@@ -132,6 +151,7 @@ const material = normalOnly
     .setRoughnessFactor(1);
 // A model that gave off light of its own (Rodin's: all its colour is there) keeps its glow, baked too.
 if (material && existsSync(join(bakeDir, "emissive.png"))) material.setEmissiveTexture(await texture("emissive", true)).setEmissiveFactor([1, 1, 1]);
+if (material && specular) material.setExtension("KHR_materials_specular", specular);
 
 let corners = 0;
 let vertices = 0;
