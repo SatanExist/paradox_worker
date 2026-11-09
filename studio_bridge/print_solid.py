@@ -64,6 +64,9 @@ THICKEN_NARROW_EDGE_MM = 0.3  # and to this where the two sides of a wall cancel
 THICKEN_REACH = 9.0  # how far a wall's direction is averaged: about the square root of this many faces
 THICKEN_STAIR_LOSS = 1.5  # a staircase's averaged normal is shorter than one: made up for, to this many times
 THICKEN_TOLERANCE_MM = 0.02  # the thickened mesh is simplified within this, far under a 0.2 mm layer
+TAPER_CORR = -0.7  # a thin patch whose thickness falls this steadily toward its rim (rank correlation) is a tapered edge
+TAPER_MEET = 0.25  # if its two sides meet at the rim: thinner there than this share of a nozzle line (PrusaSlicer's min_feature_size)
+TAPER_LONG = 2.0  # and it runs along the rim at least as far as it reaches in: area / reach² this much, both sides counted
 STEADY_TIP_DEG = 10.0  # a model that must tilt this far before it falls stands steady; less is wobbly
 FALLS_TIP_DEG = 3.0  # under this it falls at a breath: laid down, or given a base
 UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down means it was made to stand
@@ -1436,7 +1439,7 @@ def _spread(W, deg, values):
     return np.column_stack([spl.cg(M, values[:, c], M=pre, rtol=1e-6, atol=0, maxiter=400)[0] for c in range(values.shape[1])])
 
 
-def _wall_moves(V, F, near, target, lo, seen_too, draft=False):
+def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0):
     """Steps 2-4 of thicken on a mesh already cut: how far each vertex moves. Returns {x, info, tf, t1, cancel}, cancel
     being the thin faces at vertices where the two sides cancelled; None when nothing is to move. A `draft` only finds
     those faces, on what it costs little to know: the wall straight across, shared half and half."""
@@ -1480,8 +1483,12 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False):
                             "notThickened": 0 if seen_too else int(seen_both.sum())}
     d = (target - th[thin]) * w
     which = np.nonzero(thin)[0]
-    if not seen_too:
-        which, d = which[~seen_both], d[~seen_both]
+    keep = np.ones(len(which), bool) if seen_too else ~seen_both
+    if not draft:
+        edge = _tapered(s, nf[which], th[which], meet)
+        info["taperedEdge"] = int(edge.sum())
+        keep &= ~edge
+    which, d = which[keep], d[keep]
     if not len(which):
         return None
     tf = nf[which]
@@ -1546,6 +1553,65 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False):
     return {"x": x, "info": info, "tf": tf, "t1": t1, "cancel": cancel}
 
 
+def _tapered(s, faces, th, meet):
+    """Which of the thin `faces` (thickness `th`) of mesh `s` are a tapered edge, as a blade's: thin only because
+    it narrows to a rim, thicker the farther in. Thickening can't help there (the two sides meet at the rim and
+    cancel, see thicken), and its partial moves left tripo_sword's edge lumpy and still 0.01 mm at the rim, while
+    PrusaSlicer prints the taper as it is, down to what its nozzle can, in clean steps. A thin sheet or strap is
+    thin all over: without thickening it would go whole. Per connected patch of thin faces: the distance of each
+    from the nearest face that is not thin, along the surface, against its thickness; a tapered edge has the one
+    fall as the other grows (rank correlation at most TAPER_CORR: the sword's blade edges -0.80 to -0.84, its grip
+    panels -0.33 and -0.45, small bits about 0).
+    Falling is not enough. Its two sides must meet at the rim, thinner there than `meet` (what PrusaSlicer drops
+    anyway): hi3dgen_space_bust's helmet thins to 0.36 mm and the dog's patches to 0.42-0.7, walls that print and
+    only want thickening. And it must run along the rim, not away from it: area / reach² at least TAPER_LONG, reach
+    the farthest it goes from wall that is not thin (a strip L long and R deep, both sides: 2 L / R). A spike or
+    a rod tapers along its length and would go unprinted to where it reaches a nozzle line: hunyuan31_scorpion's
+    rod 0.07-0.1, rodin_knight's tentacle tips 0.16-0.58, hunyuan_necromutant's claws 0.5-1.5; the sword's blade
+    edges 2.3-8.3."""
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components, dijkstra
+    from scipy.stats import rankdata
+
+    nF = len(s.faces)
+    thin = np.zeros(nF, bool)
+    thin[faces] = True
+    fa = np.asarray(s.face_adjacency, np.int64)
+    c = np.asarray(s.triangles_center, np.float64)
+    # the thin faces and the faces round them; one source joined to every one that is not thin
+    rim = fa[thin[fa[:, 0]] != thin[fa[:, 1]]].ravel()
+    sub = np.unique(np.r_[faces, rim])
+    at = np.full(nF, -1, np.int64)
+    at[sub] = np.arange(len(sub))
+    inner = (at[fa[:, 0]] >= 0) & (at[fa[:, 1]] >= 0)
+    a, b = at[fa[inner, 0]], at[fa[inner, 1]]
+    w = np.linalg.norm(c[fa[inner, 0]] - c[fa[inner, 1]], axis=1)
+    n = len(sub)
+    src = np.nonzero(~thin[sub])[0]
+    G = sp.csr_matrix((np.r_[w, w, np.full(len(src), 1e-9)], (np.r_[a, b, np.full(len(src), n)], np.r_[b, a, src])), shape=(n + 1, n + 1))
+    far = dijkstra(G, directed=True, indices=n)[:n][at[faces]]
+    area = np.asarray(s.area_faces, np.float64)[faces]
+    both = thin[fa[:, 0]] & thin[fa[:, 1]]
+    k, label = connected_components(sp.csr_matrix((np.ones(int(both.sum())), (fa[both, 0], fa[both, 1])), shape=(nF, nF)), directed=False)
+    label = label[faces]
+    out = np.zeros(len(faces), bool)
+    order = np.argsort(label, kind="stable")
+    cuts = np.flatnonzero(np.diff(label[order])) + 1
+    for group in np.split(order, cuts):
+        ok = np.isfinite(far[group])
+        if ok.sum() < 6 or th[group].min() >= meet:
+            continue
+        reach = float(far[group][ok].max())
+        if area[group].sum() < TAPER_LONG * reach * reach:
+            continue
+        x, y = rankdata(far[group][ok]), rankdata(th[group][ok])
+        sx, sy = x.std(), y.std()
+        if sx > 0 and sy > 0 and float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy)) <= TAPER_CORR:
+            out[group] = True
+    return out
+
+
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     """Walls thinner than the printer holds made thick enough by moving their two sides apart, keeping their shape.
 
@@ -1566,7 +1632,8 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
        so the strap keeps its width. Nothing goes through the table.
     5. The moved mesh is simplified within 0.02 mm, far under a 0.2 mm layer, as flat parts need none of the new
        vertices, and one exact union resolves whatever now crosses.
-    A sharp edge's last fraction of a millimetre stays thin by what it is. `seen_too` False leaves walls seen on both
+    A sharp edge's last fraction of a millimetre stays thin by what it is, and a tapered edge (a blade's) is left as it
+    is (_tapered): the slicer prints it as far as its nozzle can. `seen_too` False leaves walls seen on both
     sides as they are. `m` is closed, in mm. Returns (mesh, info), info None when nothing was thin."""
     import manifold3d as mf
     import numpy as np
@@ -1589,7 +1656,7 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
         return m, None
     if got["cancel"].any():
         V, F, tags = _halve_edges(V, F, (tags & 1) + got["cancel"].astype(np.int8) * 2, THICKEN_NARROW_EDGE_MM)
-    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too)
+    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too, meet=printer.min_print_mm * TAPER_MEET)
     if got is None:
         return m, None
     x, info, tf = got["x"], got["info"], got["tf"]
