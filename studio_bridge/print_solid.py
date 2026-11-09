@@ -99,6 +99,8 @@ class Printer:
     wrap_alpha_mm: float  # the wrap rounds openings and grooves up to this
     lost_mm: float  # original surface farther than this from the result is lost
     bridge_reach_mm: float  # pieces floating farther than this and than their own length are left as they are
+    shell_mm: float = 0.9  # printed solid this deep under the surface: two 0.45 mm perimeters (top/bottom 0.8-1.0 mm)
+    infill: float = 0.15  # share of the inside filled deeper than that (PrusaSlicer's 15 %); 1 = printed solid
 
 
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
@@ -106,7 +108,8 @@ class Printer:
 PRINTERS = {
     "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
                    bridge_reach_mm=BRIDGE_REACH_MM),
-    "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0),
+    "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
+                     infill=1.0),
 }
 DEFAULT_PRINTER = "fdm"
 
@@ -1664,8 +1667,9 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     A cut can also shave a ledge on the bottom thinner than a wall should be (Printer.min_wall_mm):
     tripo_spellbook's cover lip went from 1.5 to 0.4 mm at a 1.1 mm cut (61 mm² of it). One that shaves more
     than LIP_MM2 gives way to the first that doesn't, if that stands about as well (steady, or within half a
-    degree); else it is kept and flagged. Returns (d, tip, contact, shaves, clean): clean the row the first cut
-    that doesn't shave, for a base to take the ledge instead."""
+    degree); else it is kept and flagged. Returns (d, tip, contact, shaves, clean, footing): clean the row of the
+    first cut that doesn't shave, for a base to take the ledge instead; footing the row of the smallest whole cut
+    that shaves nothing and touches with at least HOLD_MM2 (None if none does): what a base would hold it by."""
     import numpy as np
 
     lip = _ledges(man, cut_max + printer.min_wall_mm)
@@ -1685,12 +1689,13 @@ def _best_cut(man, com, printer: Printer, cut_max: float, hold: bool = True):
     parts = len(man.decompose())
     whole = lambda r: r[0] == 0 or len(man.trim_by_plane((0.0, 0.0, 1.0), r[0]).decompose()) <= parts  # noqa: E731
     pick = next((r for r in order if whole(r)), rows[0])
+    footing = next((r for r in rows if r[2] >= HOLD_MM2 and shaved(r[0]) <= LIP_MM2 and whole(r)), None)
     if shaved(pick[0]) <= LIP_MM2:
-        return (*pick, False, pick)
+        return (*pick, False, pick, footing)
     clean = next(r for r in order if shaved(r[0]) <= LIP_MM2 and whole(r))  # d = 0 shaves nothing
     if clean[1] >= min(pick[1], STEADY_TIP_DEG) - 0.5:
-        return (*clean, False, clean)
-    return (*pick, True, clean)
+        return (*clean, False, clean, footing)
+    return (*pick, True, clean, footing)
 
 
 def _ledges(man, top: float):
@@ -1717,6 +1722,30 @@ def _ledges(man, top: float):
             if f >= 0:
                 below[i] = t + 1e-3
     return mid[up, 2], below, area[up]
+
+
+def print_com(m, printer: Printer):
+    """Centre of mass of the model as printed, not as a solid: a printer lays solid walls printer.shell_mm deep
+    under the surface and fills the rest with printer.infill, so thin parts (all wall) weigh more against a thick
+    body (mostly infill) than the solid centre says. hunyuan_necromutant on its feet: tip +1.2° solid, -5.8° with
+    walls only: its tentacles pull it over. Per surface point (wall_thickness, equal area each) the wall weighs
+    area · min(shell, half the thickness there), at half that depth in; the rest of the volume weighs infill.
+    `m` is closed, in mm."""
+    import numpy as np
+    import trimesh
+
+    solid = np.asarray(m.center_mass, np.float64)
+    if printer.infill >= 1.0:
+        return solid
+    pts, fi = trimesh.sample.sample_surface(m, THICKNESS_SAMPLES, seed=SEED)
+    inward = -np.asarray(m.face_normals, np.float64)[fi] * (1.0 if float(m.volume) >= 0 else -1.0)
+    depth = np.minimum(printer.shell_mm, np.nan_to_num(_ray_thickness(m, pts, inward), posinf=2 * printer.shell_mm) / 2)
+    w = depth * float(m.area) / len(pts)  # the wall's volume at each point
+    wall_c = ((pts + inward * depth[:, None] / 2) * w[:, None]).sum(0)
+    vol = abs(float(m.volume))
+    rest = max(vol - float(w.sum()), 0.0)  # the inside beyond the walls, at the solid centre less the walls
+    rest_c = (solid * vol - wall_c) if rest > 0 else np.zeros(3)
+    return (wall_c + printer.infill * rest_c) / (float(w.sum()) + printer.infill * rest)
 
 
 def _rest_faces(V, com):
@@ -1751,10 +1780,11 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     upright even so falls at a breath (under 3°), or only stands on a cut that shaves its bottom ledge thin
     (see _best_cut). It is tilted up to 3° onto a face of its hull, if that steadies it. A cut that only shaves
     gives way to the first that doesn't, tilted if need be, as long as the model doesn't fall: wobbly is reported,
-    a base changes the look. If it would still fall and has a footing (a hull face it rests on near straight down,
-    or its centre of mass over what it stands on) it was made to stand and gets a round base (`base` "none" leaves
-    it as it is); otherwise it is an object lying about, stood on its tip by the generator (a sword, a blaster),
-    and is laid on the face it lies steadiest on.
+    a base changes the look. If it would still fall and touches the plate with a footing that holds (HOLD_MM2:
+    feet, a bottom) it was made to stand and gets a round base (`base` "none" leaves it as it is); otherwise it
+    is an object lying about, stood on its tip by the generator (a sword, a blaster, a backpack on a hanging
+    strap), and is laid on the face it lies steadiest on. Steadiness is judged by the centre of mass as printed
+    (print_com), not as a solid.
     `m` is closed, in mm, Y up, bottom at 0. Returns (mesh, T, info): T the 4x4 move (rotation and shift) the
     result went through before any cut or base, so pieces kept beside it can follow; mesh None when it was
     left as it was."""
@@ -1764,7 +1794,7 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
 
     V = np.asarray(m.vertices, np.float64)
     F = np.asarray(m.faces, np.int64)
-    com = np.asarray(m.center_mass, np.float64)
+    com = print_com(m, printer)
     cut_max = min(CUT_MAX_MM, 0.03 * float(m.extents[1]))
     T = np.eye(4)
 
@@ -1774,7 +1804,8 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
     man = solid(V)
     if man.status() != mf.Error.NoError:
         raise RuntimeError(f"not a solid Manifold takes: {man.status()}")
-    d, tip, contact, shaves, clean = _best_cut(man, _zup(com[None])[0], printer, cut_max)
+    d, tip, contact, shaves, clean, footing = _best_cut(man, _zup(com[None])[0], printer, cut_max)
+    com0 = com
     info: dict[str, Any] = {"pose": "upright"}
     add_base = False
     def onto(nrm):
@@ -1785,7 +1816,7 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
         lo, hi = V2.min(0), V2.max(0)
         T2 = trimesh.transformations.translation_matrix([-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2]) @ R
         V2 = trimesh.transform_points(np.asarray(m.vertices, np.float64), T2)
-        c2 = trimesh.transform_points(np.asarray(m.center_mass, np.float64)[None], T2)[0]
+        c2 = trimesh.transform_points(com0[None], T2)[0]
         man2 = solid(V2)
         cut = min(CUT_MAX_MM, 0.03 * float(np.ptp(V2[:, 1])))
         return (T2, V2, c2, man2, *_best_cut(man2, _zup(c2[None])[0], printer, cut, hold=bool(nrm[1] < -0.9)))
@@ -1795,8 +1826,11 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
         rests = [r for r in hull_faces if r[1] > 0]
         small = [r for r in hull_faces if r[2] <= TILT_FREE_DEG]  # the tilt is judged by where it lands, not by this face
         turned = onto(small[0][0]) if small else None
-        # what stands on its footing with its centre of mass over it was made to stand, however weakly
-        made_to_stand = any(r[2] <= UPRIGHT_TILT_DEG for r in rests) or (tip > 0 and contact >= HOLD_MM2)
+        # made to stand, however weakly: it rests near straight down (or with its centre of mass over what it
+        # stands on), and a flat cut gives it a footing that holds (feet, a bottom), which a base holds it by.
+        # tripo_pack rests near down but touches with the tip of a hanging strap (3 mm²): its base held the whole
+        # bag up on that strap; hunyuan_necromutant touches with claw tips, 28 mm² at a 0.7 mm cut
+        made_to_stand = footing is not None and (any(r[2] <= UPRIGHT_TILT_DEG for r in rests) or (tip > 0 and contact >= HOLD_MM2))
         if turned and turned[5] >= FALLS_TIP_DEG and not turned[7]:  # a tilt nobody sees puts it on a face it rests on
             T, V, com, man, d, tip, contact = turned[:7]
             info["tiltDeg"] = round(small[0][2], 1)
@@ -1810,8 +1844,8 @@ def stand(m, printer: Printer, log: Log = print, base: str = "auto"):
             shaves = False
         elif made_to_stand:
             add_base = base != "none"
-            if add_base and shaves:  # the base takes the ledge: no need to shave it
-                d, tip, contact = clean
+            if add_base:  # on the base by its footing; the base takes any ledge, no need to shave it
+                d, tip, contact = footing
         elif rests and tip < FALLS_TIP_DEG:  # an object stood on its tip: laid on the face it really lies steadiest on
             biggest = sorted(rests, key=lambda r: -r[3])[:LYING_TRIES]  # a hull face's own tip angle says little: try them
             tried = rests[:LYING_TRIES] + [r for r in biggest if not any(r is x for x in rests[:LYING_TRIES])]
@@ -1910,7 +1944,7 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
                        np.c_[np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)]])
     nrm = np.asarray(m.face_normals, np.float64)
     V = np.asarray(m.vertices, np.float64)
-    com = np.asarray(m.center_mass, np.float64)
+    com = print_com(m, printer)
 
     def estimate(count, which):
         pts, fi = trimesh.sample.sample_surface(m, count, seed=SEED)
