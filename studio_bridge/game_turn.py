@@ -180,23 +180,20 @@ def _turn(V, T, original) -> tuple[Any, int]:
     return T, total
 
 
-def turn_diagonals(original: Path, cut: Path, shift) -> dict[str, int]:
+def turn_diagonals(original: Path, cut: Path, shift, mesh=None) -> dict[str, int]:
     """Turns the cut's diagonals in place, against the original (shift: how far the cut was moved onto the floor).
-    The original's search tree is built once per call: built per query it took 97 % of the time (knight 203 -> 11 s)."""
-    import igl
+    The original's search tree is built once per call: built per query it took 97 % of the time (knight 203 -> 11 s).
+    `mesh`: the original already loaded and shifted (game_steps.load_original), when the caller needs it too."""
     import numpy as np
-
-    from studio_bridge.game_look import _load
 
     raw, gltf, bin0 = _read(cut)
     if set(gltf.get("extensionsUsed", [])) & {"KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"}:
         return {"turned": 0, "faces": 0}
-    m = _load(original, 4)
-    HV = np.ascontiguousarray(m["V"] + np.asarray(shift, float))
-    HF = np.ascontiguousarray(m["F"], np.int64)
-    Hn, _ = _faces(HV, HF)
-    tree = igl.AABB()
-    tree.init(HV, HF)
+    if mesh is None:
+        from studio_bridge.game_steps import load_original
+
+        mesh = load_original(original, shift)
+    HV, HF, Hn, tree = mesh.V, mesh.F, mesh.n, mesh.tree
     worlds = _worlds(gltf)
     data = bytearray(raw)
     turned = faces = 0

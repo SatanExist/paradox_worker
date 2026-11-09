@@ -989,12 +989,17 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     `high`: the original already unpacked, when the caller bakes several times. `quick`: for the budget search,
     the normal map without its doubled size: the look reads the same (mech 6.13, knight 0.68 and 0.69, pistol 1.09),
     for less time and memory. The kept bake (not `quick`) first turns the cut's diagonals to lie on the original
-    better (game_turn). The search's quick bakes skip it, so the budget picks stay as they were."""
-    turned = None
+    better (game_turn), then smooths steps the original has not got, thin dark lines (game_steps). The search's
+    quick bakes skip both, so the budget picks stay as they were."""
+    turned = steps = None
     if not quick:
+        from studio_bridge.game_steps import load_original, smooth_steps
         from studio_bridge.game_turn import turn_diagonals
 
-        turned = turn_diagonals(in_path, out_path, shift)
+        original = load_original(in_path, shift)
+        turned = turn_diagonals(in_path, out_path, shift, original)
+        steps = smooth_steps(in_path, out_path, shift, original)
+        del original
     plain = high or _unpacked(in_path)
     work = Path(tempfile.mkdtemp(prefix="bake-"))
     fd, name = tempfile.mkstemp(suffix=".glb")
@@ -1027,6 +1032,8 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
             info["vertexCacheMisses"] = json.loads(lines[-1])["graft"].get("vertexCacheMisses")
         if turned is not None:
             info["diagonalsTurned"] = turned["turned"]
+        if steps is not None:
+            info["stepsSmoothed"] = steps["moved"]
         return info
     except subprocess.TimeoutExpired as exc:
         raise _BakeTooLong(f"baking took over {exc.timeout:g} s") from exc
@@ -1615,6 +1622,9 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
                      else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map"
                           f"{', glow' if 'emissive' in baked.get('passes', {}) else ''} ({baked['seconds']:g} s)")
+        if baked.get("diagonalsTurned") or baked.get("stepsSmoothed"):
+            steps.append(f"before baking: {baked.get('diagonalsTurned', 0)} diagonals turned to lie on the original better, "
+                         f"{baked.get('stepsSmoothed', 0)} corners moved off sharp steps the original hasn't got")
         result["after"] = {**result["after"], "textures": len(_glb_json(out_path).get("textures", [])), "textureMaxPx": baked["size"], "fileMb": round(out_path.stat().st_size / 1048576, 2)}
         if baked.get("vertexCacheMisses") and result["after"].get("vertexCache"):  # the bake's seams, ordered again
             result["after"]["vertexCache"] = {**result["after"]["vertexCache"], "after": baked["vertexCacheMisses"]}
