@@ -16,7 +16,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               spots ("thinSpots"). It is stood steady (print_solid.stand: bottom cut flat, laid down, or a
               base; "stand" in the report), unless params["stand"] is "keep"; params["base"] "none" adds no
               base. For FDM, a way up that PrusaSlicer finds faster and lighter is suggested ("printTurn": the
-              file stays as it stands; no slicer, no suggestion). params["printer"]
+              file stays as it stands; no slicer, no suggestion), and the brim PrusaSlicer finds keeps it on the
+              plate ("brim", print_slicer.brim_needed). params["printer"]
               is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
 """
 
@@ -382,6 +383,26 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     timings["printTurn"] = round(time.time() - t, 1)
     t = time.time()
 
+    # How wide a brim keeps it on the plate while it prints, as it stands and turned the suggested way.
+    brim = None
+    if printer.name == "fdm":
+        from studio_bridge.print_slicer import brim_needed
+
+        try:
+            mesh_mm = trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False)
+            brim = brim_needed(mesh_mm)
+            if brim is not None and brim["brimMm"] > 0:
+                steps.append(f"may come loose from the plate while printing: turn on a {brim['brimMm']} mm brim in the slicer"
+                             + ("" if brim["holds"] else " (PrusaSlicer still finds it loose even so)"))
+            if brim is not None and turn is not None and "turned" in turn:
+                turned_brim = brim_needed(mesh_mm, turn["turned"]["rotation"])
+                if turned_brim is not None:
+                    turn["turned"]["brim"] = turned_brim
+        except Exception as exc:  # a report extra: never worth failing the print for
+            print(f"brim not checked: {exc}")
+    timings["brim"] = round(time.time() - t, 1)
+    t = time.time()
+
     floating = None
     if pieces is not None:
         unit_mm = 1000.0  # glTF is metres
@@ -422,6 +443,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["stand"] = stood
     if turn is not None:
         report["printTurn"] = turn
+    if brim is not None:
+        report["brim"] = brim
     report["printer"] = printer.name
     if remesh:
         report["remesh"] = remesh
