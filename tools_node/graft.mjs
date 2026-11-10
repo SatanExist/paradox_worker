@@ -8,7 +8,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS, KHRMaterialsSpecular } from "@gltf-transform/extensions";
-import { prune, reorder } from "@gltf-transform/functions";
+import { prune, reorder, tangents, unweld, weld } from "@gltf-transform/functions";
+import { generateTangents } from "mikktspace";
 import { MeshoptEncoder } from "meshoptimizer";
 import sharp from "sharp";
 
@@ -212,6 +213,34 @@ for (const mesh of doc.getRoot().listMeshes()) {
   }
 }
 await doc.transform(prune());
+// Tangents for the normal map, worked out the way Blender's bake did (MikkTSpace) on the very normals and UVs
+// above, so every viewer lays the relief the way it was baked instead of guessing its own (three.js guesses
+// from screen slopes); any tangents the cut came with are stale after the new UVs and get replaced. On 8
+// models the site viewer came 0-2.3 % closer to the original, none further; the file grows ~2 %.
+// MikkTSpace wants every triangle corner apart: split, add, and weld the same corners back together.
+await doc.transform(unweld(), tangents({ generateTangents, overwrite: true }));
+// A corner of a sliver with no area gets a zero tangent (1 of the scorpion's 14k at 20k), which glTF forbids
+// and a viewer would turn into a dark speck: give it any direction along the surface there instead.
+let flatTangents = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    const tangent = prim.getAttribute("TANGENT");
+    const normal = prim.getAttribute("NORMAL");
+    if (!tangent || !normal) continue;
+    const t = tangent.getArray();
+    const n = normal.getArray();
+    for (let v = 0; v < tangent.getCount(); v++) {
+      const [x, y, z] = [t[4 * v], t[4 * v + 1], t[4 * v + 2]];
+      if (Math.abs(Math.hypot(x, y, z) - 1) < 1e-3) continue;
+      const [a, b, c] = [n[3 * v], n[3 * v + 1], n[3 * v + 2]];
+      const [p, q, r] = Math.abs(a) < 0.9 ? [0, c, -b] : [-c, 0, a]; // normal × x axis, or × y axis
+      const len = Math.hypot(p, q, r) || 1;
+      t.set([p / len, q / len, r / len, 1], 4 * v);
+      flatTangents++;
+    }
+  }
+}
+await doc.transform(weld());
 // The new seams split vertices: put the drawing order right again, as game.mjs does, and say how it came out
 // (vertex cache misses per triangle through a cache of 16).
 await MeshoptEncoder.ready;
@@ -235,4 +264,4 @@ for (const mesh of doc.getRoot().listMeshes()) {
 }
 await io.write(outPath, doc);
 const vertexCacheMisses = triangles ? Math.round((misses / triangles) * 1000) / 1000 : 0;
-process.stdout.write(JSON.stringify({ graft: { corners, vertices, dropped, vertexCacheMisses } }));
+process.stdout.write(JSON.stringify({ graft: { corners, vertices, dropped, flatTangents, vertexCacheMisses } }));
