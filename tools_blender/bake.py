@@ -330,6 +330,39 @@ def covered(size):
 # A model baked for its normal map alone keeps its misses: flat there, they change nothing.
 LONG_REACH = float(PARAMS.get("longReach", 3))
 missed = None
+# Only the faces over a missed texel are baked again: Cycles works texel by texel of the image each face bakes into, so
+# the others are put aside onto an image of one texel. Their shape stays, so normals and tangents stay too, and the
+# missed texels come out the same as from the whole bake, all but one texel on the truck and one on the mech at 10k
+# (a shade off, the same run after run: 5 of 7 trials byte for byte). The whole image again took 11 of the dog's 39 s
+# with 2 texels missed; on the whole auto budget it saves 5-8 s a bake with misses, the low rungs (2026-11-10).
+aside = bpy.data.materials.new("aside")
+aside.use_nodes = True
+aside.node_tree.nodes.active = aside_slot = aside.node_tree.nodes.new("ShaderNodeTexImage")
+aside_slot.image = image("aside", False, 1)
+
+
+def set_aside():
+    """Faces whose UV box holds no missed texel bake into the one-texel image (the box holds every texel covered()
+    gives the face)."""
+    table = np.zeros((BAKE + 1, BAKE + 1), dtype=np.int64)
+    table[1:, 1:] = missed.cumsum(0).cumsum(1)
+    for o in low:
+        uv = np.empty(len(o.data.loops) * 2, dtype=np.float64)
+        o.data.uv_layers.active.data.foreach_get("uv", uv)
+        tri = uv.reshape(-1, 3, 2) * BAKE - 0.5
+        x0, y0 = np.floor(tri.min(1)).astype(int).clip(0, BAKE - 1).T
+        x1, y1 = np.ceil(tri.max(1)).astype(int).clip(0, BAKE - 1).T
+        held = table[y1 + 1, x1 + 1] - table[y0, x1 + 1] - table[y1 + 1, x0] + table[y0, x0]
+        o.data.materials.append(aside)
+        o.data.polygons.foreach_set("material_index", (held == 0).astype(np.int32))
+        o.data.update()
+
+
+def back_from_aside():
+    for o in low:
+        o.data.polygons.foreach_set("material_index", np.zeros(len(o.data.polygons), dtype=np.int32))
+        o.data.materials.pop(index=len(o.data.materials) - 1)
+        o.data.update()
 
 
 def again_longer(name, img, bake_it):
@@ -340,10 +373,12 @@ def again_longer(name, img, bake_it):
     where = np.repeat(np.repeat(missed, side // missed.shape[0], axis=0), side // missed.shape[0], axis=1)
     longer = image(name + "_longer", img.colorspace_settings.name == "sRGB", side)
     set_reach(LONG_REACH * REACH)
+    set_aside()
     try:
         bake_it(longer)
     finally:
         set_reach(REACH)
+        back_from_aside()
     a, b = rgba(img), rgba(longer)
     a[where] = b[where]
     img.pixels.foreach_set(a.ravel())
