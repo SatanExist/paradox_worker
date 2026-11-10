@@ -1148,6 +1148,14 @@ CLOSE_GAIN = 0.9
 # Rungs looked at under a pick made by CLOSE_GAIN, at most: each is a quick look (about a minute with a bake).
 FLAT_STEPS_DOWN = 2
 
+# Where a baked search starts: the first of GUESS_RUNGS whose quick cut stands off the original by no more than
+# GUESS_MEAN_PCT on average (shape alone, no bake: about a second a rung). Against the 39 picks of the 42-model run
+# (2026-11-08) it named the pick 18 times and missed by more than one rung 3 times; started there instead of the middle
+# of the ladder, the search would have baked 87 rungs instead of 142. The worst spot and the shading angle guessed worse
+# (31-32 within a rung). The bake and the look still decide: the guess only says where to look first.
+GUESS_RUNGS = (5000, 10000, 20000, 35000, 50000, 100000)
+GUESS_MEAN_PCT = 0.076
+
 
 def _quick_look(in_path: Path, budget: int, texture_size: int, res: int, bake: bool, high: Path | None = None,
                 close_under: float | None = None) -> dict[str, Any]:
@@ -1207,15 +1215,18 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
     so the search can skip. Returns the pick and every budget tried, in order."""
     original = _shaded(in_path)
     faces = original[1]
-    _hidden(in_path, original)  # once for every quick cut
-    original = None
+    found = _hidden(in_path, original)  # once for every quick cut
     floor, ladder = (purpose["bakeFloor"], purpose["bakeLadder"]) if bake else (purpose["floor"], purpose["ladder"])
     if len(faces) <= floor:  # already light: nothing to cut
         return {"picked": len(faces), "okPct": ok_pct, "tried": []}
     ladder = [b for b in ladder if b < len(faces)] + [len(faces)]
+    # Measured for the regular look only, the 384 px one.
+    guess = _guess(in_path, original, found, ladder, texture_size) if bake and purpose_name != "background" else None
+    original = None
     high = _unpacked(in_path) if bake else None  # unpacked once for every quick bake
     try:
-        return _search(in_path, texture_size, ok_pct, purpose_name, purpose, bake, bake_ok_pct, ladder, high)
+        picked = _search(in_path, texture_size, ok_pct, purpose_name, purpose, bake, bake_ok_pct, ladder, high, guess)
+        return {**picked, **({"guessTris": ladder[guess]} if guess is not None else {})}
     finally:
         if high is not None and high != in_path:
             try:
@@ -1224,8 +1235,31 @@ def _auto_budget(in_path: Path, texture_size: int, ok_pct: float, purpose_name: 
                 pass
 
 
+def _guess(in_path: Path, original, found, ladder: list[int], texture_size: int) -> int | None:
+    """The rung of `ladder` the search looks at first (GUESS_MEAN_PCT): up GUESS_RUNGS until a quick cut stands off
+    the original little enough on average, the last of them looked at when none does."""
+    reference = _Reference(_visible(original, found))
+    at = None
+    for budget in (b for b in GUESS_RUNGS if b in ladder[:-1]):
+        fd, name = tempfile.mkstemp(suffix=".glb")
+        os.close(fd)
+        try:
+            job = {"targetTris": budget, "textureSize": texture_size, "forBake": True, **({"dropFile": found["file"]} if found else {})}
+            cut = _game_mjs(in_path, Path(name), job)
+            off = reference.compare(Path(name), cut["shift"])[0]["meanPct"]
+        finally:
+            try:
+                Path(name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        at = ladder.index(budget)
+        if off <= GUESS_MEAN_PCT:
+            break
+    return at
+
+
 def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, purpose: dict[str, Any],
-            bake: bool, bake_ok_pct: float | None, ladder: list[int], high: Path | None) -> dict[str, Any]:
+            bake: bool, bake_ok_pct: float | None, ladder: list[int], high: Path | None, guess: int | None = None) -> dict[str, Any]:
     tried: list[dict[str, Any]] = []
     only_close_off: list[dict[str, Any]] = []  # right from afar, off up close
     lo, hi = 0, len(ladder) - 1  # ladder[hi] is the whole model: it always passes
@@ -1276,8 +1310,12 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
             only_close_off.append(step)
         return step, fine_afar, close_off
 
+    # A guessed start (_guess) is looked at first and, when right, the rung under it: a right guess takes two looks. When
+    # not, halving goes on above it as before: the rung over a wrong guess cost the statue and the harbor a look more
+    # (guessed 50k, picked 100k and 75k), as the guess runs low on heavy ones.
+    first = guess if guess is not None else first
     while lo < hi:
-        mid, first = (first, None) if first is not None else ((lo + hi) // 2, None)
+        mid, first = (first, None) if first is not None and lo <= first < hi else ((lo + hi) // 2, None)
         try:
             step, fine_afar, close_off = look(mid)
         except RuntimeError as exc:
@@ -1289,6 +1327,8 @@ def _search(in_path: Path, texture_size: int, ok_pct: float, purpose_name: str, 
                 lo = max(lo, floor)
         else:
             lo = mid + 1
+        if mid == guess and hi == mid:
+            first = mid - 1
     picked, flat = ladder[lo], None
     measured = {s["targetTris"]: s["closePct"] for s in tried if "closePct" in s}
 
