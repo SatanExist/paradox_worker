@@ -287,22 +287,110 @@ def glows():
 
 timings = {}
 maps = {}
-# Its own glow first, before shine() below rewires the emission to bake the other maps.
+
+
+def set_reach(reach):
+    bake.cage_extrusion = reach * extent
+    bake.max_ray_distance = 2 * reach * extent
+
+
+def rgba(img):
+    a = np.empty(img.size[0] * img.size[1] * 4, dtype=np.float32)
+    img.pixels.foreach_get(a)
+    return a.reshape(img.size[1], img.size[0], 4)
+
+
+def covered(size):
+    """Texels whose centre lies on the light model's new UVs (rows from the bottom, as Blender keeps pixels), one
+    texel in from the islands' edges."""
+    cov = np.zeros((size, size), dtype=bool)
+    for o in low:
+        uv = np.empty(len(o.data.loops) * 2, dtype=np.float64)
+        o.data.uv_layers.active.data.foreach_get("uv", uv)
+        for tri in uv.reshape(-1, 3, 2) * size - 0.5:
+            x0, y0 = np.floor(tri.min(0)).astype(int).clip(0, size - 1)
+            x1, y1 = np.ceil(tri.max(0)).astype(int).clip(0, size - 1)
+            ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+            e = [(tri[(i + 1) % 3, 0] - tri[i, 0]) * (ys - tri[i, 1]) - (tri[(i + 1) % 3, 1] - tri[i, 1]) * (xs - tri[i, 0]) for i in range(3)]
+            inside = ((e[0] >= 0) & (e[1] >= 0) & (e[2] >= 0)) | ((e[0] <= 0) & (e[1] <= 0) & (e[2] <= 0))
+            cov[ys[inside], xs[inside]] = True
+    inner = cov.copy()
+    inner[1:] &= cov[:-1]; inner[:-1] &= cov[1:]; inner[:, 1:] &= cov[:, :-1]; inner[:, :-1] &= cov[:, 1:]
+    return inner
+
+
+# Where a ray met nothing within REACH, the texel stays empty in every map: black in base colour (unseen on a black
+# hat), but roughness 0 and metalness 0 in the other map, so a viewer drew glossy plastic: a grey patch mirroring the
+# room on the dog's matt black hat at 5k, 1134 texels, where the cut left the surface a little past the reach
+# (2026-11-10). A missed texel reads exactly flat in the normal map (0.5, 0.5, 1: harmless there) and 0 in roughness:
+# both together mark the misses (a met surface that flat and that glossy is rare, and baked again it reads the same),
+# and every map is baked again with rays LONG_REACH times as long, taken only for those texels. Longer rays everywhere
+# drew a hose onto the pump's wall (see REACH); on texels that would be empty they can only help. Blue under 0.25 is
+# not a miss: those are folds whose light face turned over (32k texels on the dog), and the TILT cap below takes them.
+# A model baked for its normal map alone keeps its misses: flat there, they change nothing.
+LONG_REACH = float(PARAMS.get("longReach", 3))
+missed = None
+
+
+def again_longer(name, img, bake_it):
+    """Bake img once more with longer rays and take that for the texels the first rays missed."""
+    if missed is None or not missed.any():
+        return
+    side = img.size[0]
+    where = np.repeat(np.repeat(missed, side // missed.shape[0], axis=0), side // missed.shape[0], axis=1)
+    longer = image(name + "_longer", img.colorspace_settings.name == "sRGB", side)
+    set_reach(LONG_REACH * REACH)
+    try:
+        bake_it(longer)
+    finally:
+        set_reach(REACH)
+    a, b = rgba(img), rgba(longer)
+    a[where] = b[where]
+    img.pixels.foreach_set(a.ravel())
+    bpy.data.images.remove(longer)
+
+
+t = time.time()
+maps["normal"] = image("normal", False, BAKE * NORMAL_SUPER)
+scene.cycles.samples = NORMAL_SAMPLES
+bake_normal = lambda img: (run_in_parts if NORMAL_SUPER > 1 else run)("NORMAL", img, normal_space="TANGENT")
+bake_normal(maps["normal"])
+scene.cycles.samples = SAMPLES
+timings["normal"] = round(time.time() - t, 1)
+missed_first = missed_left = 0
+
+
+def misses():
+    """Texels (at the base size) flat in the normal map and 0 in roughness."""
+    n = rgba(maps["normal"])[..., :3]
+    s = n.shape[0] // BAKE
+    # Any of the finer normal texels flat: with all of them, the rim of the dog's patch stayed a ring of glossy dots.
+    flat = (np.abs(n - (0.5, 0.5, 1.0)) < 0.6 / 255).all(-1).reshape(BAKE, s, BAKE, s).any(axis=(1, 3))
+    return covered(BAKE) & flat & (rgba(maps["roughness"])[..., 1] < 0.6 / 255)
+
+
+if not NORMAL_ONLY:
+    t = time.time()
+    maps["roughness"] = image("roughness", False)
+    run("ROUGHNESS", maps["roughness"])
+    missed = misses()
+    missed_first = int(missed.sum())
+    again_longer("roughness", maps["roughness"], lambda img: run("ROUGHNESS", img))
+    timings["roughness"] = round(time.time() - t, 1)
+    t = time.time()
+    scene.cycles.samples = NORMAL_SAMPLES
+    again_longer("normal", maps["normal"], bake_normal)
+    scene.cycles.samples = SAMPLES
+    missed_left = int((missed & misses()).sum())
+    timings["normalLonger"] = round(time.time() - t, 1)
+
+# Its own glow before shine() below rewires the emission to bake the other maps.
 if not NORMAL_ONLY and glows():
     t = time.time()
     maps["emissive"] = image("emissive", True)
     run("EMIT", maps["emissive"])
+    again_longer("emissive", maps["emissive"], lambda img: run("EMIT", img))
     timings["emissive"] = round(time.time() - t, 1)
-for name, kind, colour, extra in [
-    *([] if NORMAL_ONLY else [("roughness", "ROUGHNESS", False, {})]),
-    ("normal", "NORMAL", False, {"normal_space": "TANGENT"}),
-]:
-    t = time.time()
-    maps[name] = image(name, colour, BAKE * NORMAL_SUPER if name == "normal" else None)
-    scene.cycles.samples = NORMAL_SAMPLES if name == "normal" else SAMPLES
-    (run_in_parts if name == "normal" and NORMAL_SUPER > 1 else run)(kind, maps[name], **extra)
-    scene.cycles.samples = SAMPLES
-    timings[name] = round(time.time() - t, 1)
 
 # Base colour and metalness are baked as light the heavy model gives off: Cycles' diffuse colour pass
 # is base colour x (1 - metalness), which turned metal parts black.
@@ -311,6 +399,7 @@ for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Col
     shine(socket_name)
     maps[name] = image(name, colour)
     run("EMIT", maps[name])
+    again_longer(name, maps[name], lambda img: run("EMIT", img))
     timings[name] = round(time.time() - t, 1)
 
 # The normal map tilts the light model's surface at most TILT degrees. Steeper texels are rays that met the
@@ -386,4 +475,4 @@ for o in low:
 np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
 with open(os.path.join(OUT, "corners.json"), "w") as fh:
     json.dump(meshes, fh)
-print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings}}))
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "missedTexels": [missed_first, missed_left], "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings}}))

@@ -333,7 +333,7 @@ def _as_drawn(geom):
 
 def _shaded(path: Path):
     """Vertices, faces and the file's own vertex normals (what the light uses), in model space,
-    and whether any node moves its mesh (then positions differ from the mesh's own).
+    and, when a node moves a mesh, every vertex where its mesh holds it (else None).
 
     `_load` merges into one trimesh and recomputes normals; a scene keeps the ones the file has.
     """
@@ -352,7 +352,7 @@ def _shaded(path: Path):
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
     world = _world_node(path)
-    verts, faces, normals, offset, moved = [], [], [], 0, False
+    verts, faces, normals, own, offset, moved = [], [], [], [], 0, False
     for node in scene.graph.nodes_geometry:
         matrix, name = scene.graph[node]
         if world is not None:
@@ -365,11 +365,14 @@ def _shaded(path: Path):
         turned = gn @ matrix[:3, :3].T
         normals.append(turned / np.linalg.norm(turned, axis=1, keepdims=True).clip(1e-12))
         verts.append(trimesh.transform_points(gv, matrix))
+        own.append(gv)
         faces.append(gf + offset)
         offset += len(gv)
     if not faces:
         raise ValueError("could not read the model's geometry")
-    return np.vstack(verts), np.vstack(faces), np.vstack(normals), moved
+    # The fourth: each vertex where its mesh holds it, when a node moves it (None when none does): game.mjs
+    # keeps vertices found by the mesh's own positions.
+    return np.vstack(verts), np.vstack(faces), np.vstack(normals), np.vstack(own) if moved else None
 
 
 def _spread(area, count: int, phase: float = 0.5):
@@ -422,6 +425,7 @@ class _Reference:
         spread_points = (self.tri[self.spread_face] * np.stack([1 - a - b, a, b], axis=1)[:, :, None]).sum(1)
         self.by_centre = cKDTree(self.tri.mean(1))
         self.by_spread = cKDTree(spread_points)
+        self.by_vertex = cKDTree(self.ov)
         # Each vertex stands for a third of the area of the faces around it: the mean over
         # vertices then counts surface, not how densely the generator happened to mesh a spot.
         self.vertex_area = np.zeros(len(self.ov))
@@ -480,8 +484,9 @@ class _Reference:
         pick, bary = _spread(area, 200_000)
         cloud = np.vstack([rv, (tri[pick] * bary).sum(1)])
         ms.add_mesh(pymeshlab.Mesh(cloud))
+        cloud_at = ms.mesh_number() - 1
         to_old = ms.get_hausdorff_distance(
-            sampledmesh=ms.mesh_number() - 1, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud)
+            sampledmesh=cloud_at, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud), savesample=find_lost
         )
 
         mean_to_new = float((to_new * self.vertex_area).sum() / self.vertex_area.sum())
@@ -493,7 +498,24 @@ class _Reference:
             # 3.69-3.81); decisions go by this one.
             "missingMaxPct": round(float(to_new.max()) / self.size * 100, 3),
         }
-        lost = to_new / self.size * 100 if find_lost else None
+        lost = None
+        if find_lost:
+            lost = to_new / self.size * 100
+            # The other way too: where the new surface stands off the original, the bake's rays (they look
+            # bake.py's REACH, 0.5% of the size, either side) miss it or catch a part beside it. The dragon at
+            # 10k: a black dot (1.3x the reach off) and a red patch off its mouth (1.05x) at sharp corners
+            # (2026-11-09). Each such point counts for the original vertex nearest the spot it should lie on.
+            # Meshlab names a second save "Hausdorff Sample Point(1)" and so on.
+            saved = {ms.mesh(i).label().split("(")[0]: ms.mesh(i).vertex_matrix() for i in range(cloud_at + 1, ms.mesh_number())}
+            off, on = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
+            stands_off = np.linalg.norm(off - on, axis=1) / self.size * 100
+            far = stands_off > KEEP_LOST_PCT
+            if far.any():
+                np.maximum.at(lost, self.by_vertex.query(on[far], workers=-1)[1], stands_off[far])
+            shape["lostMaxPct"] = round(float(lost.max()), 3)
+            # How much of the new surface stands off that far (% of its points): a round can mend these and
+            # still leave the worst spot where it was (the snowman's, a part gone), and then only this shows it.
+            shape["offPct"] = round(100 * float(far.mean()), 3)
 
         # Points spread over the new surface by area, with the normal the light sees there.
         count = 50_000
@@ -525,6 +547,9 @@ class _Reference:
 
         cos = np.einsum("nd,nd->n", seen, old) / (np.linalg.norm(seen, axis=1) * np.linalg.norm(old, axis=1)).clip(1e-12)
         angle = np.degrees(np.arccos(cos.clip(-1, 1)))
+        # A point landing on a face of the original with no area has no blend of corners (NaN): left out, or
+        # one such point turned the whole mean into NaN (the dragon at 10k, 2026-11-09).
+        angle = angle[np.isfinite(angle)]
         deviation = {
             **shape,
             "normalMeanDeg": round(float(angle.mean()), 1),
@@ -787,10 +812,18 @@ def _visible(original, found):
 
     if not found:
         return original
-    V, F, N, moved = original
+    V, F, N, own = original
     F = np.asarray(F)[found["stays"]]
     used, F = np.unique(F, return_inverse=True)
-    return V[used], F.reshape(-1, 3), N[used], moved
+    return V[used], F.reshape(-1, 3), N[used], None if own is None else own[used]
+
+
+def _keep_file(original, kept) -> bytes:
+    """The vertices to keep, as game.mjs finds them: by where their mesh holds them."""
+    import numpy as np
+
+    at = original[0] if original[3] is None else original[3]
+    return np.asarray(at[kept], dtype=np.float32).tobytes()
 
 
 def _looks_closer(in_path: Path, new: tuple[Path, list[float]], old: tuple[Path, list[float]], looked: dict[str, float]) -> bool:
@@ -810,6 +843,7 @@ def _looks_closer(in_path: Path, new: tuple[Path, list[float]], old: tuple[Path,
 # from the new surface (antennas, rocket tips, thin barrels). Up to KEEP_ROUNDS times a vertex is kept at
 # the worst spots and the model cut again with the same budget: fixing one spot can open another.
 # Mech at 10k: an antenna gone (5.17%) -> 0.93%, vertices over 0.5% off 8714 -> 2605; scorpion 7.85 -> 1.69%.
+# Also where the new surface stands off the original by more: the same 0.5% is how far the bake looks (bake.py REACH).
 KEEP_LOST_PCT = 0.5
 KEEP_ROUNDS = 3
 
@@ -1102,6 +1136,10 @@ def _purpose(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 RECHECK_MARGIN = 1.15
 
 # More of the picture than this off at the finest details (game_look.close_up): a rung up. Marked by eye, there.
+# Checked again when the close cameras moved outside the model (2026-11-09): fine marks read up to 2.65 (camera
+# 5k; scorpion 20k and watch 50k 2.6, low-poly 5k 2.46, mech 20k 2.37), crumpled ones from 2.95 (drill 5k; skeleton
+# 5k 3.11). 2.2 took the dog's 5k (2.34) out, but put six models marked fine a rung up (the watch to 100k). One share
+# of the picture can't tell a crumpled face from a panel a little off, so the margin is small.
 CLOSE_OK_PCT = 2.65
 # ...unless a bigger budget comes no closer than this share of the score: the triangles have stopped helping, and what
 # is left is the texture's own resolution. The watch read 4.14, 3.08, 2.82, 2.70, 2.93, 2.73 at 20k to 75k, went on to
@@ -1469,13 +1507,13 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             reference = _Reference(original)
             result = cutting.result()
     to_budget = "maxErrorPct" not in job
-    deviation, lost = reference.compare(out_path, result["shift"], find_lost=to_budget and not original[3])
+    deviation, lost = reference.compare(out_path, result["shift"], find_lost=to_budget)
     steps = list(result["steps"])
 
     # To a budget a whole part can go (the error limit is off): find what went missing, keep a vertex
     # there, cut again, all in this one run. A round stays only if the shape came closer: the worst
     # spot smaller or the whole closer, and the whole no more than 5% further off than the first cut.
-    # Worst spots by the exact missingMaxPct, so a round is kept or not for what it changed. A round closer
+    # Worst spots by the exact lostMaxPct (missing or standing off past the bake's reach), so a round is kept or not for what it changed. A round closer
     # one way and further the other (the whole closer, its worst spot further) is kept if it looks closer.
     first_mean, kept, tried, looked = deviation["meanPct"], [], 0, {}
     while lost is not None and tried < KEEP_ROUNDS and (lost > KEEP_LOST_PCT).any():
@@ -1489,11 +1527,13 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         os.close(fd)
         keep_path, second_path = Path(keep_name), Path(second_name)
         try:
-            keep_path.write_bytes(np.asarray(original[0][kept + more], dtype=np.float32).tobytes())
+            keep_path.write_bytes(_keep_file(original, kept + more))
             second = _game_mjs(in_path, second_path, {**job, "keepFile": str(keep_path)})
             again, again_lost = reference.compare(second_path, second["shift"], find_lost=True)
-            closer = again["missingMaxPct"] < 0.97 * deviation["missingMaxPct"] or again["meanPct"] < 0.97 * deviation["meanPct"]
-            plainly = again["missingMaxPct"] <= deviation["missingMaxPct"] and again["meanPct"] <= deviation["meanPct"]
+            closer = (again["lostMaxPct"] < 0.97 * deviation["lostMaxPct"] or again["meanPct"] < 0.97 * deviation["meanPct"]
+                      or again["offPct"] < 0.97 * deviation["offPct"])
+            plainly = (again["lostMaxPct"] <= deviation["lostMaxPct"] and again["meanPct"] <= deviation["meanPct"]
+                       and again["offPct"] <= deviation["offPct"])
             if closer and again["meanPct"] <= 1.05 * first_mean and (
                 plainly or _looks_closer(in_path, (second_path, second["shift"]), (out_path, result["shift"]), looked)
             ):
@@ -1520,7 +1560,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     if to_budget and _animated(in_path):
         moves = _Moves(in_path)
         moving, moving_lost = moves.compare(out_path)
-        rest_keep = original[0][kept] if kept else np.zeros((0, 3))
+        rest_keep = (original[0] if original[3] is None else original[3])[kept] if kept else np.zeros((0, 3))
         # Each round adds points where the last cut tried broke worst, kept or not: a round can mend the
         # frames on the whole yet open a new worst spot (the plain fox at 300: mean 0.428 -> 0.366%, worst
         # 3.06 -> 3.73%), and the next one mends that. A cut is taken only if better than the best so far.
@@ -1593,7 +1633,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             os.close(fd)
             keep_path, second_path = Path(keep_name), Path(second_name)
             try:
-                keep_path.write_bytes(np.asarray(original[0][kept], dtype=np.float32).tobytes())
+                keep_path.write_bytes(_keep_file(original, kept))
                 mend = {**job, "targetTris": job["targetTris"] + extra, **({"dropFile": wider["file"]} if wider else {"dropFile": None})}
                 mend = {k: v for k, v in mend.items() if v is not None}
                 second = _game_mjs(in_path, second_path, {**mend, **({"keepFile": str(keep_path)} if kept else {})})
@@ -1622,6 +1662,9 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
                      else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map"
                           f"{', glow' if 'emissive' in baked.get('passes', {}) else ''} ({baked['seconds']:g} s)")
+        missed = baked.get("missedTexels") or [0, 0]
+        if missed[0]:
+            steps.append(f"bake rays missed {missed[0]} texels: those baked again with longer rays, {missed[1]} still empty")
         if baked.get("diagonalsTurned") or baked.get("stepsSmoothed"):
             steps.append(f"before baking: {baked.get('diagonalsTurned', 0)} diagonals turned to lie on the original better, "
                          f"{baked.get('stepsSmoothed', 0)} corners moved off sharp steps the original hasn't got")

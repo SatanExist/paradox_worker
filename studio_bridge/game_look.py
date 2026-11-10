@@ -2,7 +2,8 @@
 
 The numbers in game_prep's report measure the surface; this measures the picture a person sees. Both
 models are drawn from six fixed views (Embree rays through libigl, no GPU) with their base colour
-texture, normal map and metal/roughness, under one fixed light and sky, and compared pixel by pixel:
+texture, normal map and metal/roughness, under one fixed light and sky, faces turned towards the camera
+only (as a game engine draws them), and compared pixel by pixel:
 
   silhouettePct  outline that differs: parts gone or grown (pixels in one outline only / both)
   lookPct        mean colour difference where both are drawn, everything on
@@ -120,8 +121,9 @@ def _sample(img, uv):
     return img[y, x]
 
 
-def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tuple[Any, dict[str, Any]]:
-    """One view: the outline and three pictures (everything, texture alone, light alone)."""
+def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES, away: float = 0.0) -> tuple[Any, dict[str, Any]]:
+    """One view: the outline and three pictures (everything, texture alone, light alone). The rays start `away` (at
+    least 2 * radius) in front of the centre: a close frame passes a distance outside the whole model."""
     import igl.embree
     import numpy as np
 
@@ -133,9 +135,19 @@ def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES) -> tup
     up = np.cross(right, d)
     s = (np.arange(res) + 0.5) / res * 2 - 1
     xs, ys = np.meshgrid(s, -s)
-    origins = (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
-    hit = igl.embree.line_mesh_intersection(origins, np.repeat(d[None], len(origins), 0), m["V"], m["F"])
-    face = hit[:, 0].astype(np.int64)
+    origins = (centre - d * max(2 * radius, away) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+    # Faces turned towards the view only, as a game engine and our viewer draw them: drawn from both sides, a wall
+    # a cut moved behind its neighbour showed its back as a dark patch nobody sees (the chest's lid, 2026-11-09),
+    # and the judges climbed the chest from 21k to 37k triangles for it.
+    V, F = m["V"], m["F"]
+    facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
+    face = np.full(len(origins), -1, np.int64)
+    if len(facing):
+        hit = igl.embree.line_mesh_intersection(origins, np.repeat(d[None], len(origins), 0), V, F[facing])
+        met = hit[:, 0] >= 0
+        face[met] = facing[hit[met, 0].astype(np.int64)]
+    else:
+        hit = np.zeros((len(origins), 3))
     seen = face >= 0
     f = face[seen]
     w = np.stack([1 - hit[seen, 1] - hit[seen, 2], hit[seen, 1], hit[seen, 2]], 1)[:, :, None]
@@ -253,7 +265,7 @@ def _file_key(path: Path) -> tuple:
 
 def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str, int]:
     """Pixels where a viewer would see through the result (it has only back faces there) while the original
-    is drawn, over SEE_THROUGH_VIEWS views; the six views above draw both sides and miss them. A face left
+    is drawn, over SEE_THROUGH_VIEWS views; the six views below show such a slit too, but blur it into a mean. A face left
     out as hidden that showed through a slit after all leaves exactly this, as does a triangle a cut folded
     over. Returns the total, the biggest patch of them in one view (a hole is a patch: single pixels
     scattered over the views are an edge grazed), and the original's faces drawn there (numbered as
@@ -413,6 +425,10 @@ CLOSE_RES = 384
 CLOSE_FRAME = 0.05  # half-width of a frame, of the model's diagonal
 CLOSE_TEX = 1024
 CLOSE_SHIFT_PX = 2  # a line moved this far is the same line
+# Where a close frame's rays start, in model diagonals in front of its spot: outside the whole model, as a person
+# zooming in from outside sees it. Started a frame's width away, they began inside the model at times, and the ray
+# caster, which takes the nearest hit either way along a ray, drew what was behind the camera (2026-11-09).
+CLOSE_AWAY = 2.0
 
 
 def _relief_spots(m: dict[str, Any], diag: float) -> list[tuple[Any, Any]]:
@@ -504,7 +520,7 @@ def _close_frames(original: Path) -> tuple[list[tuple], int]:
             across = np.cross(n, [0.0, 1.0, 0.0] if abs(n[1]) < 0.9 else [1.0, 0.0, 0.0])
             across /= np.linalg.norm(across)
             for view in (n, n * 0.8 + across * 0.6):
-                ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES)
+                ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES, CLOSE_AWAY * diag)
                 frames.append((at, CLOSE_FRAME * diag, view, ma, _seen_close(pa)))
         _CLOSE_FRAMES[key] = (frames, len(spots))
     return _CLOSE_FRAMES[key]
@@ -529,7 +545,7 @@ def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
     b["V"] = b["V"] - np.asarray(shift, float)
     frames = []
     for at, half, view, ma, seen_a in originals:
-        mb, pb = _draw(b, at, half, view, CLOSE_RES)
+        mb, pb = _draw(b, at, half, view, CLOSE_RES, CLOSE_AWAY * half / CLOSE_FRAME)
         union = ma | mb
         if union.mean() < 0.1:
             continue
