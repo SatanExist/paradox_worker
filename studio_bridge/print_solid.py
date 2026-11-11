@@ -67,6 +67,8 @@ THICKEN_TOLERANCE_MM = 0.02  # the thickened mesh is simplified within this, far
 TAPER_CORR = -0.7  # a thin patch whose thickness falls this steadily toward its rim (rank correlation) is a tapered edge
 TAPER_MEET = 0.25  # if its two sides meet at the rim: thinner there than this share of a nozzle line (PrusaSlicer's min_feature_size)
 TAPER_LONG = 2.0  # and it runs along the rim at least as far as it reaches in: area / reach² this much, both sides counted
+LEAF_REACH_MM = 3.0  # a thin patch no farther than this from thick wall, all along, is a short leaf on the body ...
+LEAF_WIDE = 1.0  # ... if it is joined along as long as it reaches out (area / reach² at least this): grown only to print
 STEADY_TIP_DEG = 10.0  # a model that must tilt this far before it falls stands steady; less is wobbly
 FALLS_TIP_DEG = 3.0  # under this it falls at a breath: laid down, or given a base
 UPRIGHT_TILT_DEG = 25.0  # a face it can rest on this close to straight down means it was made to stand
@@ -1439,7 +1441,7 @@ def _spread(W, deg, values):
     return np.column_stack([spl.cg(M, values[:, c], M=pre, rtol=1e-6, atol=0, maxiter=400)[0] for c in range(values.shape[1])])
 
 
-def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0):
+def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0, leaf_to=0.0):
     """Steps 2-4 of thicken on a mesh already cut: how far each vertex moves. Returns {x, info, tf, t1, cancel}, cancel
     being the thin faces at vertices where the two sides cancelled; None when nothing is to move. A `draft` only finds
     those faces, on what it costs little to know: the wall straight across, shared half and half."""
@@ -1485,10 +1487,14 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0):
     which = np.nonzero(thin)[0]
     keep = np.ones(len(which), bool) if seen_too else ~seen_both
     if not draft:
-        edge, stub = _tapered(s, nf[which], th[which], meet, stub=lo)
+        edge, stub, leaf = _tapered(s, nf[which], th[which], meet, stub=lo)
         info["taperedEdge"] = int(edge.sum())
         info["shortStub"] = int(stub.sum())
         keep &= ~edge & ~stub
+        if leaf_to > 0:  # a short leaf grows only to what prints (`leaf_to`), a face already that thick stays
+            d = np.where(leaf, (leaf_to - th[thin]) * w, d)
+            keep &= ~leaf | (d > 0)
+            info["shortLeaf"] = int(leaf.sum())
     which, d = which[keep], d[keep]
     if not len(which):
         return None
@@ -1577,7 +1583,16 @@ def _tapered(s, faces, th, meet, stub=0.0):
     none clearly worse. More surface counts as thin (rover 2.4 -> 4.2 %), but PrusaSlicer (MK4, 0.4 mm) still lays
     lines over the stubs: the watch's print keeps 99.6 % of the original's surface (99.1 % before), with a quarter of
     the swelling; crown, snowman and statue the same within slicing noise.
-    Returns (tapered, stub), one flag per face of `faces`."""
+    And the short leaves: patches no farther than LEAF_REACH_MM from wall that is not thin, all along, and joined
+    along at least as far as they reach out (area / reach² at least LEAF_WIDE, so not a spike). hunyuan_crystals has
+    ~800 flakes 0.27-0.67 mm thick standing 1.5-3 mm off the rock; thickened to the full wall they doubled into
+    pebbles (judge 250 spots), left as they are PrusaSlicer dropped their thinnest tips (286 mm2 of the original's
+    surface). Grown only to a nozzle line (_wall_moves `leaf_to`): 42 spots, 28 mm2 lost; on the 42 models judge spots
+    5857 -> 5178 (rover 128 -> 67, space_bust 82 -> 29, pack 126 -> 78), none clearly worse, slicer within 0.25 %
+    of the original's surface. The cost: a thin strap hung between two thick parts within that reach (tripo_pack's,
+    bag to buckle) counts as a leaf too and stays at a nozzle line; telling them apart by how the patch is held
+    (one piece of thick wall round it, or pieces within a wall apart) lost the crystals' flakes as well.
+    Returns (tapered, stub, leaf), one flag per face of `faces`."""
     import numpy as np
     import scipy.sparse as sp
     from scipy.sparse.csgraph import connected_components, dijkstra
@@ -1606,6 +1621,7 @@ def _tapered(s, faces, th, meet, stub=0.0):
     label = label[faces]
     out = np.zeros(len(faces), bool)
     short = np.zeros(len(faces), bool)
+    leaf = np.zeros(len(faces), bool)
     order = np.argsort(label, kind="stable")
     cuts = np.flatnonzero(np.diff(label[order])) + 1
     for group in np.split(order, cuts):
@@ -1613,16 +1629,16 @@ def _tapered(s, faces, th, meet, stub=0.0):
         if ok.all() and float(far[group].max()) <= stub:  # a short stub on the body: left as it is
             short[group] = True
             continue
-        if ok.sum() < 6 or th[group].min() >= meet:
-            continue
-        reach = float(far[group][ok].max())
-        if area[group].sum() < TAPER_LONG * reach * reach:
-            continue
-        x, y = rankdata(far[group][ok]), rankdata(th[group][ok])
-        sx, sy = x.std(), y.std()
-        if sx > 0 and sy > 0 and float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy)) <= TAPER_CORR:
-            out[group] = True
-    return out, short
+        reach = float(far[group][ok].max()) if ok.any() else np.inf
+        if ok.sum() >= 6 and th[group].min() < meet and area[group].sum() >= TAPER_LONG * reach * reach:
+            x, y = rankdata(far[group][ok]), rankdata(th[group][ok])
+            sx, sy = x.std(), y.std()
+            if sx > 0 and sy > 0 and float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy)) <= TAPER_CORR:
+                out[group] = True
+                continue
+        if ok.all() and reach <= LEAF_REACH_MM and area[group].sum() >= LEAF_WIDE * reach * reach:  # a short leaf
+            leaf[group] = True
+    return out, short, leaf
 
 
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
@@ -1669,7 +1685,8 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
         return m, None
     if got["cancel"].any():
         V, F, tags = _halve_edges(V, F, (tags & 1) + got["cancel"].astype(np.int8) * 2, THICKEN_NARROW_EDGE_MM)
-    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too, meet=printer.min_print_mm * TAPER_MEET)
+    got = _wall_moves(V, F, (tags & 1) > 0, target, lo, seen_too, meet=printer.min_print_mm * TAPER_MEET,
+                      leaf_to=printer.min_print_mm + 2 * THICKEN_MARGIN_MM)
     if got is None:
         return m, None
     x, info, tf = got["x"], got["info"], got["tf"]
