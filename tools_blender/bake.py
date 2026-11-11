@@ -53,7 +53,11 @@ BAKE = SIZE * SUPER
 # thousands of islands pay it: on the pump at 10k, 1 texel left 59% of the texture to the model, 2 left
 # 54%, 4 left 49% (none: 63%). smart_project's own margin (32 px a side at 2048) left it 1-16%.
 GAP = max(1, BAKE // 2048)
-MARGIN = max(2, BAKE // 256)
+# fill (the far LOD levels, 1024 px and under): paint far past the edges, so the empty texture between islands takes
+# their colour. With 2 texels the spider's 1250-triangle level at 512 px showed black and white specks and the 625 one
+# black streaks where mip-maps pulled the background in; 64 took both away (8.0 -> 7.31% at 96 px) and made the
+# file smaller (0.71 -> 0.50 MB): flat colour packs tighter (2026-11-11).
+MARGIN = 64 if PARAMS.get("fill") else max(2, BAKE // 256)
 
 t0 = time.time()
 bpy.ops.wm.read_factory_settings(use_empty=True)

@@ -1015,7 +1015,8 @@ class _BakeTooLong(RuntimeError):
     """A bake ran out of its time: a bigger budget won't do better, and neither will the same one again."""
 
 
-def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False) -> dict[str, Any]:
+def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False,
+          fill: bool = False) -> dict[str, Any]:
     """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
     bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
     tools_node/graft.mjs puts them into the cut itself, so its nodes, skins, clips and morph targets stay
@@ -1024,7 +1025,8 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     the normal map without its doubled size: the look reads the same (mech 6.13, knight 0.68 and 0.69, pistol 1.09),
     for less time and memory. The kept bake (not `quick`) first turns the cut's diagonals to lie on the original
     better (game_turn), then smooths steps the original has not got, thin dark lines (game_steps). The search's
-    quick bakes skip both, so the budget picks stay as they were."""
+    quick bakes skip both, so the budget picks stay as they were. `fill`: paint the empty texture between islands
+    too (bake.py), for the far LOD levels' small textures."""
     turned = steps = None
     if not quick:
         from studio_bridge.game_steps import load_original, smooth_steps
@@ -1043,7 +1045,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {})})],
+             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {}), **({"fill": True} if fill else {})})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -1426,7 +1428,13 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut.
     With bake, each cut is also made baked, and the one that looks closer is kept."""
     try:
-        return _game_prep_job(in_path, out_path, params)
+        report = _game_prep_job(in_path, out_path, params)
+        if params.get("lods"):
+            from studio_bridge.game_lod import add_lods
+
+            add_lods(in_path, out_path, params, report)
+        report.pop("shift", None)
+        return report
     finally:
         _forget_hidden(in_path)  # what's hidden was worked out once for every cut of this job
         from studio_bridge.game_look import forget_close
@@ -1698,7 +1706,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         see = {k: v for k, v in holes.items() if k != "originalFaces"}
 
     if job.get("forBake"):
-        baked = _bake(in_path, out_path, result["shift"], job["textureSize"])
+        baked = _bake(in_path, out_path, result["shift"], job["textureSize"], fill=bool(params.get("fill")))
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
                      else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map"
                           f"{', glow' if 'emissive' in baked.get('passes', {}) else ''} ({baked['seconds']:g} s)")
@@ -1724,7 +1732,8 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         after["maxErrorPct"] = job["maxErrorPct"]
     if result["specks"]["pieces"]:
         after["specksRemoved"] = result["specks"]
-    report: dict[str, Any] = {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after}
+    # "shift": where the cut was moved to, for the LOD levels (game_lod); game_prep takes it out of the report.
+    report: dict[str, Any] = {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after, "shift": result["shift"]}
 
     # How it looks next to the original from six fixed views, and the picture of it for the page. The
     # shape measuring is done: let its copy of the original go first, or a huge model sits in memory twice.
@@ -1739,7 +1748,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     os.close(fd)
     try:
         purpose_name, purpose = _purpose(params)
-        after["look"] = {**look(in_path, out_path, result["shift"], Path(preview_name), res=purpose["res"]), "purpose": purpose_name}
+        after["look"] = {**look(in_path, out_path, result["shift"], Path(preview_name), res=int(params.get("lookRes") or purpose["res"])), "purpose": purpose_name}
         report["extraFiles"] = {"preview.png": preview_name}
         if not params.get("maxErrorPct"):
             if after["look"]["noticeablePct"] > purpose["bakeOkPct" if job.get("forBake") else "okPct"]:
