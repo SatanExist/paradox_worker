@@ -36,8 +36,12 @@ def add_lods(in_path: Path, out_path: Path, params: dict[str, Any], report: dict
     from studio_bridge import tools_ops as t
 
     after, steps = report["after"], report["steps"]
-    if not after.get("textureMaxPx") or "shift" not in report:
-        steps.append("no LOD levels: they are baked, and this cut wasn't")
+    bake = after.get("bake")
+    if not after.get("textureMaxPx") or "shift" not in report or bake is None or "why" in bake:
+        # no bake asked, or it couldn't run (no Blender): the levels would fail the same way. A bake that ran but
+        # lost to the plain cut still makes levels.
+        steps.append("no LOD levels: each is baked on its own textures, and baking " +
+                     ("wasn't asked for (bake: true)" if bake is None else "couldn't run here"))
         return
     purpose_name, purpose = t._purpose(params)
     ok = float(params.get("maxNoticeablePct") or purpose["bakeOkPct"])
@@ -75,7 +79,9 @@ def add_lods(in_path: Path, out_path: Path, params: dict[str, Any], report: dict
                     pick[1].unlink(missing_ok=True)
                 pick = (made, path, seen)
             if pick is None:
-                why = (f"LOD{k} at half the triangles looked off at its size" if prev // 2 >= MIN_TRIS
+                failed = tried[-1].get("failed") if tried and tried[-1]["level"] == k else None
+                why = (f"LOD{k} couldn't be made ({failed})" if failed
+                       else f"LOD{k} at half the triangles looked off at its size" if prev // 2 >= MIN_TRIS
                        else f"LOD{k} would be under {MIN_TRIS} triangles")
                 break
             made, path, seen = pick

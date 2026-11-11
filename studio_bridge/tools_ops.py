@@ -1433,6 +1433,10 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
             from studio_bridge.game_lod import add_lods
 
             add_lods(in_path, out_path, params, report)
+        if params.get("godot"):
+            from studio_bridge.game_godot import add_godot
+
+            add_godot(report, bool(params.get("lods")))
         report.pop("shift", None)
         return report
     finally:

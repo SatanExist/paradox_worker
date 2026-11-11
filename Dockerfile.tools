@@ -38,12 +38,14 @@ COPY studio_bridge/tools_ops.py /app/studio_bridge/tools_ops.py
 COPY studio_bridge/print_remesh.py /app/studio_bridge/print_remesh.py
 COPY studio_bridge/print_solid.py /app/studio_bridge/print_solid.py
 COPY studio_bridge/r2_public.py /app/studio_bridge/r2_public.py
+# game_prep: the judges, the step smoothing, the edge turn, LOD levels, the Godot package
+COPY studio_bridge/game_godot.py studio_bridge/game_lod.py studio_bridge/game_look.py studio_bridge/game_steps.py studio_bridge/game_turn.py /app/studio_bridge/
 COPY worker_tools.py /app/worker_tools.py
 COPY --from=tools_node /usr/local/bin/node /usr/local/bin/node
 COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
-RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
+RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid, studio_bridge.game_godot, studio_bridge.game_lod, studio_bridge.game_look, studio_bridge.game_steps, studio_bridge.game_turn; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
     cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp'), import('three'), import('mikktspace')]).then(([, s, t]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp, 'three', t.REVISION))"
 
 ARG PARADOX_BUILD_SHA=dev
