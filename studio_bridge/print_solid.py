@@ -1485,9 +1485,10 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0):
     which = np.nonzero(thin)[0]
     keep = np.ones(len(which), bool) if seen_too else ~seen_both
     if not draft:
-        edge = _tapered(s, nf[which], th[which], meet)
+        edge, stub = _tapered(s, nf[which], th[which], meet, stub=lo)
         info["taperedEdge"] = int(edge.sum())
-        keep &= ~edge
+        info["shortStub"] = int(stub.sum())
+        keep &= ~edge & ~stub
     which, d = which[keep], d[keep]
     if not len(which):
         return None
@@ -1553,7 +1554,7 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0):
     return {"x": x, "info": info, "tf": tf, "t1": t1, "cancel": cancel}
 
 
-def _tapered(s, faces, th, meet):
+def _tapered(s, faces, th, meet, stub=0.0):
     """Which of the thin `faces` (thickness `th`) of mesh `s` are a tapered edge, as a blade's: thin only because
     it narrows to a rim, thicker the farther in. Thickening can't help there (the two sides meet at the rim and
     cancel, see thicken), and its partial moves left tripo_sword's edge lumpy and still 0.01 mm at the rim, while
@@ -1568,7 +1569,15 @@ def _tapered(s, faces, th, meet):
     the farthest it goes from wall that is not thin (a strip L long and R deep, both sides: 2 L / R). A spike or
     a rod tapers along its length and would go unprinted to where it reaches a nozzle line: hunyuan31_scorpion's
     rod 0.07-0.1, rodin_knight's tentacle tips 0.16-0.58, hunyuan_necromutant's claws 0.5-1.5; the sword's blade
-    edges 2.3-8.3."""
+    edges 2.3-8.3.
+    Also returns the short stubs: patches no farther than `stub` (the printer's minimum wall) from wall that is not
+    thin, all along. A bump that low on a thick body can't break off; it measures thin only because the ray inward
+    crosses the bump, and thickened it swelled: hunyuan31_watch's dial dots grew into beads (close-up judge 49 noticed
+    spots -> 1), hunyuan31_mech's vent slats closed (71 -> 12), meshy_pistol 151 -> 76; 6532 -> 5857 on the 42 models,
+    none clearly worse. More surface counts as thin (rover 2.4 -> 4.2 %), but PrusaSlicer (MK4, 0.4 mm) still lays
+    lines over the stubs: the watch's print keeps 99.6 % of the original's surface (99.1 % before), with a quarter of
+    the swelling; crown, snowman and statue the same within slicing noise.
+    Returns (tapered, stub), one flag per face of `faces`."""
     import numpy as np
     import scipy.sparse as sp
     from scipy.sparse.csgraph import connected_components, dijkstra
@@ -1596,10 +1605,14 @@ def _tapered(s, faces, th, meet):
     k, label = connected_components(sp.csr_matrix((np.ones(int(both.sum())), (fa[both, 0], fa[both, 1])), shape=(nF, nF)), directed=False)
     label = label[faces]
     out = np.zeros(len(faces), bool)
+    short = np.zeros(len(faces), bool)
     order = np.argsort(label, kind="stable")
     cuts = np.flatnonzero(np.diff(label[order])) + 1
     for group in np.split(order, cuts):
         ok = np.isfinite(far[group])
+        if ok.all() and float(far[group].max()) <= stub:  # a short stub on the body: left as it is
+            short[group] = True
+            continue
         if ok.sum() < 6 or th[group].min() >= meet:
             continue
         reach = float(far[group][ok].max())
@@ -1609,7 +1622,7 @@ def _tapered(s, faces, th, meet):
         sx, sy = x.std(), y.std()
         if sx > 0 and sy > 0 and float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy)) <= TAPER_CORR:
             out[group] = True
-    return out
+    return out, short
 
 
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
