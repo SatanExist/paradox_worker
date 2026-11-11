@@ -53,6 +53,7 @@ VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidd
 SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
 HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
 LEAN_FROM_FACES = 2_000_000  # meshes this big drop their cached tables after each stage (see _lean)
+COLLECT_FROM_FACES = 500_000  # and from this size what the stage left is freed at once (see _lean)
 THICKNESS_SAMPLES = 100_000  # surface points the wall thickness is measured at
 THICKNESS_CONE_DEG = 20.0  # six rays round the inward normal at this angle, plus the normal itself
 THIN_SPOT_CELL_MM = 2.0  # thin points closer than this belong to the same spot
@@ -129,13 +130,15 @@ def _lean(m):
     the stage left. The tables are rebuilt on demand, so nothing changes, but on millions of faces each check left
     gigabytes behind, and meshes hold reference cycles, so a finished stage's meshes went only when the cycle
     collector got round to them: direct3ds2_knight 16.3 -> 11.2 GB, meshy_rover 9.1 -> 7.8 GB, same output bytes.
-    Below LEAN_FROM_FACES the memory is far from the limit and handing it back only cost time (+6-15 %)."""
-    import gc
-
-    if len(m.faces) < LEAN_FROM_FACES:
-        return m
-    m._cache.clear(exclude=("face_normals", "vertex_normals"))
-    gc.collect()
+    Below LEAN_FROM_FACES clearing the tables only cost time (+6-15 %), they are rebuilt anyway.
+    The collection alone starts lower, at COLLECT_FROM_FACES: when the collector runs on its own depends on how many
+    objects the program holds, so unrelated code shifted it and a 1.7M-face knight kept several stages' meshes at once
+    (peak 7.9 GB, over the 7 GB guard). Collecting here and after each repair round: knight 7.52 -> 5.26 GB,
+    hunyuan_necromutant 6.93 -> 5.23, hunyuan_operative 6.27 -> 4.14, same output bytes and time on 8 heavy models."""
+    if len(m.faces) >= LEAN_FROM_FACES:
+        m._cache.clear(exclude=("face_normals", "vertex_normals"))
+    if len(m.faces) >= COLLECT_FROM_FACES:
+        gc.collect()
     return m
 
 
@@ -281,6 +284,9 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
         ms.meshing_repair_non_manifold_vertices()
         _close_holes_near(ms)
         m = _from_ms(ms)
+        del ms
+        if len(m.faces) >= COLLECT_FROM_FACES:  # the round's meshes go now, not whenever the collector runs (see _lean)
+            gc.collect()
     m = _reorient(m, log)
     trimesh.repair.fix_normals(m)
     return _lean(m)
