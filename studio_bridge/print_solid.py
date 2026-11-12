@@ -41,6 +41,8 @@ WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
 BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own length are left as they are
+BRIDGE_FIRST_MM = 0.5  # pieces this close are tied first; the step grows by BRIDGE_STEP until all that can be are (see _bridge)
+BRIDGE_STEP = 1.5
 CRUMB_MM3 = 1.0
 LOST_MM = 1.0
 LOST_MAX_SHARE = 0.001
@@ -451,11 +453,14 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
 
 def _bridge(m, log: Log, printer: "Printer | None" = None):
     """Pieces floating next to the body (a feather, a bead, a block off a rover, a strand by the feet) get a
-    bridge: a round pin, twice the thinnest printable wall across, where piece and body come closest, then one
-    exact union of everything. The rest of the surface is untouched. A piece is tied when the bridge is shorter
-    than the piece is long, or within the printer's bridge reach however small: a bridge longer than the piece
-    would read as a stick. A piece tied (or touching) joins the body, so pieces next to it are tied in the next
-    round: trellis2_lattice's rods hang by other rods, 50-90 mm from the frame they end up on.
+    bridge: a round pin where piece and body come closest, then one exact union of everything. The rest of the
+    surface is untouched. A piece is tied when the bridge is shorter than the piece is long, or within the
+    printer's bridge reach however small: a bridge longer than the piece would read as a stick. A piece tied (or
+    touching) joins the body, and the nearest pieces are tied first, so each hangs on its closest neighbour:
+    trellis2_lattice's wall rods end 1 mm from a corner post, and tied in waves, before the post was part of the
+    body, they hung on 12-92 mm sticks down to the floor frame (11 over 20 mm; now none over 3.6 mm).
+    The pin is as thick as the piece it holds (4·volume/area is a rod's diameter), from the thinnest rod thicken
+    leaves to two walls across: the lattice's 0.9 mm rods and crumbs had 1.6 mm stubs.
     Returns the mesh and how many pieces were bridged."""
     import igl
     import numpy as np
@@ -468,35 +473,48 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
     if len(parts) <= 1:
         return _lean(m), 0
     n_parts = len(parts)
-    pieces, bridged = [parts[0]], 0
-    r = printer.min_wall_mm  # the pin is two walls across: thinner would be thin wall itself
-    joined, rest = [parts[0]], parts[1:]
+    body, rest = parts[0], parts[1:]
     del parts
-    while joined and rest:
-        # every piece's distance to what joined last round in one call: one tree a round, not one a piece
-        B = joined[0] if len(joined) == 1 else trimesh.util.concatenate(joined)
-        ends = np.cumsum([len(q.vertices) for q in rest])
-        d2, _, near = igl.point_mesh_squared_distance(np.vstack([q.vertices for q in rest]), B.vertices, B.faces)
-        joined, left = [], []
-        for q, lo_i, hi_i in zip(rest, np.r_[0, ends[:-1]], ends):
-            k = lo_i + int(np.argmin(d2[lo_i:hi_i]))
-            gap = float(np.sqrt(d2[k]))
-            if gap > max(printer.bridge_reach_mm, float(q.extents.max())):  # too far to tie
-                left.append(q)
+    r_min, r_max = printer.min_wall_mm / 2 + THICKEN_MARGIN_MM, printer.min_wall_mm
+    reach = np.array([max(printer.bridge_reach_mm, float(q.extents.max())) for q in rest])
+    sizes = np.array([len(q.vertices) for q in rest])
+    starts = np.cumsum(sizes) - sizes
+    P = np.vstack([q.vertices for q in rest])
+    d2, near = np.full(len(P), np.inf), np.zeros_like(P)  # each piece vertex's closest point on the body so far
+    loose = np.ones(len(rest), dtype=bool)
+    pieces, joined, bridged, level = [body], [body], 0, BRIDGE_FIRST_MM
+    while True:
+        if joined:  # one tree for what joined last, measured from the loose pieces only
+            B = joined[0] if len(joined) == 1 else trimesh.util.concatenate(joined)
+            at = np.flatnonzero(np.repeat(loose, sizes))
+            got, _, hit = igl.point_mesh_squared_distance(P[at], B.vertices, B.faces)
+            closer = got < d2[at]
+            d2[at[closer]], near[at[closer]] = got[closer], hit[closer]
+            del B, got, hit
+        gap = np.sqrt(np.minimum.reduceat(d2, starts))
+        can = loose & (gap <= reach)
+        if not can.any():
+            break
+        take = np.flatnonzero(can & (gap <= level))
+        if not len(take):
+            level *= BRIDGE_STEP
+            joined = []
+            continue
+        joined = [rest[i] for i in take]
+        loose[take] = False
+        for i in take:
+            if gap[i] < 1e-3:  # already touching: the union joins those
                 continue
-            joined.append(q)
-            if gap < 1e-3:  # already touching: the union joins those
-                continue
-            a, b = np.asarray(q.vertices)[k - lo_i], near[k]
-            u = (b - a) / gap
+            q, k = rest[i], starts[i] + int(np.argmin(d2[starts[i]:starts[i] + sizes[i]]))
+            a, b = P[k], near[k]
+            u = (b - a) / gap[i]
+            r = float(np.clip(2 * abs(float(q.volume)) / max(float(q.area), 1e-9), r_min, r_max))
             # from inside the piece to inside the body, by the pin's own radius at each end
             pieces.append(trimesh.creation.cylinder(radius=r, segment=[a - u * r, b + u * r], sections=16))
             bridged += 1
         pieces += joined
-        rest = left
-        del B, near
-    pieces += rest
-    del joined, rest  # the union below is the peak: nothing it doesn't need stays alive
+    pieces += [rest[i] for i in np.flatnonzero(loose)]
+    del joined, rest, P, d2, near  # the union below is the peak: nothing it doesn't need stays alive
     _lean(m)
     out = _union(*pieces)
     del pieces
