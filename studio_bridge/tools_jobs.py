@@ -28,7 +28,7 @@ TOOL_PREFIX = "tool:"
 RP_PREFIX = "tool:rp:"
 LOCAL_PREFIX = "tool:local:"
 
-OPERATIONS = {"print_prep"}
+OPERATIONS = {"print_prep", "game_prep"}
 OUTPUT_KEY = re.compile(r"^tools/[A-Za-z0-9_.:-]{6,120}\.glb$")
 MAX_INPUT_BYTES = 200 * 1024 * 1024
 

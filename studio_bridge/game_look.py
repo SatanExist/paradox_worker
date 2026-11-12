@@ -1,0 +1,555 @@
+"""How a lighter model looks next to the original: the same fixed views rendered on the CPU, compared.
+
+The numbers in game_prep's report measure the surface; this measures the picture a person sees. Both
+models are drawn from six fixed views (Embree rays through libigl, no GPU) with their base colour
+texture, normal map and metal/roughness, under one fixed light and sky, faces turned towards the camera
+only (as a game engine draws them), and compared pixel by pixel:
+
+  silhouettePct  outline that differs: parts gone or grown (pixels in one outline only / both)
+  lookPct        mean colour difference where both are drawn, everything on
+  texturePct     the same with the texture alone (no light): UVs shifted, seams moved, blurred texture
+  lightPct       the same with the light alone (no texture): normals and shape, the "crumpled" look
+  noticeablePct  share of the picture that differs at a glance: outline mismatches, and pixels whose
+                 colour differs by more than NOTICE after a 5 px blur (so texel noise doesn't count).
+                 Means spread a local flaw thin; this one keeps a crumpled lens visible. Mean over
+                 views, and noticeableMaxPct for the worst one.
+
+Every run draws the same rays, so a model always gets the same numbers. What it doesn't see: the
+viewer's reflections of a room (the sky here is simple), so a result can look shinier in the viewer
+than these numbers say.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+RES = 384  # pixels per view side for a model seen at ordinary size; game_prep passes others by purpose
+NOTICE = 0.10  # colour difference (0..1) that stands out at a glance, after the blur
+TEX = 512  # textures are compared at the size a 384 px view shows them; bigger views get bigger textures
+VIEWS = {  # where the camera looks from; the model is Y up
+    "front": (0.0, 0.0, 1.0),
+    "back": (0.0, 0.0, -1.0),
+    "left": (-1.0, 0.0, 0.0),
+    "right": (1.0, 0.0, 0.0),
+    "top": (0.0, 1.0, 0.0),
+    "three-quarter": (0.6, 0.45, 0.66),
+}
+
+
+def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
+    """Vertices, faces, the file's normals and UVs, per-face material, and per-face tangent frames."""
+    import numpy as np
+    import trimesh
+    from PIL import Image
+
+    from studio_bridge.tools_ops import _unpacked
+
+    plain = _unpacked(path)
+    try:
+        scene = trimesh.load(plain, process=False)
+    finally:
+        if plain != path:
+            try:
+                plain.unlink(missing_ok=True)
+            except OSError:  # Windows keeps it open while trimesh holds the scene
+                pass
+    if isinstance(scene, trimesh.Trimesh):
+        scene = trimesh.Scene(scene)
+    from studio_bridge.tools_ops import _as_drawn, _world_node
+
+    world = _world_node(path)
+
+    def image(t):
+        return None if t is None else np.asarray(t.convert("RGB").resize((tex, tex), Image.BOX), np.float32) / 255
+
+    verts, faces, normals, uvs, owner, mats, offset = [], [], [], [], [], [], 0
+    for node in scene.graph.nodes_geometry:
+        matrix, name = scene.graph[node]
+        if world is not None:
+            matrix = world @ matrix
+        geom = scene.geometry.get(name)
+        if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+            continue
+        gv, gf, gn, corner = _as_drawn(geom)
+        n = gn @ matrix[:3, :3].T
+        verts.append(trimesh.transform_points(gv, matrix))
+        normals.append(n / np.linalg.norm(n, axis=1, keepdims=True).clip(1e-12))
+        faces.append(gf + offset)
+        uv = getattr(geom.visual, "uv", None)
+        uvs.append(np.asarray(uv, float)[corner] if uv is not None and len(uv) == len(geom.vertices) else np.zeros((len(gv), 2)))
+        owner.append(np.full(len(geom.faces), len(mats)))
+        mat = getattr(geom.visual, "material", None)
+        factor = getattr(mat, "baseColorFactor", None)
+        metal, rough = getattr(mat, "metallicFactor", None), getattr(mat, "roughnessFactor", None)
+        glow = getattr(mat, "emissiveFactor", None)
+        mats.append({
+            # Light a part gives off: Rodin's models carry all their colour there (black base colour), and
+            # unread, the pump looked plain white to every check.
+            "glowFactor": np.asarray(glow if glow is not None else [0, 0, 0], np.float32)[:3],
+            "glow": image(getattr(mat, "emissiveTexture", None)),
+            "factor": np.asarray(factor if factor is not None else [255, 255, 255, 255], np.float32)[:3] / 255,
+            "base": image(getattr(mat, "baseColorTexture", None)),
+            "normal": image(getattr(mat, "normalTexture", None)),
+            "mr": image(getattr(mat, "metallicRoughnessTexture", None)),
+            "metal": 1.0 if metal is None else float(metal),
+            "rough": 1.0 if rough is None else float(rough),
+        })
+        offset += len(gv)
+    if not faces:
+        raise ValueError("could not read the model's geometry")
+    V, F = np.vstack(verts), np.vstack(faces)
+    UV = np.vstack(uvs)
+    # A tangent frame per face from the UVs, as a viewer builds one for a file without tangents.
+    p, t = V[F], UV[F]
+    e1, e2 = p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]
+    d1, d2 = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+    det = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
+    det = np.where(np.abs(det) < 1e-12, 1e-12, det)
+    T = (e1 * d2[:, 1:2] - e2 * d1[:, 1:2]) / det[:, None]
+    B = (e2 * d1[:, 0:1] - e1 * d2[:, 0:1]) / det[:, None]
+    return {"V": V, "F": F, "N": np.vstack(normals), "UV": UV, "owner": np.concatenate(owner), "mats": mats, "T": T, "B": B}
+
+
+def _sample(img, uv):
+    """Nearest texel; trimesh's UV origin is bottom-left; textures repeat."""
+    import numpy as np
+
+    h, w = img.shape[:2]
+    x = np.floor((uv[:, 0] % 1.0) * w).astype(int).clip(0, w - 1)
+    y = np.floor((1 - uv[:, 1] % 1.0) * h).astype(int).clip(0, h - 1)
+    return img[y, x]
+
+
+def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES, away: float = 0.0) -> tuple[Any, dict[str, Any]]:
+    """One view: the outline and three pictures (everything, texture alone, light alone). The rays start `away` (at
+    least 2 * radius) in front of the centre: a close frame passes a distance outside the whole model."""
+    import igl.embree
+    import numpy as np
+
+    d = -np.asarray(view, float)
+    d /= np.linalg.norm(d)
+    up = np.array([0.0, 1.0, 0.0]) if abs(d[1]) < 0.9 else np.array([0.0, 0.0, -1.0])
+    right = np.cross(d, up)
+    right /= np.linalg.norm(right)
+    up = np.cross(right, d)
+    s = (np.arange(res) + 0.5) / res * 2 - 1
+    xs, ys = np.meshgrid(s, -s)
+    origins = (centre - d * max(2 * radius, away) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+    # Faces turned towards the view only, as a game engine and our viewer draw them: drawn from both sides, a wall
+    # a cut moved behind its neighbour showed its back as a dark patch nobody sees (the chest's lid, 2026-11-09),
+    # and the judges climbed the chest from 21k to 37k triangles for it.
+    V, F = m["V"], m["F"]
+    facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
+    face = np.full(len(origins), -1, np.int64)
+    if len(facing):
+        hit = igl.embree.line_mesh_intersection(origins, np.repeat(d[None], len(origins), 0), V, F[facing])
+        met = hit[:, 0] >= 0
+        face[met] = facing[hit[met, 0].astype(np.int64)]
+    else:
+        hit = np.zeros((len(origins), 3))
+    seen = face >= 0
+    f = face[seen]
+    w = np.stack([1 - hit[seen, 1] - hit[seen, 2], hit[seen, 1], hit[seen, 2]], 1)[:, :, None]
+    corners = m["F"][f]
+    n = (m["N"][corners] * w).sum(1)
+    n /= np.linalg.norm(n, axis=1, keepdims=True).clip(1e-12)
+    uv = (m["UV"][corners] * w).sum(1)
+
+    albedo = np.ones((len(f), 3), np.float32)
+    glow = np.zeros((len(f), 3), np.float32)
+    metal, rough = np.zeros(len(f)), np.ones(len(f))
+    for i, mat in enumerate(m["mats"]):
+        sel = m["owner"][f] == i
+        if not sel.any():
+            continue
+        albedo[sel] = mat["factor"]
+        if mat["glowFactor"].any():
+            glow[sel] = mat["glowFactor"] * (_sample(mat["glow"], uv[sel]) if mat["glow"] is not None else 1)
+        if mat["base"] is not None:
+            albedo[sel] *= _sample(mat["base"], uv[sel])
+        metal[sel], rough[sel] = mat["metal"], mat["rough"]
+        if mat["mr"] is not None:
+            mr = _sample(mat["mr"], uv[sel])
+            rough[sel] *= mr[:, 1]
+            metal[sel] *= mr[:, 2]
+        if mat["normal"] is not None:
+            tn = _sample(mat["normal"], uv[sel]) * 2 - 1
+            T, B, N0 = m["T"][f[sel]], m["B"][f[sel]], n[sel]
+            T = T - N0 * (T * N0).sum(1, keepdims=True)
+            T /= np.linalg.norm(T, axis=1, keepdims=True).clip(1e-12)
+            hand = np.sign((np.cross(N0, T) * B).sum(1, keepdims=True))
+            mapped = T * tn[:, 0:1] + np.cross(N0, T) * np.where(hand == 0, 1, hand) * tn[:, 1:2] + N0 * tn[:, 2:3]
+            n[sel] = mapped / np.linalg.norm(mapped, axis=1, keepdims=True).clip(1e-12)
+
+    light = -d + up * 0.5 + right * 0.3
+    light /= np.linalg.norm(light)
+    lambert = np.clip(n @ light, 0, 1)[:, None] * 0.8 + 0.2
+    refl = d - 2 * (n @ d)[:, None] * n  # a fixed sky: bright above, a horizon band, dark ground
+    y = refl[:, 1]
+    sky = (np.clip(0.15 + 0.85 * np.clip(y, 0, 1) ** 0.5, 0, 1) + 0.6 * np.exp(-((y / 0.08) ** 2)))[:, None]
+    f0 = 0.04 * (1 - metal[:, None]) + albedo * metal[:, None]
+    shiny = f0 * sky * (0.25 + 0.75 * (1 - rough[:, None]) ** 2)
+
+    pictures = {}
+    for key, colour in (
+        ("look", (albedo * (1 - metal[:, None]) * lambert + shiny + glow).clip(0, 1)),
+        ("texture", (albedo + glow).clip(0, 1) if glow.any() else albedo),
+        ("light", np.repeat(lambert * 0.7, 3, 1)),
+    ):
+        img = np.zeros((len(origins), 3), np.float32)
+        img[seen] = colour
+        pictures[key] = img.reshape(res, res, 3)
+    return seen.reshape(res, res), pictures
+
+
+def _sphere(k: int):
+    """k directions spread evenly over the sphere (a Fibonacci spiral: the same every run)."""
+    import numpy as np
+
+    i = np.arange(k) + 0.5
+    phi = np.arccos(1 - 2 * i / k)
+    theta = np.pi * (1 + 5**0.5) * i
+    return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], 1)
+
+
+def _origins(centre, radius: float, view, res: int):
+    """Where the rays of one view start, a pixel each, row by row (as _draw lays them out)."""
+    import numpy as np
+
+    d = -np.asarray(view, float)
+    d /= np.linalg.norm(d)
+    up = np.array([0.0, 1.0, 0.0]) if abs(d[1]) < 0.9 else np.array([0.0, 0.0, -1.0])
+    right = np.cross(d, up)
+    right /= np.linalg.norm(right)
+    up = np.cross(right, d)
+    s = (np.arange(res) + 0.5) / res * 2 - 1
+    xs, ys = np.meshgrid(s, -s)
+    return (centre - d * (2 * radius) + (xs[..., None] * right + ys[..., None] * up) * radius).reshape(-1, 3)
+
+
+def _drawn(m: dict[str, Any], centre, radius: float, view, res: int, also_met: bool = True):
+    """Where a view meets the model at all (None unless `also_met`), and which face turned towards it it meets (-1:
+    none): a viewer draws glTF faces one side only, so where it meets the model but no such face, it shows what is behind."""
+    import igl.embree
+    import numpy as np
+
+    d = -np.asarray(view, float)
+    d /= np.linalg.norm(d)
+    origins = _origins(centre, radius, view, res)
+    rays = np.repeat(d[None], len(origins), 0)
+    V, F = m["V"], m["F"]
+    facing = np.flatnonzero(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]) @ d < 0)
+    met = igl.embree.line_mesh_intersection(origins, rays, V, F)[:, 0] >= 0 if also_met else None
+    shown = np.full(len(origins), -1, np.int64)
+    if len(facing):
+        hit = igl.embree.line_mesh_intersection(origins, rays, V, F[facing])[:, 0].astype(np.int64)
+        shown[hit >= 0] = facing[hit[hit >= 0]]
+    return None if met is None else met.reshape(res, res), shown.reshape(res, res)
+
+
+SEE_THROUGH_VIEWS = 26  # all round: a slit shows through from a few angles only (the knight's, from above)
+NO_TEX = 4  # where only the shape is drawn
+
+# Per job, the same for every budget tried: what the original looks like from the views the judges use. The pictures
+# only, not the model: a bake runs between two looks and wants the memory. They took the Direct3D knight's job a fifth
+# of its time, drawn anew each look.
+_SEEN_ORIGINAL: dict[tuple, dict] = {}
+_LOOK_ORIGINAL: dict[tuple, dict] = {}
+
+
+def _file_key(path: Path) -> tuple:
+    stat = path.stat()
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def see_through(original: Path, result: Path, shift, res: int = RES) -> dict[str, int]:
+    """Pixels where a viewer would see through the result (it has only back faces there) while the original
+    is drawn, over SEE_THROUGH_VIEWS views; the six views below show such a slit too, but blur it into a mean. A face left
+    out as hidden that showed through a slit after all leaves exactly this, as does a triangle a cut folded
+    over. Returns the total, the biggest patch of them in one view (a hole is a patch: single pixels
+    scattered over the views are an edge grazed), and the original's faces drawn there (numbered as
+    tools_ops._shaded numbers them)."""
+    import numpy as np
+    from scipy import ndimage
+
+    views = _SEEN_ORIGINAL.setdefault(_file_key(Path(original)), {})
+    if res not in views:
+        a = _load(Path(original), NO_TEX)
+        lo, hi = a["V"].min(0), a["V"].max(0)
+        centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
+        views[res] = centre, radius, [(view, _drawn(a, centre, radius, view, res, also_met=False)[1]) for view in _sphere(SEE_THROUGH_VIEWS)]
+        del a
+    centre, radius, drawn_views = views[res]
+    b = _load(Path(result), NO_TEX)
+    b["V"] = b["V"] - np.asarray(shift, float)
+    total, biggest, faces = 0, 0, set()
+    for view, drawn in drawn_views:
+        met, shown = _drawn(b, centre, radius, view, res)
+        inside = ndimage.binary_erosion(drawn >= 0, iterations=1)  # not the outline's edge pixels
+        through = inside & met & (shown < 0)
+        total += int(through.sum())
+        faces.update(int(f) for f in drawn[through])
+        patches, count = ndimage.label(through, structure=np.ones((3, 3)))
+        if count:
+            biggest = max(biggest, int(np.bincount(patches.reshape(-1))[1:].max()))
+    return {"seeThroughPx": total, "seeThroughPatchPx": biggest, "originalFaces": sorted(faces)}
+
+
+TORN_STRETCH = 4.0  # a triangle whose texture is this many times bigger or smaller than the original's there
+
+
+def torn(original: Path, result: Path, shift) -> dict[str, float] | None:
+    """How much of the result's surface (%) shows its texture stretched or squeezed TORN_STRETCH times or
+    more against the original at the same spot: texture pixels per area of each result triangle over the
+    original's on the face nearest it, each material's usual ratio taken as 1 (a baked atlas has a scale
+    of its own). A cut that joins pieces of a texture laid out apart ("UV seams loosened") lays triangles
+    across the gap and draws the gap's strip on them: the Rodin pump at 20k and 10k, 1.3 and 2.5% of it
+    in streaks up close, against 0.2% at most on cuts that kept their seams or were baked. The six views
+    above blur the streaks into their surroundings. None when the original has no texture."""
+    import igl
+    import numpy as np
+
+    a, b = _load(Path(original)), _load(Path(result))
+    if not any(m["base"] is not None or m["glow"] is not None for m in a["mats"]):
+        return None
+    b["V"] = b["V"] - np.asarray(shift, float)
+
+    def density(m):
+        p, t = m["V"][m["F"]], m["UV"][m["F"]]
+        area = np.linalg.norm(np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), axis=1) / 2
+        d1, d2 = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+        return area, np.abs(d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]) / 2
+
+    area_a, uv_a = density(a)
+    area_b, uv_b = density(b)
+    _, near, _ = igl.point_mesh_squared_distance(b["V"][b["F"]].mean(1), a["V"], a["F"])
+    seen = (area_b > 0) & (area_a[near] > 0) & (uv_a[near] > 0)
+    ratio = np.zeros(len(area_b))
+    ratio[seen] = (uv_b[seen] / area_b[seen]) / (uv_a[near][seen] / area_a[near][seen])
+    off = seen & (ratio == 0)  # texture squeezed to a line: a streak of one colour
+    for owner in np.unique(b["owner"]):
+        mine = seen & (b["owner"] == owner) & (ratio > 0)
+        if not mine.any():
+            continue
+        order = np.argsort(ratio[mine])  # the usual ratio: the area-weighted median
+        weights = np.cumsum(area_b[mine][order])
+        usual = ratio[mine][order][np.searchsorted(weights, weights[-1] / 2)]
+        rel = ratio[mine] / usual
+        off[np.flatnonzero(mine)] = (rel > TORN_STRETCH) | (rel < 1 / TORN_STRETCH)
+    total = area_b[seen].sum()
+    return {"tornPct": round(100 * float(area_b[off].sum() / total), 2) if total > 0 else 0.0}
+
+
+# How sharply light turns between neighbouring pixels (0..1 picture, Sobel / 8) for a crease to count:
+# camera, drill and watch at 10k (marked crumpled by eye) had new creases on 1.3-2.1% of their surface,
+# at 20k (marked fine) 0.45-0.67%, the Rodin pump crumpled at 10-20k 3-3.6%; the low-poly dragon at 2k,
+# faceted like its original, 0.8% (2026-10-29).
+CREASE = 0.01
+
+
+def _sharpness(img):
+    import numpy as np
+    from scipy import ndimage
+
+    g = img.mean(-1)
+    return np.hypot(ndimage.sobel(g, 0), ndimage.sobel(g, 1)) / 8
+
+
+def compare(original: Path, result: Path, shift, preview: Path | None = None, res: int = RES) -> dict[str, Any]:
+    """The look numbers (in %), and a picture original | result | difference per view when `preview`
+    is given. `shift` is how far game.mjs moved the result; it is moved back over the original."""
+    import numpy as np
+    from scipy import ndimage
+
+    tex = TEX if res <= RES else 2 * TEX  # the blur that judges "at a glance" stays 5 screen pixels at any size
+    views = _LOOK_ORIGINAL.setdefault(_file_key(Path(original)), {})
+    if res not in views:
+        a = _load(Path(original), tex)
+        lo, hi = a["V"].min(0), a["V"].max(0)
+        centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2 * 1.05
+        views[res] = centre, radius, {name: _draw(a, centre, radius, view, res) for name, view in VIEWS.items()}
+        del a
+    centre, radius, drawn_views = views[res]
+    b = _load(Path(result), tex)
+    b["V"] = b["V"] - np.asarray(shift, float)
+    per_view, rows = {}, []
+    for name, view in VIEWS.items():
+        ma, pa = drawn_views[name]
+        mb, pb = _draw(b, centre, radius, view, res)
+        both, union = ma & mb, ma | mb
+        diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
+        glance = np.where(ma ^ mb, 1.0, np.abs(pa["look"] - pb["look"]).mean(-1))
+        glance = ndimage.uniform_filter(glance, 5)
+        # Creases the original hasn't: light that turns sharply on the result where the original's is smooth
+        # (its sharpness spread over 5 px, so a crease moved by a pixel or two is the same crease).
+        inner = ndimage.binary_erosion(both, iterations=2)
+        new = ndimage.uniform_filter(_sharpness(pb["light"]), 3) - ndimage.maximum_filter(_sharpness(pa["light"]), 5)
+        per_view[name] = {
+            "silhouette": float((ma ^ mb).sum() / max(union.sum(), 1)),
+            "noticeable": float((glance[union] > NOTICE).mean()) if union.any() else 0.0,
+            "crease": float((new[inner] > CREASE).mean()) if inner.any() else 0.0,
+            **diff,
+        }
+        if preview is not None:
+            heat = np.abs(pa["look"] - pb["look"]).mean(-1, keepdims=True)
+            rows.append(np.hstack([pa["look"], pb["look"], np.concatenate([heat * 4, heat * 1.5, heat * 0.5], -1).clip(0, 1)]))
+    if preview is not None:
+        from PIL import Image
+
+        Image.fromarray((np.vstack(rows) * 255).astype(np.uint8)).save(preview)
+
+    def pct(key: str) -> float:
+        return round(100 * float(np.mean([v[key] for v in per_view.values()])), 2)
+
+    worst = max(per_view, key=lambda k: per_view[k]["silhouette"] + per_view[k]["look"])
+    return {
+        "silhouettePct": pct("silhouette"),
+        "lookPct": pct("look"),
+        "texturePct": pct("texture"),
+        "lightPct": pct("light"),
+        "noticeablePct": pct("noticeable"),
+        "noticeableMaxPct": round(100 * max(v["noticeable"] for v in per_view.values()), 2),
+        "creasePct": pct("crease"),
+        "worstView": worst,
+    }
+
+
+# The look from afar misses what a person sees up close: the Direct3D knight at 10k reads 2.79 and is crumpled.
+# So cameras go right up to the finest relief of the original. Trial of 2026-11-02 against exam marks by eye:
+# all 5 crumpled over 2.65 (knight, dog, watch, rover, Rodin knight, the last marked by eye on these very
+# frames), the 5 great under it; on 12 great models it hadn't seen, 8 stay under, crystals and drill show real
+# damage. One rung up, 7 of 9 fall under. Judged by the same score with the light and paint a viewer sees.
+CLOSE_SPOTS = 12
+CLOSE_RES = 384
+CLOSE_FRAME = 0.05  # half-width of a frame, of the model's diagonal
+CLOSE_TEX = 1024
+CLOSE_SHIFT_PX = 2  # a line moved this far is the same line
+# Where a close frame's rays start, in model diagonals in front of its spot: outside the whole model, as a person
+# zooming in from outside sees it. Started a frame's width away, they began inside the model at times, and the ray
+# caster, which takes the nearest hit either way along a ray, drew what was behind the camera (2026-11-09).
+CLOSE_AWAY = 2.0
+
+
+def _relief_spots(m: dict[str, Any], diag: float) -> list[tuple[Any, Any]]:
+    """The islands of surface that keeps turning, strongest first, each that a viewer can reach from outside
+    (where it sits inside the body, a close camera would be inside too): centre and the side to look from."""
+    import igl.embree
+    import numpy as np
+    from scipy import ndimage
+
+    V, F = np.asarray(m["V"], float), m["F"]
+    n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    area = np.linalg.norm(n, axis=1) / 2
+    n = n / np.maximum(2 * area, 1e-20)[:, None]
+    cell = diag / 256
+    at = np.floor((V[F].mean(1) - V.min(0)) / cell).astype(np.int64)
+    shape = at.max(0) + 2
+    uniq, inv = np.unique(np.ravel_multi_index(at.T, shape), return_inverse=True)
+    inv = inv.reshape(-1)
+    sum_a = np.bincount(inv, area)
+    turn = 1 - np.linalg.norm(np.stack([np.bincount(inv, area * n[:, i]) for i in range(3)], 1), axis=1) / np.maximum(sum_a, 1e-20)
+    hot, power = np.zeros(shape, bool), np.zeros(shape)
+    hot.flat[uniq[(sum_a > 0.1 * cell * cell) & (turn > 0.2)]] = True
+    power.flat[uniq] = sum_a * turn
+    lab, k = ndimage.label(ndimage.binary_closing(hot), structure=np.ones((3, 3, 3)))
+    if not k:
+        return []
+    score = ndimage.sum_labels(power, lab, np.arange(1, k + 1))
+    boxes = ndimage.find_objects(lab)
+    owner = lab[at[:, 0], at[:, 1], at[:, 2]]
+    out: list[tuple[Any, Any]] = []
+    for i in np.argsort(-score, kind="stable"):
+        if max(b.stop - b.start for b in boxes[i]) > 32:  # as big as a body part: not a detail
+            continue
+        mine = owner == i + 1
+        centre = (V[F[mine]].mean(1) * area[mine, None]).sum(0) / max(area[mine].sum(), 1e-20)
+        if any(np.linalg.norm(centre - o[0]) <= 1.5 * CLOSE_FRAME * diag for o in out):
+            continue
+        side = (n[mine] * area[mine, None]).sum(0)
+        # Faces looking opposite ways cancel out (a double-sided sheet, trellis2_lattice): no side to look from,
+        # and a camera with no direction hangs the ray tracer for good.
+        if np.linalg.norm(side) < 1e-3 * area[mine].sum():
+            continue
+        side = side / np.linalg.norm(side)
+        for d in (side, -side):
+            hit = igl.embree.line_mesh_intersection((centre + d * 2 * diag)[None], -d[None], V, F)[0]
+            if hit[0] < 0:
+                continue
+            w = np.array([1 - hit[1] - hit[2], hit[1], hit[2]])
+            if np.linalg.norm((V[F[int(hit[0])]] * w[:, None]).sum(0) - centre) < CLOSE_FRAME * diag:
+                out.append((centre, d))
+                break
+        if len(out) == CLOSE_SPOTS:
+            break
+    return out
+
+
+def _off_by_more(a, b, r: int):
+    """How far each pixel of b is from everything within r pixels of it in a, and back."""
+    import numpy as np
+    from scipy import ndimage
+
+    size = (2 * r + 1, 2 * r + 1, 1)
+    one = np.maximum(np.maximum(b - ndimage.maximum_filter(a, size), ndimage.minimum_filter(a, size) - b), 0)
+    two = np.maximum(np.maximum(a - ndimage.maximum_filter(b, size), ndimage.minimum_filter(b, size) - a), 0)
+    return np.maximum(one, two).mean(-1)
+
+
+# Per job: the original's file -> its close frames. They are the same for every budget tried.
+_CLOSE_FRAMES: dict[tuple, tuple[list[tuple], int]] = {}
+
+
+def _seen_close(p: dict[str, Any]) -> Any:
+    import numpy as np
+
+    return p["light"] * np.clip(p["texture"].mean(-1, keepdims=True) * 2, 0.15, 1)
+
+
+def _close_frames(original: Path) -> tuple[list[tuple], int]:
+    """The original right up at CLOSE_SPOTS spots of its finest relief, each from straight on and from the side."""
+    import numpy as np
+
+    key = _file_key(original)
+    if key not in _CLOSE_FRAMES:
+        a = _load(original, CLOSE_TEX)
+        diag = float(np.linalg.norm(a["V"].max(0) - a["V"].min(0)))
+        frames = []
+        spots = _relief_spots(a, diag)
+        for at, n in spots:
+            across = np.cross(n, [0.0, 1.0, 0.0] if abs(n[1]) < 0.9 else [1.0, 0.0, 0.0])
+            across /= np.linalg.norm(across)
+            for view in (n, n * 0.8 + across * 0.6):
+                ma, pa = _draw(a, at, CLOSE_FRAME * diag, view, CLOSE_RES, CLOSE_AWAY * diag)
+                frames.append((at, CLOSE_FRAME * diag, view, ma, _seen_close(pa)))
+        _CLOSE_FRAMES[key] = (frames, len(spots))
+    return _CLOSE_FRAMES[key]
+
+
+def forget_close(original: Path) -> None:
+    """What was kept of the original for this job goes: the close frames and the judges' pictures."""
+    for kept in (_CLOSE_FRAMES, _SEEN_ORIGINAL, _LOOK_ORIGINAL):
+        for key in [k for k in kept if k[0] == str(original)]:
+            del kept[key]
+
+
+def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
+    """How far the result is from the original right up at its finest details, % of the picture, over the frames
+    of CLOSE_SPOTS spots, each from straight on and from the side. Relief under dark paint counts less, as the
+    paint hides it. Deterministic: no random numbers, the spots come from the original alone."""
+    import numpy as np
+    from scipy import ndimage
+
+    originals, spots = _close_frames(Path(original))
+    b = _load(Path(result), CLOSE_TEX)
+    b["V"] = b["V"] - np.asarray(shift, float)
+    frames = []
+    for at, half, view, ma, seen_a in originals:
+        mb, pb = _draw(b, at, half, view, CLOSE_RES, CLOSE_AWAY * half / CLOSE_FRAME)
+        union = ma | mb
+        if union.mean() < 0.1:
+            continue
+        light = _off_by_more(seen_a, _seen_close(pb), CLOSE_SHIFT_PX)
+        outline = _off_by_more(ma[..., None].astype(float), mb[..., None].astype(float), CLOSE_SHIFT_PX)
+        frames.append(float((ndimage.uniform_filter(np.maximum(light, outline), 3) > NOTICE)[union].mean()))
+    return {"closePct": round(100 * float(np.mean(frames)), 2) if frames else 0.0, "spots": spots, "frames": len(frames)}
