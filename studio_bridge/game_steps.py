@@ -7,6 +7,11 @@ Checked 2026-11-08/09 on 6 models at the exam budgets: the user's slivers on the
 no new dents seen, the user marked all of them "great". Not fixed here: thin details on too few triangles (the
 operative's eye slit, the mech's barrels) and needle streaks on bumpy TRELLIS surfaces (a needle rule was tried and
 showed nothing to the eye). Deterministic: no random numbers, corners in a fixed order.
+
+Speed (2026-11-12): corners are judged ahead in batches of BATCH, all their questions to the original in one big
+query (the search tree uses every core on a big query, one core on a small one), then taken in the same order as
+one by one; a corner whose triangles an earlier corner of its batch moved is judged again on its own. Same bytes
+as judging them singly; the statue at 100k 62 -> 31 s, the mech at 20k 12 -> 6 s.
 """
 from __future__ import annotations
 
@@ -22,6 +27,7 @@ STEP_CUT = 30.0  # the cut bends across an edge more than this (degrees)...
 STEP_SLACK = 20.0  # ...and more than the original under it by this much
 BAD_DOT = -0.3  # a triangle facing this far away from the original next to it counts as folded over
 NEAR = 0.01  # ...when it is this close to it (share of the model's size)
+BATCH = 128  # corners judged ahead together: ~45k points a query, where the search tree goes multi-core
 
 
 class _Original:
@@ -185,10 +191,29 @@ def _corner(X, G, v, ring, pairs, o):
     query of the original (one by one, the queries took most of the time)."""
     import numpy as np
 
-    R = G[ring]
-    others = sorted(set(R.reshape(-1).tolist()) - {v})
-    mid = X[others].mean(0)
+    mid = _mid(X, G, v, ring)
     _, _, onto = o.near(np.stack([X[v], mid]))
+    asked, ctx = _ask(X, G, v, ring, pairs, mid, onto)
+    d, i, _ = o.near(asked)
+    return _decide(ctx, d, i, o)
+
+
+def _mid(X, G, v, ring):
+    others = sorted(set(G[ring].reshape(-1).tolist()) - {v})
+    return X[others].mean(0)
+
+
+def _reads(G, ring, pairs):
+    """The corners whose places _corner reads: those of the ring and of the triangles across its edges."""
+    import numpy as np
+
+    return np.unique(G[np.unique(np.r_[ring, pairs.reshape(-1)])])
+
+
+def _ask(X, G, v, ring, pairs, mid, onto):
+    """The points _corner asks the original about, and what it needs to judge the answers (_decide)."""
+    import numpy as np
+
     places = np.stack([X[v], onto[0], mid, onto[1], (X[v] + onto[0]) / 2, (X[v] + onto[1]) / 2])
     K = len(places)
     ids = np.unique(np.r_[ring, pairs.reshape(-1)])  # the ring and the triangles across its edges
@@ -203,7 +228,15 @@ def _corner(X, G, v, ring, pairs, o):
     # triangles without v are the same in every candidate: their points are asked once
     moving = np.any(T == v, axis=1)
     mv, st = np.nonzero(moving)[0], np.nonzero(~moving)[0]
-    d, i, _ = o.near(np.r_[centre.reshape(-1, 3), _points(A[:, mv], B[:, mv], C[:, mv]), _points(A[0, st], B[0, st], C[0, st])])
+    asked = np.r_[centre.reshape(-1, 3), _points(A[:, mv], B[:, mv], C[:, mv]), _points(A[0, st], B[0, st], C[0, st])]
+    return asked, (places, K, t, r, mv, st, n, area, rk, ids, pairs)
+
+
+def _decide(ctx, d, i, o):
+    """_corner's verdict from the original's answers to _ask's points."""
+    import numpy as np
+
+    places, K, t, r, mv, st, n, area, rk, ids, pairs = ctx
     dc, ic = d[:K * r].reshape(K, r), i[:K * r].reshape(K, r)
     m = K * r + K * len(mv) * 7
     ds, js = np.empty((K, t, 7)), np.empty((K, t, 7), np.int64)
@@ -229,6 +262,26 @@ def _corner(X, G, v, ring, pairs, o):
         if step[k] < step[0] * 0.5 and err[k] <= err[0] * 1.05 and (best is None or score < best[0]):
             best = (score, places[k])
     return None if best is None else best[1]
+
+
+def _ahead(X, G, items, o) -> dict[int, tuple[Any, set[int]]]:
+    """_corner for many corners at once, with all their questions to the original in two big queries. Per corner:
+    its verdict and the corners whose places went into it."""
+    import numpy as np
+
+    items = [(v, ring, pairs) for v, ring, pairs in items if pairs is not None]
+    if not items:
+        return {}
+    mids = [_mid(X, G, v, ring) for v, ring, _ in items]
+    _, _, onto = o.near(np.concatenate([np.stack([X[v], mid]) for (v, _, _), mid in zip(items, mids)]))
+    asks = [_ask(X, G, v, ring, pairs, mid, onto[2 * k:2 * k + 2]) for k, ((v, ring, pairs), mid) in enumerate(zip(items, mids))]
+    d, i, _ = o.near(np.concatenate([a for a, _ in asks]))
+    out, at = {}, 0
+    for (v, ring, pairs), (asked, ctx) in zip(items, asks):
+        n = len(asked)
+        out[v] = (_decide(ctx, d[at:at + n], i[at:at + n], o), set(_reads(G, ring, pairs).tolist()))
+        at += n
+    return out
 
 
 def load_original(original: Path, shift) -> _Original:
@@ -263,25 +316,45 @@ def smooth_steps(original: Path, cut: Path, shift, mesh: _Original | None = None
         ring_corners = set(G[by_corner[v]].reshape(-1).tolist())
         return {x for u in ring_corners for t in by_corner[u] for x in G[t].tolist()}
 
+    rings: dict[int, tuple[Any, Any]] = {}  # the triangles never change, only the places: worked out once a corner
+
+    def around(v):
+        if v not in rings:
+            ring = by_corner[v]
+            ring_edges = sorted({(min(p, q), max(p, q)) for a, b, cc in G[ring].tolist() for p, q in ((a, b), (b, cc), (cc, a))} & E.keys())
+            rings[v] = np.array(ring), np.array([E[e] for e in ring_edges]) if ring_edges else None
+        return rings[v]
+
     for _ in range(PASSES):
         if not bad:
             break
         done = 0
-        for v in sorted({x for e in bad for x in e}):
-            if v in settled:
-                continue
-            ring = by_corner[v]
-            ring_edges = sorted({(min(p, q), max(p, q)) for a, b, cc in G[ring].tolist() for p, q in ((a, b), (b, cc), (cc, a))} & E.keys())
-            if not ring_edges:
-                settled.add(v)
-                continue
-            place = _corner(X, G, v, np.array(ring), np.array([E[e] for e in ring_edges]), o)
-            if place is None:
-                settled.add(v)
-            else:
-                X[v] = place
-                done += 1
-                settled -= near_corners(v)
+        order = sorted({x for e in bad for x in e})
+        for at in range(0, len(order), BATCH):
+            # Judged ahead together, as the corners stand now (one big query: the original's search tree uses every
+            # core on it); then taken in the same order as one by one. A corner whose triangles a corner before it
+            # in the batch has moved is judged again on its own, so the result is the same as judging them singly.
+            batch = [v for v in order[at:at + BATCH] if v not in settled]
+            ahead = _ahead(X, G, [(v, *around(v)) for v in batch], o)
+            moved_here: set[int] = set()
+            for v in order[at:at + BATCH]:
+                if v in settled:
+                    continue
+                ring, pairs = around(v)
+                if pairs is None:
+                    settled.add(v)
+                    continue
+                if v in ahead and not (ahead[v][1] & moved_here):
+                    place = ahead[v][0]
+                else:
+                    place = _corner(X, G, v, ring, pairs, o)
+                if place is None:
+                    settled.add(v)
+                else:
+                    X[v] = place
+                    done += 1
+                    moved_here.add(v)
+                    settled -= near_corners(v)
         moved += done
         if not done:
             break
