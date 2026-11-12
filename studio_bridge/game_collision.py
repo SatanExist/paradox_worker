@@ -1,8 +1,10 @@
 """Collision for game_prep (collision: true): convex pieces that hug the model, for game physics.
 
 Engines collide with a few simple convex shapes, not with the model's triangles. CoACD (MIT, deterministic with a
-fixed seed) cuts the model into up to 16 convex pieces of up to 32 points each (Unreal's own auto-collision limit is
-16 pieces; small pieces keep physics cheap).
+fixed seed) cuts the model into up to 16 convex pieces of up to 64 points each (Unreal's own auto-collision limit is
+16 pieces; a 64-point piece has at most 124 triangles, under Unity's 255 for a convex collider). With 32 points the
+pieces shaved rounded corners (drill: a quarter of the surface stuck out, up to 2.3 % of its size); with 64, 4.5 %
+and 1.3 %, the same fit elsewhere and the same time (trial 2026-11-12).
 
 The pieces are made from the ORIGINAL, in a separate process that starts together with the job, so it runs while the
 model is cut and baked. Trial 2026-11-12 (drill, skeleton, mech): the bake wasn't slowed, the wait added was only what
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 MAX_PIECES = 16
-MAX_POINTS = 32
+MAX_POINTS = 64
 LIMIT_S = 900  # from the job's start; a slow server gets this long, then the job goes on without collision
 
 
