@@ -1426,9 +1426,16 @@ def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
 
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut.
-    With bake, each cut is also made baked, and the one that looks closer is kept."""
+    With bake, each cut is also made baked, and the one that looks closer is kept.
+    With collision, convex pieces for game physics are made from the original alongside (game_collision)."""
+    collision = None
     try:
+        if params.get("collision"):
+            from studio_bridge.game_collision import Collision
+
+            collision = Collision(in_path)
         report = _game_prep_job(in_path, out_path, params)
+        pieces = collision.finish(report, report.get("shift")) if collision else None
         if params.get("lods"):
             from studio_bridge.game_lod import add_lods
 
@@ -1436,10 +1443,12 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
         if params.get("godot"):
             from studio_bridge.game_godot import add_godot
 
-            add_godot(report, bool(params.get("lods")))
+            add_godot(report, bool(params.get("lods")), pieces)
         report.pop("shift", None)
         return report
     finally:
+        if collision:
+            collision.stop()
         _forget_hidden(in_path)  # what's hidden was worked out once for every cut of this job
         from studio_bridge.game_look import forget_close
 

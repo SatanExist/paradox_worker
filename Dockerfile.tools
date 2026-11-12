@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --upgrade pip && \
     pip install runpod requests boto3 "numpy<2.3" scipy networkx "trimesh==4.5.3" "pymeshlab==2023.12.post3" \
-        "libigl==2.6.3" "scikit-image==0.26.0" "cgal==6.0.1.post202410241521"
+        "libigl==2.6.3" "scikit-image==0.26.0" "cgal==6.0.1.post202410241521" "coacd==1.0.14"
 
 COPY studio_bridge/__init__.py /app/studio_bridge/__init__.py
 COPY studio_bridge/mesh_repair.py /app/studio_bridge/mesh_repair.py
@@ -39,13 +39,13 @@ COPY studio_bridge/print_remesh.py /app/studio_bridge/print_remesh.py
 COPY studio_bridge/print_solid.py /app/studio_bridge/print_solid.py
 COPY studio_bridge/r2_public.py /app/studio_bridge/r2_public.py
 # game_prep: the judges, the step smoothing, the edge turn, LOD levels, the Godot package
-COPY studio_bridge/game_godot.py studio_bridge/game_lod.py studio_bridge/game_look.py studio_bridge/game_steps.py studio_bridge/game_turn.py /app/studio_bridge/
+COPY studio_bridge/game_collision.py studio_bridge/game_godot.py studio_bridge/game_lod.py studio_bridge/game_look.py studio_bridge/game_steps.py studio_bridge/game_turn.py /app/studio_bridge/
 COPY worker_tools.py /app/worker_tools.py
 COPY --from=tools_node /usr/local/bin/node /usr/local/bin/node
 COPY --from=tools_node /app/tools_node /app/tools_node
 ENV TOOLS_NODE_DIR=/app/tools_node
 
-RUN python -c "import trimesh, pymeshlab, runpod, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid, studio_bridge.game_godot, studio_bridge.game_lod, studio_bridge.game_look, studio_bridge.game_steps, studio_bridge.game_turn; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
+RUN python -c "import trimesh, pymeshlab, runpod, coacd, igl, igl.copyleft.cgal, igl.embree, skimage.measure, CGAL.CGAL_Alpha_wrap_3, studio_bridge.print_remesh, studio_bridge.print_solid, studio_bridge.game_collision, studio_bridge.game_godot, studio_bridge.game_lod, studio_bridge.game_look, studio_bridge.game_steps, studio_bridge.game_turn; from studio_bridge.tools_ops import OPERATIONS; print('tools ok', sorted(OPERATIONS))" && \
     cd /app/tools_node && node -e "Promise.all([import('@gltf-transform/core'), import('sharp'), import('three'), import('mikktspace')]).then(([, s, t]) => console.log('gltf-transform ok, sharp', s.default.versions.sharp, 'three', t.REVISION))"
 
 ARG PARADOX_BUILD_SHA=dev

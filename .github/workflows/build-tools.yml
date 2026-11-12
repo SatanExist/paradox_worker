@@ -11,6 +11,7 @@ on:
       - "studio_bridge/print_solid.py"
       - "studio_bridge/mesh_repair.py"
       - "studio_bridge/r2_public.py"
+      - "studio_bridge/game_collision.py"
       - "studio_bridge/game_godot.py"
       - "studio_bridge/game_lod.py"
       - "studio_bridge/game_look.py"

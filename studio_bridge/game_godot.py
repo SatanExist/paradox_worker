@@ -137,17 +137,28 @@ func apply() -> void:
 			m.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 '''
 
-SCENE_TSCN = '''[gd_scene load_steps=3 format=3]
+SCENE_TSCN = '''[gd_scene load_steps={steps} format=3]
 
 [ext_resource type="Script" path="lod_switch.gd" id="1_lod"]
 [ext_resource type="PackedScene" path="model.glb" id="2_model"]
-
+{shapes}
 [node name="model" type="Node3D"]
 script = ExtResource("1_lod")
 lod_screen_px = PackedFloat32Array({px})
 
 [node name="levels" parent="." instance=ExtResource("2_model")]
-'''
+{bodies}'''
+
+
+def _scene(px: list[float], pieces: list | None) -> str:
+    """model.tscn; with collision pieces, a StaticBody3D "collision" holding one convex shape per piece."""
+    pieces = pieces or []
+    shapes = "".join(f'\n[sub_resource type="ConvexPolygonShape3D" id="piece_{i:02d}"]\npoints = PackedVector3Array('
+                     + ", ".join(f"{c:.6g}" for c in v.reshape(-1)) + ")\n" for i, (v, _) in enumerate(pieces))
+    bodies = ("\n[node name=\"collision\" type=\"StaticBody3D\" parent=\".\"]\n" + "".join(
+        f'\n[node name="piece_{i:02d}" type="CollisionShape3D" parent="collision"]\nshape = SubResource("piece_{i:02d}")\n'
+        for i in range(len(pieces)))) if pieces else ""
+    return SCENE_TSCN.format(steps=3 + len(pieces), shapes=shapes, px=", ".join(f"{p:g}" for p in px), bodies=bodies)
 
 README = '''PolyLab model for Godot 4, with {count} levels of detail ({chain} triangles).
 
@@ -162,8 +173,13 @@ How to use:
 {switch}
   3. If your camera's field of view isn't Godot's default 75 degrees, set Camera Fov on the scene's root node.
      Screen Height 0 means your project's viewport height.
-
+{collision}
 Scaling the scene is fine: the switch distances follow its size. Checked on Godot 4.7.
+'''
+
+README_COLLISION = '''  4. Collision: the "collision" node is a StaticBody3D with {count} convex pieces that hug the model, so
+     players and objects bump into it; it stays in place. For a prop that falls or can be pushed, put the
+     "levels" node and the pieces under one RigidBody3D instead.
 '''
 
 
@@ -173,9 +189,9 @@ def _entry(name: str) -> zipfile.ZipInfo:
     return info
 
 
-def add_godot(report: dict[str, Any], lods_asked: bool = True) -> None:
+def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | None = None) -> None:
     """Adds extraFiles["godot.zip"] and after.godot when the job made LOD levels; otherwise a step says why not.
-    Never fails the job."""
+    pieces: the collision pieces (game_collision), already where the model is. Never fails the job."""
     after, steps = report["after"], report["steps"]
     lods = (report.get("extraFiles") or {}).get("lods.glb")
     levels = (after.get("lod") or {}).get("levels") or []
@@ -192,15 +208,18 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True) -> None:
     packed = Path(name)
     try:
         with zipfile.ZipFile(packed, "w") as z:
-            z.writestr(_entry("README.txt"), README.format(count=len(levels), chain=chain, switch=switch), zipfile.ZIP_DEFLATED)
+            collision = README_COLLISION.format(count=len(pieces)) if pieces else ""
+            z.writestr(_entry("README.txt"), README.format(count=len(levels), chain=chain, switch=switch, collision=collision),
+                       zipfile.ZIP_DEFLATED)
             z.writestr(_entry("lod_switch.gd"), LOD_SWITCH_GD, zipfile.ZIP_DEFLATED)
             z.writestr(_entry("model.glb"), Path(lods).read_bytes(), zipfile.ZIP_STORED)  # textures inside are already packed
-            z.writestr(_entry("model.tscn"), SCENE_TSCN.format(px=", ".join(f"{p:g}" for p in px)), zipfile.ZIP_DEFLATED)
+            z.writestr(_entry("model.tscn"), _scene(px, pieces), zipfile.ZIP_DEFLATED)
     except Exception as exc:  # a full disk or the like: the job's other files are still good
         packed.unlink(missing_ok=True)
         steps.append(f"no Godot package: {str(exc)[:160]}")
         return
     report["extraFiles"]["godot.zip"] = str(packed)
     after["godot"] = {"file": "godot.zip", "scene": f"{FOLDER}/model.tscn", "switchPx": px,
-                      "fileMb": round(packed.stat().st_size / 1048576, 2)}
-    steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself")
+                      "collisionPieces": len(pieces or []), "fileMb": round(packed.stat().st_size / 1048576, 2)}
+    steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself"
+                 + (f", with {len(pieces)} collision pieces" if pieces else ""))
