@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 BALL_MM = 3.0  # a chamber is space a ball this size can't reach from outside
+FINE_BALL_MM = 1.0  # and its narrow parts are where a ball this size fits that can't come in either (see _chamber_block)
 WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
@@ -44,6 +45,8 @@ BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own le
 BRIDGE_FIRST_MM = 0.5  # pieces this close are tied first; the step grows by BRIDGE_STEP until all that can be are (see _bridge)
 BRIDGE_STEP = 1.5
 CRUMB_MM3 = 1.0
+SPECK_MM = 2.0  # loose pieces smaller than this, clear of the rest, are dust: left out of wrap and solidify (see _undusted)
+SPECK_TOUCH_MM = 0.05  # a piece this close to a bigger one is part of it
 LOST_MM = 1.0
 LOST_MAX_SHARE = 0.001
 MORE_SOLID = 1.10  # the rounder candidate must hold this much more volume to be worth its rounding
@@ -300,7 +303,10 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
 def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
     """The chamber behind the skin as a solid block, reaching just into the skin so a union with the closed
     shell fuses the two. Nothing of the skin is deleted, so nothing of its surface can go missing. Works on
-    the raw skin, holes and all: the ball can't get through a hole narrower than itself.
+    the raw skin, holes and all: the ball can't get through a hole narrower than itself. The chamber is where
+    the ball fits, plus the narrow parts joined to it, where only a FINE_BALL_MM ball fits and can't come in
+    from outside either: trellis2_armor's legs are tubes open at the foot, and the gaps by their walls stayed
+    voids once the wrap went into the tubes (it had come out solid only because dust plugged their ends).
     Returns the block (None when there is no chamber) and its volume in cm³."""
     import numpy as np
     import trimesh
@@ -320,27 +326,39 @@ def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
     idx = np.clip(np.floor((np.vstack([pts, m.vertices]) - lo) / p).astype(int), 0, dims - 1)
     skin[tuple(idx.T)] = True
     del pts, idx
-    clear = ndimage.distance_transform_edt(~skin).astype(np.float32) * p > ball_mm  # ball centres that fit
-    lab, _ = ndimage.label(clear)
-    reach = lab == lab[0, 0, 0]  # the ones that get in from outside
+    free = ndimage.distance_transform_edt(~skin).astype(np.float32) * p  # how far each voxel is from the skin
+
+    def rolled(r: float):
+        """Where balls of radius r that can't come in from outside reach, and the space balls from outside don't."""
+        clear = free > r  # ball centres that fit
+        lab, _ = ndimage.label(clear)
+        reach = lab == lab[0, 0, 0]  # the ones that get in from outside
+        del lab
+        outside = ndimage.distance_transform_edt(~reach).astype(np.float32) * p <= r  # all those balls sweep
+        del reach
+        inner = ~skin & ~outside
+        deep = inner & clear
+        del clear
+        # every ball that fits in the chamber, rolled out to its full size: a round ball can't squeeze through
+        # a crack in the skin, so the block stops at the skin and never fills the grooves on the outside
+        rolled_out = inner & (ndimage.distance_transform_edt(~deep).astype(np.float32) * p <= r) if deep.any() else deep
+        return rolled_out, inner, outside
+
+    chamber, interior, outside = rolled(ball_mm)
+    if not chamber.any():
+        return None, 0.0
+    narrow = rolled(FINE_BALL_MM)[0]
+    del free
+    lab, _ = ndimage.label(chamber | narrow)
+    del narrow
+    chamber = np.isin(lab, np.unique(lab[chamber])) & interior  # the narrow parts joined to it, never where big balls from outside sweep
     del lab
-    outside = ndimage.distance_transform_edt(~reach).astype(np.float32) * p <= ball_mm  # all those balls sweep
-    del reach
-    interior = ~skin & ~outside
+    cm3 = float(chamber.sum()) * p**3 / 1000
     # skin voxels with the outside next to them: a skin only a voxel thick (trellis2_harbor's cliff walls) is
     # nothing but those, and a block reaching into them came out through the wall as a wavy ridge along the rows
     # of voxels
     rim = skin & ndimage.binary_dilation(outside & ~skin)
     del outside
-    deep = interior & clear
-    del clear
-    if not deep.any():
-        return None, 0.0
-    # every ball that fits in the chamber, rolled out to its full size: a round ball can't squeeze through a
-    # crack in the skin, so the block stops at the skin and never fills the grooves on the outside
-    chamber = interior & (ndimage.distance_transform_edt(~deep).astype(np.float32) * p <= ball_mm)
-    del deep
-    cm3 = float(chamber.sum()) * p**3 / 1000
     chamber = ndimage.binary_dilation(chamber, mask=interior)  # the last voxel up to the skin
     del interior
     chamber = ndimage.binary_dilation(chamber, mask=chamber | (skin & ~rim))  # and one into it, never through it
@@ -406,6 +424,51 @@ def _union(*meshes):
     allm = trimesh.util.concatenate(list(meshes)) if len(meshes) > 1 else meshes[0]
     V, F, _ = cgal.mesh_boolean(np.asarray(allm.vertices, np.float64), np.asarray(allm.faces, np.int64), type_str="union")
     return trimesh.Trimesh(V, F, process=False)
+
+
+def _undusted(m):
+    """`m` without its dust, loose pieces under SPECK_MM clear of every bigger piece: what wrap and solidify are
+    made of (`m` itself when it has none). The wrap tents over a speck within its alpha and the surface under
+    it, a tooth: trellis2_lattice has 445 specks 0.05-1 mm off its rods, and they made a row of teeth along each
+    rod. Specks farther off ended as crumbs pinned to the rods by _bridge, or dropped as floating. The chamber
+    block leaves the same out, or the holes it kept round specks inside a hollow would stay as voids
+    (trellis2_armor's legs)."""
+    import igl
+    import numpy as np
+    import trimesh
+
+    F = np.asarray(m.faces, np.int64)
+    lab = trimesh.graph.connected_component_labels(m.face_adjacency, node_count=len(F))
+    n = int(lab.max()) + 1 if len(lab) else 0
+    if n <= 1:
+        return m
+    V = np.asarray(m.vertices, np.float64)
+    vlab = np.zeros(len(V), np.int64)
+    vlab[F.ravel()] = np.repeat(lab, 3)
+    used = np.unique(F)
+    lo, hi = np.full((n, 3), np.inf), np.full((n, 3), -np.inf)
+    np.minimum.at(lo, vlab[used], V[used])
+    np.maximum.at(hi, vlab[used], V[used])
+    small = (hi - lo).max(1) < SPECK_MM
+    if not small.any() or small.all():
+        return m
+    at = used[small[vlab[used]]]
+    d2 = igl.point_mesh_squared_distance(V[at], V, F[~small[lab]])[0]
+    gap = np.full(n, np.inf)
+    np.minimum.at(gap, vlab[at], np.sqrt(d2))
+    dust = small & (gap > SPECK_TOUCH_MM)
+    if not dust.any():
+        return m
+    out = trimesh.Trimesh(V, F[~dust[lab]], process=False)
+    out.remove_unreferenced_vertices()
+    return out
+
+
+def _skin(orig, shared: dict[str, Any]):
+    """The original without its dust (see _undusted), made once for wrap and solidify."""
+    if "skin" not in shared:
+        shared["skin"] = _undusted(orig)
+    return shared["skin"]
 
 
 def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
@@ -721,7 +784,8 @@ def _shell(orig, shared: dict[str, Any], log: Log):
         shell = job.result() if job is not None else None
         if job is not None and shell is None:
             log("  wrap beside the repair stopped (memory) or failed: wrapped here")
-        shared["shell"] = shell if shell is not None else _wrap(orig.vertices, orig.faces, shared["printer"].wrap_alpha_mm)
+        skin = _skin(orig, shared)
+        shared["shell"] = shell if shell is not None else _wrap(skin.vertices, skin.faces, shared["printer"].wrap_alpha_mm)
         log(f"  wrap {time.time() - t:.0f}s")
         _tick(shared, "wrap", t)
     return shared["shell"].copy()
@@ -734,7 +798,7 @@ def _repaired(orig, repaired, shared, log: Log):
 def _solidified(orig, repaired, shared, log: Log):
     """The closed wrap of the skin, fused with a block filling the chamber behind it."""
     t = time.time()
-    block, chamber = _chamber_block(orig, log)
+    block, chamber = _chamber_block(_skin(orig, shared), log)
     log(f"  chamber {time.time() - t:.0f}s")
     _tick(shared, "chamber", t)
     if block is None:
@@ -1086,12 +1150,16 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
     _lean(orig)  # kept to the end for measuring, which needs only its vertices and faces
     orig_tree = _tree(orig)
-    shell_job = None
+    shared: dict[str, Any] = {"printer": printer}
     if not came_closed:  # wrap and solidify will want its shell: wrapped beside the repair
+        skin = _skin(orig, shared)
+        if skin is not orig:
+            log(f" wrap and solidify leave out {len(orig.faces) - len(skin.faces)} faces of loose dust")
         try:
-            shell_job = _WrapLater(orig.vertices, orig.faces, printer.wrap_alpha_mm)
+            shared["shellJob"] = _WrapLater(skin.vertices, skin.faces, printer.wrap_alpha_mm)
         except Exception as exc:  # noqa: BLE001 - wrapped here when it's needed
             log(f" shell wrap not started beside the repair: {exc}")
+        del skin
     stages: dict[str, float] = {"prepare": round(time.time() - t0, 1)}
 
     t1 = time.time()
@@ -1111,9 +1179,6 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     if not came_closed or not builders:
         builders.append(("wrap", _wrapped))
     cands: list[dict[str, Any]] = []
-    shared: dict[str, Any] = {"printer": printer}
-    if shell_job is not None:
-        shared["shellJob"] = shell_job
 
     def build(name: str, fn: Callable) -> None:
         t1 = time.time()
@@ -1145,6 +1210,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             log(" repair didn't close the lighter mesh: again from the full one")
             if "shellJob" in shared:  # the shell of the lighter mesh: wrapped again from the full one when needed
                 shared.pop("shellJob").cancel()
+            shared.pop("skin", None)
             t1 = time.time()
             orig = _weld(trimesh.Trimesh(np.asarray(full.vertices, np.float64) * mm_per_unit, np.asarray(full.faces), process=False))
             orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
@@ -1173,7 +1239,6 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
 
     if "shellJob" in shared:  # neither wrap nor solidify was built
         shared.pop("shellJob").cancel()
-    shell_job = None
     best, note = _pick(cands)
     # Only where the wrap is winning: a model the repair already wins stays exactly as it was.
     if best is not None and best["method"] == "wrap" and not paper:
