@@ -112,6 +112,10 @@ class Printer:
     bridge_reach_mm: float  # pieces floating farther than this and than their own length are left as they are
     shell_mm: float = 0.9  # printed solid this deep under the surface: two 0.45 mm perimeters (top/bottom 0.8-1.0 mm)
     infill: float = 0.15  # share of the inside filled deeper than that (PrusaSlicer's 15 %); 1 = printed solid
+    # a hollow skin is also filled on its own surface (see _filled). Off for fdm for now: its walls must grow to 0.8 mm,
+    # trellis2_crown's 0.33 mm strands then grow into each other (625k self-crossings) and thicken's exact union took
+    # 310 s and 14 GB where the wrap's coat had left it 4 s; resin's 0.4 mm took 94 s and 5.7 GB.
+    fill_own_surface: bool = False
 
 
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
@@ -120,7 +124,7 @@ PRINTERS = {
     "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
                    bridge_reach_mm=BRIDGE_REACH_MM),
     "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
-                     infill=1.0),
+                     infill=1.0, fill_own_surface=True),
 }
 DEFAULT_PRINTER = "fdm"
 
@@ -518,8 +522,9 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
     """Pieces floating next to the body (a feather, a bead, a block off a rover, a strand by the feet) get a
     bridge: a round pin where piece and body come closest, then one exact union of everything. The rest of the
     surface is untouched. A piece is tied when the bridge is shorter than the piece is long, or within the
-    printer's bridge reach however small: a bridge longer than the piece would read as a stick. A piece tied (or
-    touching) joins the body, and the nearest pieces are tied first, so each hangs on its closest neighbour:
+    printer's bridge reach however small: a bridge longer than the piece would read as a stick. A piece that only
+    touches gets a pin across the touch. A piece tied joins the body, and the nearest pieces are tied first, so each
+    hangs on its closest neighbour:
     trellis2_lattice's wall rods end 1 mm from a corner post, and tied in waves, before the post was part of the
     body, they hung on 12-92 mm sticks down to the floor frame (11 over 20 mm; now none over 3.6 mm).
     The pin is as thick as the piece it holds (4·volume/area is a rod's diameter), from the thinnest rod thicken
@@ -545,7 +550,7 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
     P = np.vstack([q.vertices for q in rest])
     d2, near = np.full(len(P), np.inf), np.zeros_like(P)  # each piece vertex's closest point on the body so far
     loose = np.ones(len(rest), dtype=bool)
-    pieces, joined, bridged, level = [body], [body], 0, BRIDGE_FIRST_MM
+    pieces, joined, bridged, welded, level = [body], [body], 0, 0, BRIDGE_FIRST_MM
     while True:
         if joined:  # one tree for what joined last, measured from the loose pieces only
             B = joined[0] if len(joined) == 1 else trimesh.util.concatenate(joined)
@@ -566,11 +571,19 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
         joined = [rest[i] for i in take]
         loose[take] = False
         for i in take:
-            if gap[i] < 1e-3:  # already touching: the union joins those
-                continue
             q, k = rest[i], starts[i] + int(np.argmin(d2[starts[i]:starts[i] + sizes[i]]))
             a, b = P[k], near[k]
-            u = (b - a) / gap[i]
+            if gap[i] < 1e-3:
+                # touching, yet a piece of its own after the union that made `m`: they meet at a point or along an
+                # edge, a hinge with no thickness (trellis2_crown's petal under the stone, once filled kept its own
+                # surface). Welded by a pin across the touch along the piece's normal there, its radius each way.
+                u = np.asarray(q.vertex_normals[k - starts[i]], np.float64)
+                if not np.isfinite(u).all() or np.linalg.norm(u) < 0.5:
+                    continue
+                u, b = u / np.linalg.norm(u), a
+                welded += 1
+            else:
+                u = (b - a) / gap[i]
             r = float(np.clip(2 * abs(float(q.volume)) / max(float(q.area), 1e-9), r_min, r_max))
             # from inside the piece to inside the body, by the pin's own radius at each end
             pieces.append(trimesh.creation.cylinder(radius=r, segment=[a - u * r, b + u * r], sections=16))
@@ -584,7 +597,7 @@ def _bridge(m, log: Log, printer: "Printer | None" = None):
     shells = out.split(only_watertight=False)
     if len(shells) > 1:
         out = trimesh.util.concatenate([s for s in shells if s.volume > CRUMB_MM3])  # pockets the union sealed
-    log(f"  bridges: {n_parts} pieces, {bridged} bridged")
+    log(f"  bridges: {n_parts} pieces, {bridged} bridged ({welded} touching, welded)")
     return _lean(out), bridged
 
 
@@ -795,14 +808,22 @@ def _repaired(orig, repaired, shared, log: Log):
     return _finish(repaired.copy(), log, shared)
 
 
-def _solidified(orig, repaired, shared, log: Log):
-    """The closed wrap of the skin, fused with a block filling the chamber behind it."""
-    t = time.time()
-    block, chamber = _chamber_block(_skin(orig, shared), log)
-    log(f"  chamber {time.time() - t:.0f}s")
-    _tick(shared, "chamber", t)
+def _block(orig, shared: dict[str, Any], log: Log):
+    """The chamber block behind the skin and its volume (see _chamber_block), made once for solidify and filled."""
+    if "block" not in shared:
+        t = time.time()
+        shared["block"] = _chamber_block(_skin(orig, shared), log)
+        log(f"  chamber {time.time() - t:.0f}s")
+        _tick(shared, "chamber", t)
+    block, chamber = shared["block"]
     if block is None:
         raise RuntimeError("no chamber behind the skin")
+    return block, chamber
+
+
+def _solidified(orig, repaired, shared, log: Log):
+    """The closed wrap of the skin, fused with a block filling the chamber behind it."""
+    block, chamber = _block(orig, shared, log)
     shell = _shell(orig, shared, log)
     t = time.time()
     m = _drop_pockets(_union(shell, block))  # gaps the block didn't reach are sealed pockets: filled too
@@ -811,6 +832,25 @@ def _solidified(orig, repaired, shared, log: Log):
     m, bridged = _bridge(m, log, shared["printer"])
     _tick(shared, "bridges", t)
     return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged}
+
+
+def _filled(orig, repaired, shared, log: Log):
+    """Solidify on the original's own surface: the closed repair fused with the same chamber block, and what the
+    repair lost given back as modelled (see _restored). Solidify's wrap remakes every face a hair outside it and
+    can't follow a groove narrower than its alpha: it spanned trellis2_crown's grooves between strands with rows of
+    teeth, and coated the rest 0.05-0.2 mm thick (2.6 of its 10.9 cm³ for resin, the teeth unchanged by a wrap twice
+    as fine, which took 11 times as long)."""
+    if repaired is None or not repaired.is_watertight:
+        raise RuntimeError("the repair didn't close")
+    block, chamber = _block(orig, shared, log)
+    t = time.time()
+    m = _drop_pockets(_union(repaired.copy(), block))
+    m, given, slabs, single = _given_back(orig, m, shared["printer"])
+    log(f"  fill union {time.time() - t:.0f}s, given back {given} faces as {slabs} slabs and {single} single faces")
+    t = _tick(shared, "union", t)
+    m, bridged = _bridge(m, log, shared["printer"])
+    _tick(shared, "bridges", t)
+    return m, {"chamberCm3": round(float(chamber), 2), "piecesBridged": bridged, "facesGivenBack": given}
 
 
 def _wrapped(orig, repaired, shared, log: Log):
@@ -973,17 +1013,24 @@ def _restored(orig, repaired, shared, log: Log):
     original's own faces it lost given back as they were (see _slabs) and joined in one union. The pick still
     judges the result by what moved and what is lost."""
     t = time.time()
-    m = shared["repairMesh"].copy()
-    bad, patch = _lost_faces(orig, m)
-    if not bad.any():
+    m, given, slabs, single = _given_back(orig, shared["repairMesh"].copy(), shared["printer"])
+    if not given:
         raise RuntimeError("the repair lost nothing")
-    solids, slabs, single = _slabs(orig, patch, shared["printer"].min_wall_mm, body=m)
-    m = _drop_pockets(_union(m, *solids))
-    log(f"  given back {int(patch.sum())} faces as {slabs} slabs and {single} single faces, {len(m.faces)} faces now {time.time() - t:.0f}s")
+    log(f"  given back {given} faces as {slabs} slabs and {single} single faces, {len(m.faces)} faces now {time.time() - t:.0f}s")
     t = _tick(shared, "union", t)
     m, bridged = _bridge(m, log, shared["printer"])
     _tick(shared, "bridges", t)
-    return m, {"piecesBridged": bridged, "facesGivenBack": int(patch.sum())}
+    return m, {"piecesBridged": bridged, "facesGivenBack": given}
+
+
+def _given_back(orig, m, printer: Printer):
+    """`m` with the original's own faces it lost given back as they were (see _lost_faces, _slabs), in one union.
+    Returns the mesh, how many faces went back, as how many slabs and how many single faces."""
+    bad, patch = _lost_faces(orig, m)
+    if not bad.any():
+        return m, 0, 0, 0
+    solids, slabs, single = _slabs(orig, patch, printer.min_wall_mm, body=m)
+    return _drop_pockets(_union(m, *solids)), int(patch.sum()), slabs, single
 
 
 # --- measuring and picking -------------------------------------------------------------------------
@@ -1130,6 +1177,15 @@ def _pick(cands: list[dict[str, Any]]):
     own = [c for c in ok if c["method"] == "restored"]
     if best["method"] == "wrap" and own:
         best = own[0]
+    # Filled is solidify on the original's own faces: the same chamber filled, without the wrap's teeth and coat. The
+    # coat is all the volume and wall it lacks (trellis2_crown: 8.3 cm³ and 0.33 mm against 10.9 and 0.47), so it
+    # isn't held to them and stays even where only the coat lifted solidify over the paper line; it only must not
+    # lose more, nor change clearly more where it shows (a repair that capped a hole flat).
+    if best["method"] in ("solidify", "wrap"):
+        own = [c for c in closed if c["method"] == "filled" and c["lostShare"] <= max(best["lostShare"], LOST_MAX_SHARE)
+               and c["changedShare"] <= best["changedShare"] + SETTLED_CHANGE]
+        if own:
+            best = own[0]
     return best, note
 
 
@@ -1164,6 +1220,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
 
     t1 = time.time()
     builders: list[tuple[str, Callable]] = []
+    # the ways to fill a hollow skin: on its own surface first where the printer allows it (see Printer), then wrapped
+    fills: list[tuple[str, Callable]] = ([("filled", _filled)] if printer.fill_own_surface else []) + [("solidify", _solidified)]
     repaired = wall = None
     paper = False
     try:
@@ -1172,7 +1230,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         _lean(repaired)
         log(f" local repair {time.time() - t1:.0f}s, closed {repaired.is_watertight}, wall {wall if wall is None else round(wall, 2)} mm")
         paper = wall is None or wall < printer.skin_mm  # a paper skin, or unknown: the gate judges the result
-        builders = [("solidify", _solidified)] if paper else [("repair", _repaired)]
+        builders = fills if paper else [("repair", _repaired)]
     except Exception as exc:
         log(f" local repair failed: {exc}")
     stages["localRepair"] = round(time.time() - t1, 1)
@@ -1211,6 +1269,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             if "shellJob" in shared:  # the shell of the lighter mesh: wrapped again from the full one when needed
                 shared.pop("shellJob").cancel()
             shared.pop("skin", None)
+            shared.pop("block", None)
             t1 = time.time()
             orig = _weld(trimesh.Trimesh(np.asarray(full.vertices, np.float64) * mm_per_unit, np.asarray(full.faces), process=False))
             orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
@@ -1235,7 +1294,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     # look solid. What counts is the results, so when none of them came out solid, fill the hollow anyway.
     if not _good(cands) and all(c["method"] != "solidify" for c in cands):
         log(" no solid result: trying solidify after all")
-        build("solidify", _solidified)
+        for name, fn in fills:
+            build(name, fn)
 
     if "shellJob" in shared:  # neither wrap nor solidify was built
         shared.pop("shellJob").cancel()
