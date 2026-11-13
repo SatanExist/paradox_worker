@@ -151,6 +151,38 @@ def _lean(m):
     return m
 
 
+ZIP_REL = 1e-7  # open-rim vertices this close (share of the bbox diagonal) are one point (see zip_rims)
+
+
+def zip_rims(m):
+    """`m` (welded) with open rims that lie on each other sewn shut: an open-edge vertex closer than ZIP_REL of the
+    model's size to another open-edge vertex becomes that vertex, then welded again. merge_vertices rounds to 8
+    digits, so two copies of one point 6e-9 apart can land in two bins (chess_set from Poly Haven: the board is two
+    open half-boxes mouth to mouth; left open, the repair dropped the middle of the board and the give-back laid it
+    back askew). Only open-edge vertices move: welding every vertex by distance also collapsed real tiny triangles
+    and opened holes (hunyuan31_camera 2 -> 62 open edges). Returns `m` itself when nothing is that close."""
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+    import trimesh
+
+    rim = np.unique(m.edges_sorted[trimesh.grouping.group_rows(m.edges_sorted, require_count=1)])
+    if len(rim) < 2:
+        return m
+    V = np.asarray(m.vertices, np.float64)
+    pairs = cKDTree(V[rim]).query_pairs(ZIP_REL * float(np.linalg.norm(V.max(0) - V.min(0))), output_type="ndarray")
+    if not len(pairs):
+        return m
+    _, lab = connected_components(sp.coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(rim),) * 2),
+                                  directed=False)
+    first = np.full(lab.max() + 1, len(rim))
+    np.minimum.at(first, lab, np.arange(len(rim)))  # each cluster goes to its first vertex: the same every run
+    V[rim] = V[rim[first[lab]]]
+    m.vertices = V
+    return _weld(m)
+
+
 def _weld(m):
     m.merge_vertices(merge_tex=True, merge_norm=True)  # by position only: what a slicer sees
     m.update_faces(m.nondegenerate_faces())

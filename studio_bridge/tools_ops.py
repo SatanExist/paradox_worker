@@ -225,6 +225,9 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.update_faces(mesh.unique_faces())
     mesh.remove_unreferenced_vertices()
+    from studio_bridge.print_solid import zip_rims
+
+    mesh = zip_rims(mesh)  # open rims lying on each other, a hair apart, sewn shut too
     before = _print_checks(mesh)
     steps.append("welded")
     timings["load"] = round(time.time() - t0, 1)
