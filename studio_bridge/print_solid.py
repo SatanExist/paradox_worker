@@ -116,6 +116,9 @@ class Printer:
     # trellis2_crown's 0.33 mm strands then grow into each other (625k self-crossings) and thicken's exact union took
     # 310 s and 14 GB where the wrap's coat had left it 4 s; resin's 0.4 mm took 94 s and 5.7 GB.
     fill_own_surface: bool = False
+    # what it prints in: plate width (X), depth (Z) and height (Y), mm. fdm: the MK4 of print_mk4.ini (bed_shape,
+    # max_print_height); resin: a mid-size 12K printer (Elegoo Saturn 4 Ultra, 218.88 x 122.88 x 220)
+    plate_mm: tuple[float, float, float] = (250.0, 210.0, 220.0)
 
 
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
@@ -124,7 +127,7 @@ PRINTERS = {
     "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
                    bridge_reach_mm=BRIDGE_REACH_MM),
     "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
-                     infill=1.0, fill_own_surface=True),
+                     infill=1.0, fill_own_surface=True, plate_mm=(218.0, 122.0, 220.0)),
 }
 DEFAULT_PRINTER = "fdm"
 
@@ -2046,6 +2049,54 @@ def _rest_faces(V, com):
         tip = _tip_deg(np.c_[P @ u, P @ w], np.array([com @ u, com @ w]), float((P[0] - com) @ nrm))
         out.append((nrm, tip, float(np.degrees(np.arccos(np.clip(-nrm[1], -1.0, 1.0)))), float(hull.area_faces[g].sum())))
     return sorted(out, key=lambda r: -r[1])
+
+
+PLATE_MARGIN_MM = 1.0  # kept free round the model on each side of the plate
+PLATE_TURN_STEP_DEG = 0.5
+
+
+def plate_fit(m, printer: Printer) -> dict[str, Any]:
+    """Whether `m` (in mm, Y up, as it will print) fits the printer (printer.plate_mm), turned about the vertical
+    if it only fits that way: a long model can go across the plate's diagonal. Without the check a model too big
+    printed nothing and said nothing (the slicer refuses it, so the turn and brim advice just went missing).
+    Returns {"plateMm", "sizeMm", "fits", "turnDeg", "scale"}: `turnDeg` the turn about Y (degrees, the smallest
+    of the best; 0 when it fits as it stands), `scale` how much it could grow (>= 1) or must shrink (< 1) to fit."""
+    import numpy as np
+
+    W, D, H = printer.plate_mm[0] - 2 * PLATE_MARGIN_MM, printer.plate_mm[1] - 2 * PLATE_MARGIN_MM, printer.plate_mm[2]
+    V = np.asarray(m.vertices, np.float64)
+    P = V[:, [0, 2]]
+    try:
+        from scipy.spatial import ConvexHull
+
+        P = P[ConvexHull(P).vertices]
+    except Exception:  # a flat footprint: every point
+        pass
+    height = float(np.ptp(V[:, 1]))
+
+    def flat(deg):  # how much it could grow on the plate turned by `deg`, and its footprint so
+        a = np.radians(deg)
+        w, d = np.ptp(P @ np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]]), axis=0)
+        return min(W / max(w, 1e-9), D / max(d, 1e-9)), (w, d)
+
+    best, size = flat(0.0)
+    as_is, turn = size, 0.0
+    if best < 1.0:
+        for deg in np.arange(PLATE_TURN_STEP_DEG, 180.0, PLATE_TURN_STEP_DEG):
+            g, wd = flat(float(deg))
+            if g > best + 1e-9:
+                best, size, turn = g, wd, float(deg)
+    scale = min(best, H / max(height, 1e-9))  # too big: shrunk by this it fits, turned the best way
+    fits = bool(scale >= 1.0)
+    if not fits:
+        size, turn = as_is, 0.0
+    return {
+        "plateMm": [round(v, 1) for v in printer.plate_mm],
+        "sizeMm": [round(float(size[0]), 1), round(float(size[1]), 1), round(height, 1)],
+        "fits": fits,
+        "turnDeg": turn,
+        "scale": round(float(scale), 3),
+    }
 
 
 def stand(m, printer: Printer, log: Log = print, base: str = "auto"):

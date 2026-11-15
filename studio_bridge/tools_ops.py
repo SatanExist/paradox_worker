@@ -350,6 +350,35 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     timings["stand"] = round(time.time() - t, 1)
     t = time.time()
 
+    # Whether it fits the printer at the size asked for, turned about the vertical if only so; checked only when a
+    # size was asked for (otherwise the file keeps its own units and the size it prints at isn't known).
+    plate = None
+    if height_mm:
+        from studio_bridge.print_solid import plate_fit
+
+        try:
+            plate = plate_fit(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False), printer)
+            W, D, H = (f"{v:g}" for v in plate["plateMm"])
+            if plate["fits"] and plate["turnDeg"]:
+                a = np.radians(plate["turnDeg"])
+                T = np.array([[np.cos(a), 0, np.sin(a), 0], [0, 1, 0, 0], [-np.sin(a), 0, np.cos(a), 0], [0, 0, 0, 1]])
+                turned = trimesh.transform_points(np.asarray(body.vertices), T)
+                lo, hi = turned.min(0), turned.max(0)
+                T[0, 3], T[2, 3] = -(lo[0] + hi[0]) / 2, -(lo[2] + hi[2]) / 2
+                body.apply_transform(T)
+                if pieces is not None:
+                    pieces.apply_transform(T)
+                    moved = T if moved is None else T @ moved
+                steps.append(f"turned {plate['turnDeg']:g}° on the plate to fit the printer ({W} × {D} mm)")
+            elif not plate["fits"]:
+                plate["maxHeightMm"] = int(float(height_mm) * plate["scale"])
+                steps.append(f"too big for the printer ({W} × {D} × {H} mm): choose a height of {plate['maxHeightMm']} mm or less")
+        except Exception as exc:  # a report extra: never worth failing the print for
+            print(f"plate not checked: {exc}")
+    too_big = plate is not None and not plate["fits"]  # the slicer refuses it: no turn or brim advice to look for
+    timings["plate"] = round(time.time() - t, 1)
+    t = time.time()
+
     # Walls thinner than the printer holds, measured at the size it prints at (in its own units at the working
     # scale when no height was asked for). Positions as the floating pieces'.
     from studio_bridge.print_solid import thin_spots
@@ -372,7 +401,7 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
 
     # Which way up it prints with least support: a suggestion beside the file, which stays as it stands.
     turn = None
-    if printer.name == "fdm":
+    if printer.name == "fdm" and not too_big:
         from studio_bridge.print_solid import print_turn
 
         try:
@@ -389,7 +418,7 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
 
     # How wide a brim keeps it on the plate while it prints, as it stands and turned the suggested way.
     brim = None
-    if printer.name == "fdm":
+    if printer.name == "fdm" and not too_big:
         from studio_bridge.print_slicer import brim_needed
 
         try:
@@ -445,6 +474,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         report["thinSpots"] = thin
     if stood is not None:
         report["stand"] = stood
+    if plate is not None:
+        report["plate"] = plate
     if turn is not None:
         report["printTurn"] = turn
     if brim is not None:
