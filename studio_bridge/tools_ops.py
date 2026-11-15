@@ -18,7 +18,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               base. For FDM, a way up that PrusaSlicer finds faster and lighter is suggested ("printTurn": the
               file stays as it stands; no slicer, no suggestion), and the brim PrusaSlicer finds keeps it on the
               plate ("brim", print_slicer.brim_needed). params["printer"]
-              is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer)
+              is "fdm" (default) or "resin": every physical threshold comes from it (print_solid.Printer);
+              for fdm params["nozzleMm"] 0.25 or 0.6 picks another nozzle (0.4 otherwise, print_solid.NOZZLES)
 """
 
 from __future__ import annotations
@@ -234,9 +235,9 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     t = time.time()
 
     height_mm = params.get("heightMm")
-    from studio_bridge.print_solid import DEFAULT_PRINTER, PRINTERS
+    from studio_bridge.print_solid import printer_for
 
-    printer = PRINTERS.get(str(params.get("printer") or DEFAULT_PRINTER), PRINTERS[DEFAULT_PRINTER])
+    printer = printer_for(params.get("printer"), params.get("nozzleMm"))
     remesh = solid = fine = thin = None
     # The solid is made at a print scale: the tolerances (a 3 mm ball, 0.5 mm wrap, 1 mm loss) are physical.
     # Without a height the model is taken as a typical figurine; very small or large prints are worked at
@@ -407,10 +408,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         try:
             turn = print_turn(trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False), printer)
             if "turned" in turn:
-                from studio_bridge.print_slicer import PROFILE
-
                 steps.append(f"prints {turn['turned']['savedMinutes']:.0f} min faster with {turn['turned']['savedGrams']:g} g less plastic "
-                             f"turned another way up (PrusaSlicer: {PROFILE})")
+                             f"turned another way up (PrusaSlicer: {printer.slicer_name})")
         except Exception as exc:  # a report extra: never worth failing the print for
             print(f"print turn not checked: {exc}")
     timings["printTurn"] = round(time.time() - t, 1)
@@ -423,12 +422,12 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
 
         try:
             mesh_mm = trimesh.Trimesh(np.asarray(body.vertices) * to_mm, body.faces, process=False)
-            brim = brim_needed(mesh_mm)
+            brim = brim_needed(mesh_mm, ini=printer.slicer_ini)
             if brim is not None and brim["brimMm"] > 0:
                 steps.append(f"may come loose from the plate while printing: turn on a {brim['brimMm']} mm brim in the slicer"
                              + ("" if brim["holds"] else " (PrusaSlicer still finds it loose even so)"))
             if brim is not None and turn is not None and "turned" in turn:
-                turned_brim = brim_needed(mesh_mm, turn["turned"]["rotation"])
+                turned_brim = brim_needed(mesh_mm, turn["turned"]["rotation"], ini=printer.slicer_ini)
                 if turned_brim is not None:
                     turn["turned"]["brim"] = turned_brim
         except Exception as exc:  # a report extra: never worth failing the print for
@@ -481,6 +480,8 @@ def print_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     if brim is not None:
         report["brim"] = brim
     report["printer"] = printer.name
+    if printer.nozzle_mm:
+        report["nozzleMm"] = printer.nozzle_mm
     if remesh:
         report["remesh"] = remesh
     timings["export"] = round(time.time() - t, 1)

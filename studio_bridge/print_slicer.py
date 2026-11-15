@@ -14,8 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-SETTINGS = Path(__file__).with_name("print_mk4.ini")
-PROFILE = "Prusa MK4, 0.4 mm nozzle, 0.20 mm layers, PLA"
+SETTINGS = Path(__file__).with_name("print_mk4.ini")  # the default printer's (print_solid.Printer.slicer_ini)
 SLICE_LIMIT_S = 300  # a model that takes longer goes without what it was asked for
 TAIL_BYTES = 300_000  # the totals are in the settings block at the end of the G-code
 BRIMS_MM = (0, 5, 10, 20)  # brim widths tried, narrowest first: on the 42-model corpus each step frees 13, 11 and 3 models
@@ -37,9 +36,10 @@ def _seconds(text: str) -> int:
     return sum(int(v) * {"d": 86400, "h": 3600, "m": 60, "s": 1}[u] for v, u in re.findall(r"(\d+)([dhms])", text))
 
 
-def _slice(m, rotation=None, settings: str = "", tail: bool = False, alert_only: bool = False) -> tuple[str, str] | None:
+def _slice(m, rotation=None, settings: str = "", tail: bool = False, alert_only: bool = False,
+           ini: str | None = None) -> tuple[str, str] | None:
     """Slice `m` (closed, in mm, Y up) on the plate, turned first by `rotation` (3x3) when given, with `settings`
-    (ini lines) over SETTINGS. Returns (the slicer's output at log level 3, the G-code's last TAIL_BYTES when
+    (ini lines) over SETTINGS, or over the file named `ini` beside this one (Printer.slicer_ini). Returns (the slicer's output at log level 3, the G-code's last TAIL_BYTES when
     `tail`), or None when it can't (no program, doesn't fit the bed, over SLICE_LIMIT_S).
     `alert_only`: only the alerts are wanted, so the slicer is stopped at the first progress line after ALERT_STEP,
     before the rest of the slicing and the G-code (direct3ds2_knight: 3.1 s of 7.3 s, the same alerts)."""
@@ -61,7 +61,7 @@ def _slice(m, rotation=None, settings: str = "", tail: bool = False, alert_only:
         trimesh.Trimesh(V, m.faces, process=False).export(stl)
         over.write_text(settings, encoding="utf-8")
         try:
-            proc = subprocess.Popen([program, "--datadir", empty, "--loglevel", "3", "--load", str(SETTINGS), "--load", str(over),
+            proc = subprocess.Popen([program, "--datadir", empty, "--loglevel", "3", "--load", str(Path(__file__).with_name(ini) if ini else SETTINGS), "--load", str(over),
                                      "--export-gcode", "--output", str(gcode), str(stl)],
                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                     errors="replace", preexec_fn=_dies_with_parent if sys.platform.startswith("linux") else None)
@@ -94,10 +94,10 @@ def _slice(m, rotation=None, settings: str = "", tail: bool = False, alert_only:
     return "".join(out), end
 
 
-def slice_stats(m, rotation=None) -> dict[str, Any] | None:
+def slice_stats(m, rotation=None, ini: str | None = None) -> dict[str, Any] | None:
     """Print time and plastic of `m` (closed, in mm, Y up) on the plate, turned first by `rotation` (3x3) when given:
     {"minutes", "grams"}; None when the slicer can't (no program, doesn't fit the bed, over SLICE_LIMIT_S)."""
-    got = _slice(m, rotation, tail=True)
+    got = _slice(m, rotation, tail=True, ini=ini)
     if got is None:
         return None
     tail = got[1]
@@ -108,7 +108,7 @@ def slice_stats(m, rotation=None) -> dict[str, Any] | None:
     return {"minutes": round(_seconds(spent.group(1)) / 60, 1), "grams": round(float(grams.group(1)), 1)}
 
 
-def brim_needed(m, rotation=None) -> dict[str, Any] | None:
+def brim_needed(m, rotation=None, ini: str | None = None) -> dict[str, Any] | None:
     """How wide a brim keeps `m` (closed, in mm, Y up, turned first by `rotation` when given) on the plate while it
     prints: the narrowest of BRIMS_MM for which PrusaSlicer's stability check raises no LOW_ADHESION. Its check
     weighs what the model pulls with (height, weight, the nozzle's tug at the print acceleration) against the
@@ -117,7 +117,7 @@ def brim_needed(m, rotation=None) -> dict[str, Any] | None:
     on the plate (rodin_knight, rodin_spider, hunyuan31_scorpion) need 20. Returns {"brimMm", "holds": False when
     even the widest still gets the alert}; None when the slicer can't."""
     for width in BRIMS_MM:
-        got = _slice(m, rotation, f"support_material = 0\nbrim_width = {width}\n", alert_only=True)
+        got = _slice(m, rotation, f"support_material = 0\nbrim_width = {width}\n", alert_only=True, ini=ini)
         if got is None:
             return None
         if LOW_ADHESION not in got[0]:

@@ -28,7 +28,8 @@ from faces import glb_faces
 HERE = Path(__file__).resolve().parent
 LAB = HERE.parent  # the corpus lives inside paradox_worker
 PRINT_FILES = ["studio_bridge/print_solid.py", "studio_bridge/print_remesh.py", "studio_bridge/tools_ops.py", "tools_node/simplify.mjs",
-               "studio_bridge/print_slicer.py", "studio_bridge/print_mk4.ini"]
+               "studio_bridge/print_slicer.py", "studio_bridge/print_mk4.ini",
+               "studio_bridge/print_mk4_n025.ini", "studio_bridge/print_mk4_n06.ini"]
 os.environ.setdefault("PRUSA_SLICER", "D:/tools/PrusaSlicer/PrusaSlicer-2.9.6/prusa-slicer-console.exe")  # print_turn tries turns on it
 TIME_LIMIT_S = 30 * 60
 

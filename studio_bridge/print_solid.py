@@ -119,6 +119,9 @@ class Printer:
     # what it prints in: plate width (X), depth (Z) and height (Y), mm. fdm: the MK4 of print_mk4.ini (bed_shape,
     # max_print_height); resin: a mid-size 12K printer (Elegoo Saturn 4 Ultra, 218.88 x 122.88 x 220)
     plate_mm: tuple[float, float, float] = (250.0, 210.0, 220.0)
+    nozzle_mm: float | None = 0.4  # fdm only
+    slicer_ini: str = "print_mk4.ini"  # PrusaSlicer's settings for it, beside print_slicer.py (fdm only)
+    slicer_name: str = "Prusa MK4, 0.4 mm nozzle, 0.20 mm layers, PLA"
 
 
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
@@ -127,9 +130,34 @@ PRINTERS = {
     "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
                    bridge_reach_mm=BRIDGE_REACH_MM),
     "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
-                     infill=1.0, fill_own_surface=True, plate_mm=(218.0, 122.0, 220.0)),
+                     infill=1.0, fill_own_surface=True, plate_mm=(218.0, 122.0, 220.0), nozzle_mm=None),
 }
 DEFAULT_PRINTER = "fdm"
+# Other nozzles on the same MK4: Prusa's own presets for them (print_mk4_n*.ini). The line is what the nozzle lays
+# (one line doesn't print thinner), a wall that holds is two of them; the solid walls under the surface are its
+# perimeters (0.25: three of 0.27 mm, 0.6: two of 0.68). The first layer is 0.2 mm on all three. The thresholds that
+# go by the model's own detail (skin, wrap, lost, bridge reach) stay the 0.4's.
+NOZZLES = {
+    0.25: dict(min_wall_mm=0.5, min_print_mm=0.25, shell_mm=0.81, slicer_ini="print_mk4_n025.ini",
+               slicer_name="Prusa MK4, 0.25 mm nozzle, 0.15 mm layers, PLA"),
+    0.6: dict(min_wall_mm=1.2, min_print_mm=0.6, shell_mm=1.36, slicer_ini="print_mk4_n06.ini",
+              slicer_name="Prusa MK4, 0.6 mm nozzle, 0.32 mm layers, PLA"),
+}
+
+
+def printer_for(name: str | None, nozzle_mm: float | None = None) -> Printer:
+    """The printer asked for: "fdm" (default) or "resin", and for fdm a nozzle of NOZZLES (any other, or none, is
+    the 0.4 mm one)."""
+    import dataclasses
+
+    printer = PRINTERS.get(str(name or DEFAULT_PRINTER), PRINTERS[DEFAULT_PRINTER])
+    try:
+        nozzle = round(float(nozzle_mm), 2) if nozzle_mm is not None else None
+    except (TypeError, ValueError):
+        nozzle = None
+    if printer.name == "fdm" and nozzle in NOZZLES:
+        printer = dataclasses.replace(printer, nozzle_mm=nozzle, **NOZZLES[nozzle])
+    return printer
 
 Log = Callable[[str], None]
 
@@ -2306,13 +2334,13 @@ def print_turn(m, printer: Printer, log: Log = print) -> dict[str, Any]:
         elif full[i][0] <= TURN_TWIN_SUPPORT * full[tried[twin]][0] and tip(i) > tip(tried[twin]):
             tried[twin] = i
     info: dict[str, Any] = {"supportCm3": round(stands / 1000, 1)}
-    base = slice_stats(m) if tried else None
+    base = slice_stats(m, ini=printer.slicer_ini) if tried else None
     if base is not None:
         info["print"] = base
         best = None
         for i in tried:
             R = trimesh.geometry.align_vectors(downs[i], [0, -1.0, 0])[:3, :3]
-            got = slice_stats(m, R)
+            got = slice_stats(m, R, ini=printer.slicer_ini)
             if (got is not None and base["minutes"] - got["minutes"] >= TURN_SAVES_MIN and base["grams"] - got["grams"] >= TURN_SAVES_G
                     and (best is None or got["minutes"] < best[2]["minutes"])):
                 best = (i, R, got)
