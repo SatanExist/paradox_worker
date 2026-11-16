@@ -311,11 +311,16 @@ def _rigged(glb: bytes) -> tuple[str, list[str], bool] | None:
 
 
 def _import_file(path: str) -> str:
-    """model.glb.import: Godot's humanoid Bone Map on the skeleton (written inline, so the folder can move)."""
+    """model.glb.import: Godot's humanoid Bone Map on the skeleton (written inline, so the folder can move), plus Godot's
+    own Rest Fixer > Fix Silhouette: AI models stand in an A-pose or other rest pose while humanoid animations are made
+    on a T-pose, so without it the arms of every retargeted animation land wrong (punch at the hips, sword swing with
+    the arms down) and fingers splay. It turns the rest pose to the profile's T-pose at import (Godot's retargeting
+    docs advise it for models not in a T-pose)."""
     pairs = ",".join(f'"bone_map/{g}":&"{ours}"' for ours, g in HUMANOID_BONES.items())
     bone_map = f'Object(BoneMap,"profile":Object(SkeletonProfileHumanoid,"script":null),{pairs},"script":null)'
     return ('[remap]\n\nimporter="scene"\nimporter_version=1\ntype="PackedScene"\n\n[params]\n\n'
-            '_subresources={\n"nodes": {\n"PATH:' + path + '": {\n"retarget/bone_map": ' + bone_map + "\n}\n}\n}\n")
+            '_subresources={\n"nodes": {\n"PATH:' + path + '": {\n"retarget/bone_map": ' + bone_map + ",\n"
+            '"retarget/rest_fixer/fix_silhouette/enable": true\n}\n}\n}\n')
 
 
 def _entry(name: str) -> zipfile.ZipInfo:
