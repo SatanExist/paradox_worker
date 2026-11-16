@@ -18,13 +18,14 @@ defect and refill it); then:
              models that came in open.
 
 Candidates are built in the order they usually win, and the rest are skipped once one can't be beaten
-(kept everything, one part, changed under 0.1 % where it shows): on a real solid the repair, on a paper
+(kept everything, one part, nothing seen changed by a print layer): on a real solid the repair, on a paper
 skin solidify and wrap, with the repair only when neither came out solid. On the corpus the repair never
 won on a paper skin and the wrap never won after a clean repair.
 
 A candidate that left original surface behind (farther than 1 mm and outside the result) on more than
-0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. Of the rest the one that
-changed least where it shows wins, unless the other holds clearly more volume: that is the one that filled the hollow.
+0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. On resin a result that left the
+chamber behind the skin hollow loses to one that filled it (see Printer.hollow_traps). Of the rest the one that
+changed least where it shows wins, measured both ways (see _measure).
 When every result is paper the report says so (thinWalls). Lengths are in mm at the working print height.
 """
 
@@ -49,13 +50,11 @@ SPECK_MM = 2.0  # loose pieces smaller than this, clear of the rest, are dust: l
 SPECK_TOUCH_MM = 0.05  # a piece this close to a bigger one is part of it
 LOST_MM = 1.0
 LOST_MAX_SHARE = 0.001
-MORE_SOLID = 1.10  # the rounder candidate must hold this much more volume to be worth its rounding
 MAX_VOXELS = 60_000_000  # chamber grid; the distance transforms take ~25 bytes a voxel at peak
 SKIN_MM = 1.0  # mean wall (2·volume/area) below this is a paper skin with a hollow to fill
 SAMPLES = 200_000
 SEED = 0
 VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
-SETTLED_CHANGE = 0.001  # a good candidate that changed no more than this where it shows can't be beaten
 HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
 LEAN_FROM_FACES = 2_000_000  # meshes this big drop their cached tables after each stage (see _lean)
 COLLECT_FROM_FACES = 500_000  # and from this size what the stage left is freed at once (see _lean)
@@ -104,6 +103,7 @@ class Printer:
     """What a kind of printer can print: every physical threshold of the print prep comes from here."""
     name: str
     layer_mm: float  # first layer: a piece no higher than this above the plate starts on it
+    print_layer_mm: float  # the layers it prints in (the slicer's layer_height): a change smaller hides in their lines
     min_wall_mm: float  # thinner than this a wall or a strand is fragile
     min_print_mm: float  # thinner than this it doesn't print at all (one nozzle line, the finest resin detail)
     skin_mm: float  # mean wall (2·volume/area) below this is a paper skin with a hollow to fill
@@ -116,6 +116,13 @@ class Printer:
     # trellis2_crown's 0.33 mm strands then grow into each other (625k self-crossings) and thicken's exact union took
     # 310 s and 14 GB where the wrap's coat had left it 4 s; resin's 0.4 mm took 94 s and 5.7 GB.
     fill_own_surface: bool = False
+    # a hollow left inside holds liquid: resin can't drain from it and we make no drain holes (slicers ask for them:
+    # Lychee 3-5 mm, Formlabs 2.5 mm on Form 3, 0.75 mm on Form 4; under 0.5 mm they close). So when the chamber behind
+    # the skin was found, a result that left it hollow loses to one that filled it (see _pick). Measuring the drain
+    # instead ("space a drain-sized ball can't leave") was tried on 30 resin candidates on 2026-11-16: grooves on the
+    # surface came out as hundreds of 0.04-0.9 cm³ pockets on every model, apart from Chandelier_01's hollow vase
+    # (4.2 cm³, a 0.5-1 mm slit) only by a hand-picked volume. fdm prints a hollow as walls round it, so no.
+    hollow_traps: bool = False
     # what it prints in: plate width (X), depth (Z) and height (Y), mm. fdm: the MK4 of print_mk4.ini (bed_shape,
     # max_print_height); resin: a mid-size 12K printer (Elegoo Saturn 4 Ultra, 218.88 x 122.88 x 220)
     plate_mm: tuple[float, float, float] = (250.0, 210.0, 220.0)
@@ -127,20 +134,20 @@ class Printer:
 # fdm: a 0.4 mm nozzle at 0.2 mm layers, two lines per wall; its solid thresholds are the corpus-proven ones.
 # resin: 0.05 mm layers, walls from 0.4 mm (Formlabs' guide for supported walls), detail from 0.2 mm, kept closer.
 PRINTERS = {
-    "fdm": Printer("fdm", layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
+    "fdm": Printer("fdm", layer_mm=0.2, print_layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
                    bridge_reach_mm=BRIDGE_REACH_MM),
-    "resin": Printer("resin", layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
-                     infill=1.0, fill_own_surface=True, plate_mm=(218.0, 122.0, 220.0), nozzle_mm=None),
+    "resin": Printer("resin", layer_mm=0.05, print_layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
+                     infill=1.0, fill_own_surface=True, hollow_traps=True, plate_mm=(218.0, 122.0, 220.0), nozzle_mm=None),
 }
 DEFAULT_PRINTER = "fdm"
 # Other nozzles on the same MK4: Prusa's own presets for them (print_mk4_n*.ini). The line is what the nozzle lays
 # (one line doesn't print thinner), a wall that holds is two of them; the solid walls under the surface are its
-# perimeters (0.25: three of 0.27 mm, 0.6: two of 0.68). The first layer is 0.2 mm on all three. The thresholds that
+# perimeters (0.25: three of 0.27 mm, 0.6: two of 0.68), its layers the preset's (0.15, 0.32 mm). The first layer is 0.2 mm on all three. The thresholds that
 # go by the model's own detail (skin, wrap, lost, bridge reach) stay the 0.4's.
 NOZZLES = {
-    0.25: dict(min_wall_mm=0.5, min_print_mm=0.25, shell_mm=0.81, slicer_ini="print_mk4_n025.ini",
+    0.25: dict(print_layer_mm=0.15, min_wall_mm=0.5, min_print_mm=0.25, shell_mm=0.81, slicer_ini="print_mk4_n025.ini",
                slicer_name="Prusa MK4, 0.25 mm nozzle, 0.15 mm layers, PLA"),
-    0.6: dict(min_wall_mm=1.2, min_print_mm=0.6, shell_mm=1.36, slicer_ini="print_mk4_n06.ini",
+    0.6: dict(print_layer_mm=0.32, min_wall_mm=1.2, min_print_mm=0.6, shell_mm=1.36, slicer_ini="print_mk4_n06.ini",
               slicer_name="Prusa MK4, 0.6 mm nozzle, 0.32 mm layers, PLA"),
 }
 
@@ -1163,29 +1170,74 @@ def _tree(m):
     return t
 
 
-def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None) -> dict[str, Any]:
-    """'changed': result surface seen from outside that sits more than 0.3 mm off the original; surface moved out
-    of sight (the walls of a filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more
-    than 1 mm from the result and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
+def _orig_seen(orig, pts, fi):
+    """Which of the original's surface points `pts` (on faces `fi`) can be seen from outside, from either side: a
+    sheet without thickness has no inside, and its normals may point either way."""
+    import numpy as np
+
+    V, F = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)
+    n = np.asarray(orig.face_normals, np.float64)[fi]
+    return _seen(V, F, pts, n) | _seen(V, F, pts, -n)
+
+
+def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None) -> dict[str, Any]:
+    """'changed': how far the result is from the original where they show, both ways, as mesh comparison does it
+    (Metro, Netfabb's and Magics' part compare; the F-score of shape reconstruction): the share of the original's
+    surface seen from outside (`orig_seen`) that is no longer on the result's surface, lost or buried inside it (a wrap
+    that fills between a plant's leaves buries half of them), plus the share of the result's surface seen from outside
+    that is off the original and isn't thickness (a hole capped flat, a blob, the wrap's teeth). "Off" is farther than
+    a print layer (Printer.print_layer_mm): a change smaller hides in the layer lines. Thickness is result surface
+    that wraps the original as an offset of it: the nearest original point is inside the result, or on it, and
+    straight in from the result's surface (along its normal) the original is no farther than that nearest point, give
+    or take a layer. The back given to a sheet and the wrap's coat are offsets; teeth spanning a crease are not: the
+    original is near them sideways, deep straight in (trellis2_bust: wrap 1.3 % changed without that test, 5.8 % with
+    it, against the repair's 0.1 %; the teeth were plain to see). Before 2026-11-15 it was measured one way, at a
+    fixed 0.3 mm: the backs of potted_plant_02's leaves counted 25 % and the wrap's buried leaves nothing, and two
+    rules picked round it (restored over wrap; 10 % more volume wins). Surface moved out of sight (the walls of a
+    filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more than lost_mm from the result
+    and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
     import igl
+    import igl.embree
     import numpy as np
     import trimesh
 
+    tol = printer.print_layer_mm
     V = np.asarray(m.vertices, np.float64)
     F = np.asarray(m.faces, np.int64)
     pts, fi = trimesh.sample.sample_surface(m, SAMPLES, seed=SEED)
     if orig_tree is None:
         orig_tree = _tree(orig)
-    moved = np.sqrt(orig_tree.squared_distance(np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64), pts)[0]) > 0.3
+    Vo, Fo = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)
+    d2, _, near = orig_tree.squared_distance(Vo, Fo, pts)
+    d = np.sqrt(d2)
+    moved = d > tol
     out = 1.0 if float(m.volume) >= 0 else -1.0  # normals are fixed on the winner only: aim the rays outward here
-    seen = _seen(V, F, pts, out * np.asarray(m.face_normals, np.float64)[fi])
+    normals = out * np.asarray(m.face_normals, np.float64)[fi]
+    seen = _seen(V, F, pts, normals)
     watertight = bool(m.is_watertight)
     gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts, V, F)[0])
-    far = gone > 0.3
+    far = gone > tol  # nearer than that it is kept, so it doesn't matter which side it is on
     outside = np.ones(len(orig_pts), dtype=bool)
     if far.any():
         outside[far] = _winding(V, F, orig_pts[far], watertight) < 0.5
     lost = gone * outside
+    kept_off = gone > tol
+    if orig_seen is not None:
+        kept_off = kept_off[orig_seen]
+    added = moved & seen
+    if added.any():
+        i = np.flatnonzero(added)
+        on = np.sqrt(igl.point_mesh_squared_distance(near[i], V, F)[0]) < tol
+        wraps = on | (_winding(V, F, near[i], watertight) >= 0.5)
+        # straight in: libigl casts both ways along the line and keeps the nearer hit, as a face's normal may be off
+        hit = igl.embree.line_mesh_intersection(np.ascontiguousarray(pts[i]), np.ascontiguousarray(-normals[i]), Vo, Fo)
+        depth = np.full(len(i), np.inf)
+        h = hit[:, 0] >= 0
+        if h.any():
+            f, b = hit[h, 0].astype(np.int64), hit[h, 1:]
+            at = Vo[Fo[f, 0]] * (1 - b[:, :1] - b[:, 1:2]) + Vo[Fo[f, 1]] * b[:, :1] + Vo[Fo[f, 2]] * b[:, 1:2]
+            depth[h] = np.linalg.norm(at - pts[i][h], axis=1)
+        added[i] = ~(wraps & (depth - d[i] <= tol))
     wall = _thickness(m)
     parts = _pieces(m)
     volume = float(m.volume)
@@ -1196,7 +1248,7 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None) -> dict[str, A
         "volumeCm3": round(volume / 1000, 2) if watertight else None,
         "wallMm": None if wall is None else round(wall, 2),
         "faces": int(len(m.faces)),
-        "changedShare": round(float(moved[seen].mean()) if seen.any() else 0.0, 4),
+        "changedShare": round((float(kept_off.mean()) if len(kept_off) else 0.0) + float(added.mean()), 4),
         "changedHiddenShare": round(float((moved & ~seen).mean()), 4),
         "lostShare": round(float((lost > printer.lost_mm).mean()), 5),
         "lostMaxMm": round(float(lost.max()), 2),
@@ -1214,11 +1266,19 @@ def _good(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _settled(cands: list[dict[str, Any]]) -> bool:
-    """One candidate already can't be beaten: kept everything, one part, solid, changed nearly nothing seen."""
-    return any(c["parts"] == 1 and c["changedShare"] <= SETTLED_CHANGE for c in _good(cands))
+    """One candidate already can't be beaten: kept everything, one part, solid, and nothing seen changed by a layer.
+    The pick takes the first of equals, so what is built after it can't change the pick: skipping it changes
+    nothing. Until 2026-11-15 "nearly nothing" (0.1 %) passed too: chess_set and garden_gnome then left out the wrap.
+    It lost there anyway (0.19 % against 1.3 %), but that was luck, not proof."""
+    return any(c["parts"] == 1 and c["changedShare"] == 0 for c in _good(cands))
 
 
-def _pick(cands: list[dict[str, Any]]):
+def _fills(c: dict[str, Any]) -> bool:
+    """It filled the chamber behind the skin: solidify and filled are fused with its block, by construction."""
+    return "chamberCm3" in c
+
+
+def _pick(cands: list[dict[str, Any]], printer: Printer):
     closed = [c for c in cands if c["watertight"] and (c["volumeCm3"] or 0) > 0]
     if not closed:
         return None, "no candidate came out closed"
@@ -1230,25 +1290,15 @@ def _pick(cands: list[dict[str, Any]]):
         note = f"every candidate lost some surface; kept the one that lost least ({least:.2%})"
     if any(not _paper(c) for c in ok):  # a paper skin prints as paper: it loses to any real solid
         ok = [c for c in ok if not _paper(c)]
-    ok.sort(key=lambda c: c["changedShare"])
-    best = ok[0]
-    for c in ok[1:]:
-        if c["volumeCm3"] > best["volumeCm3"] * MORE_SOLID:
-            best = c
-    # The wrap remakes every face (teeth on every edge); the restored keeps the original's own faces and gives
-    # back what the repair lost as it was modelled. Their changed shares differ by the joins' slivers, not by look.
-    own = [c for c in ok if c["method"] == "restored"]
-    if best["method"] == "wrap" and own:
-        best = own[0]
-    # Filled is solidify on the original's own faces: the same chamber filled, without the wrap's teeth and coat. The
-    # coat is all the volume and wall it lacks (trellis2_crown: 8.3 cm³ and 0.33 mm against 10.9 and 0.47), so it
-    # isn't held to them and stays even where only the coat lifted solidify over the paper line; it only must not
-    # lose more, nor change clearly more where it shows (a repair that capped a hole flat).
-    if best["method"] in ("solidify", "wrap"):
-        own = [c for c in closed if c["method"] == "filled" and c["lostShare"] <= max(best["lostShare"], LOST_MAX_SHARE)
-               and c["changedShare"] <= best["changedShare"] + SETTLED_CHANGE]
-        if own:
-            best = own[0]
+    # the chamber is known only where a fill was built (paper skins, or when nothing else came out solid); every
+    # other candidate follows the skin and leaves it hollow. On resin that holds liquid resin (see Printer):
+    # Chandelier_01 wrapped kept its vase hollow behind a 0.5-1 mm slit, filling it changed 3 % more of its look.
+    if printer.hollow_traps and any(_fills(c) for c in ok):
+        ok = [c for c in ok if _fills(c)]
+    # first of equals: the order they were built in. Until 2026-11-15 a "filled" candidate also replaced solidify or
+    # wrap when it changed at most 0.1 % more: the one-way measure counted the wrap's coat as kept. Measured both ways
+    # it wins on its own where it should (resin trellis2_bust, trellis2_crown, trellis2_statue), so the rule went.
+    best = min(ok, key=lambda c: c["changedShare"])
     return best, note
 
 
@@ -1266,7 +1316,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     t0 = time.time()
     orig = _weld(trimesh.Trimesh(np.asarray(mesh.vertices, np.float64) * mm_per_unit, np.asarray(mesh.faces), process=False))
     came_closed = bool(orig.is_watertight)
-    orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+    orig_pts, ofi = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+    orig_seen = _orig_seen(orig, orig_pts, ofi)
     _lean(orig)  # kept to the end for measuring, which needs only its vertices and faces
     orig_tree = _tree(orig)
     shared: dict[str, Any] = {"printer": printer}
@@ -1314,7 +1365,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             log(f"  {name} failed: {exc} (at {where})")
             return
         t2 = time.time()
-        c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree), **extra, "secs": round(time.time() - t1, 1)}
+        c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree, orig_seen), **extra, "secs": round(time.time() - t1, 1)}
         _tick(shared, "measure", t2)
         c["stages"] = shared.pop("stages")
         log(f"  {name}: {c}")
@@ -1335,7 +1386,8 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             shared.pop("block", None)
             t1 = time.time()
             orig = _weld(trimesh.Trimesh(np.asarray(full.vertices, np.float64) * mm_per_unit, np.asarray(full.faces), process=False))
-            orig_pts, _ = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+            orig_pts, ofi = trimesh.sample.sample_surface(orig, SAMPLES, seed=SEED)
+            orig_seen = _orig_seen(orig, orig_pts, ofi)
             _lean(orig)
             orig_tree = _tree(orig)
             cands[:] = [c for c in cands if c["method"] != "repair"]
@@ -1362,14 +1414,14 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
 
     if "shellJob" in shared:  # neither wrap nor solidify was built
         shared.pop("shellJob").cancel()
-    best, note = _pick(cands)
+    best, note = _pick(cands, printer)
     # Only where the wrap is winning: a model the repair already wins stays exactly as it was.
     if best is not None and best["method"] == "wrap" and not paper:
         got = next((c for c in cands if c["method"] == "repair"), None)
         if got is not None:
             shared["repairMesh"] = got["_mesh"]
             build("restored", _restored)
-            best, note = _pick(cands)
+            best, note = _pick(cands, printer)
     if best is None:
         raise RuntimeError(note)
     out = best["_mesh"]
@@ -1387,7 +1439,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         except Exception as exc:  # the model stays as picked; its thin spots are still reported
             log(f" thicken failed: {exc}")
         if thickened:  # measured against the original like the candidates, so the report says what it cost
-            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer, orig_tree).items() if not k.startswith("_")})
+            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer, orig_tree, orig_seen).items() if not k.startswith("_")})
             log(f" thickened: {thickened}")
         stages["thicken"] = round(time.time() - t1, 1)
     out.apply_scale(1.0 / mm_per_unit)
