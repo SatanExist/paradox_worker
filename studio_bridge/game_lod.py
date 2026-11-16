@@ -106,14 +106,20 @@ def add_lods(in_path: Path, out_path: Path, params: dict[str, Any], report: dict
             steps.append(f"LOD levels made but not packed: {done.stderr.strip()[-200:]}")
             after["lod"] = {"levels": levels, "tried": tried}
             return
-        nodes = json.loads([line for line in done.stdout.splitlines() if line.startswith("{")][-1])["nodes"]
+        info = json.loads([line for line in done.stdout.splitlines() if line.startswith("{")][-1])
         report.setdefault("extraFiles", {})["lods.glb"] = str(packed)
-        after["lod"] = {"levels": levels, "tried": tried, "file": "lods.glb", "nodes": nodes,
+        after["lod"] = {"levels": levels, "tried": tried, "file": "lods.glb", "nodes": info["nodes"],
                         "fileMb": round(packed.stat().st_size / 1048576, 2)}
         chain = " -> ".join(str(level["triangles"]) for level in levels)
         switch = ", ".join(f"LOD{level['level']} under {level['maxScreenPx']} px" for level in levels[1:])
+        rig = ""
+        if "skeleton" in info:  # a rigged model: the levels share LOD0's skeleton when their bones match it
+            own = info["skeleton"]["own"]
+            after["lod"]["sharedSkeleton"] = not own
+            rig = ("; all levels move with one skeleton" if not own else
+                   "; levels " + ", ".join(f"LOD{k}" for k in own) + " keep their own skeleton (their bones don't match LOD0's)")
         steps.append(f"LOD levels {chain} triangles, each baked on its own smaller textures; switch when the model is "
-                     f"this big across on screen: {switch}" + ("" if len(levels) > LEVELS else f" ({why})"))
+                     f"this big across on screen: {switch}" + rig + ("" if len(levels) > LEVELS else f" ({why})"))
     finally:
         for path, _ in files[1:]:
             path.unlink(missing_ok=True)

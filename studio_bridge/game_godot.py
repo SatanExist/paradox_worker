@@ -13,6 +13,12 @@ With collision pieces the scene gets them as a StaticBody3D; with moving: true t
 (moving_body.gd): the prop falls and can be pushed, its centre of mass set from the pieces' volumes, its size set by
 Size (Godot Physics resets a moving body's own scale). Checked on Godot 4.7 (2026-11-12), Godot Physics and Jolt:
 drill, mech and skeleton at Size 1 and 2 fall on their side, rest, move when pushed, the LOD distances follow Size.
+
+A rigged model (auto-rig): lods.glb already has every level on LOD0's one skeleton (lod.mjs). Godot then puts all
+the levels' meshes under that skeleton, so each mesh carries its level in its name and lod_switch.gd reads it there
+(a mesh's own name first, else its nearest parent's: plain models switch as before). With standard
+human bone names model.glb.import maps it to Godot's humanoid profile (Bone Map written inline, so the folder can
+move), so ready-made humanoid animations play on it.
 """
 from __future__ import annotations
 
@@ -28,7 +34,7 @@ FOLDER = "polylab_model"
 
 LOD_SWITCH_GD = '''@tool
 extends Node3D
-## PolyLab LOD switch. The model holds its levels as nodes named <name>_LOD0, <name>_LOD1, ...
+## PolyLab LOD switch. The model holds its levels as nodes named <name>_LOD0, <name>_LOD1, ... (or meshes so named)
 ## Each level is drawn only at the distances it was made for: LOD k (k >= 1) while the model is no more than
 ## lod_screen_px[k - 1] pixels across on screen (its diagonal, on a screen screen_height pixels tall, seen
 ## through a camera with a vertical field of view of camera_fov degrees). Godot's visibility ranges do the switching.
@@ -70,10 +76,11 @@ func _notification(what: int) -> void:
 		apply()
 
 
-## The level nodes, LOD0 first.
+## Each level's meshes, LOD0 first. A mesh belongs to the level in its own name (<name>_LOD<k>), else in its
+## nearest parent's: a rigged model's levels all sit under LOD0's skeleton, each mesh named by its level.
 func levels() -> Array:
 	var found := {}
-	_find(self, found)
+	_find(self, -1, found)
 	var out := []
 	for k in range(found.size()):
 		if not found.has(k):
@@ -82,21 +89,17 @@ func levels() -> Array:
 	return out
 
 
-func _find(n: Node, found: Dictionary) -> void:
+func _find(n: Node, level: int, found: Dictionary) -> void:
 	var name := String(n.name)
 	var at := name.rfind("_LOD")
 	if at >= 0 and name.substr(at + 4).is_valid_int():
-		found[int(name.substr(at + 4))] = n
-		return
+		level = int(name.substr(at + 4))
+	if n is GeometryInstance3D and level >= 0:
+		if not found.has(level):
+			found[level] = []
+		found[level].append(n)
 	for c in n.get_children():
-		_find(c, found)
-
-
-func _meshes(n: Node, out: Array) -> void:
-	if n is GeometryInstance3D:
-		out.append(n)
-	for c in n.get_children():
-		_meshes(c, out)
+		_find(c, level, found)
 
 
 ## Distance from the camera at which a model with this diagonal is `px` PolyLab pixels across.
@@ -112,10 +115,8 @@ func diagonal() -> float:
 		return 0.0
 	var box := AABB()
 	var first := true
-	var meshes := []
-	_meshes(lv[0], meshes)
 	var to_self := global_transform.affine_inverse()
-	for m in meshes:
+	for m in lv[0]:
 		var b: AABB = (to_self * m.global_transform) * m.get_aabb()
 		box = b if first else box.merge(b)
 		first = false
@@ -134,9 +135,7 @@ func apply() -> void:
 	for k in range(lv.size()):
 		var begin := 0.0 if k == 0 or k - 1 >= lod_screen_px.size() else distance_for(lod_screen_px[k - 1], d)
 		var end := 0.0 if k + 1 >= lv.size() or k >= lod_screen_px.size() else distance_for(lod_screen_px[k], d)
-		var meshes := []
-		_meshes(lv[k], meshes)
-		for m in meshes:
+		for m in lv[k]:
 			m.visibility_range_begin = begin
 			m.visibility_range_begin_margin = begin * margin
 			m.visibility_range_end = end
@@ -265,6 +264,60 @@ SCALING_MOVING = ("To make the prop bigger or smaller, set Size on the root and 
                   "moving body's Scale back to 1 when the game runs); the switch distances follow the size.")
 
 
+README_RIG = '''  {n}. Animation: the model has a skeleton ({bones} bones){levels}.
+'''
+README_HUMANOID = '''  {n}. Animation: the model has a human skeleton with standard bone names ({bones} bones), and model.glb.import
+     maps them to Godot's humanoid profile (Retarget > Bone Map), so ready-made humanoid animations play on it:
+     LOD0's skeleton becomes %GeneralSkeleton, the name Godot's retargeted animations look for. Import an animation
+     pack with the same humanoid Bone Map, then add its AnimationLibrary to an AnimationPlayer under the model.
+     {levels_cap}. Cloth such as capes follows the legs and arms; give it spring bones or cloth in Godot if it
+     needs to swing.
+'''
+
+# Our auto-rig's standard bone names (Mixamo style) -> Godot's SkeletonProfileHumanoid.
+HUMANOID_BONES = {"Hips": "Hips", "Spine": "Spine", "Spine1": "Chest", "Spine2": "UpperChest", "Neck": "Neck", "Head": "Head"}
+for _s in ("Left", "Right"):
+    HUMANOID_BONES.update({_s + "Shoulder": _s + "Shoulder", _s + "Arm": _s + "UpperArm", _s + "ForeArm": _s + "LowerArm",
+                           _s + "Hand": _s + "Hand", _s + "UpLeg": _s + "UpperLeg", _s + "Leg": _s + "LowerLeg",
+                           _s + "Foot": _s + "Foot", _s + "ToeBase": _s + "Toes"})
+    for _i, _part in enumerate(("Metacarpal", "Proximal", "Distal"), 1):
+        HUMANOID_BONES[f"{_s}HandThumb{_i}"] = f"{_s}Thumb{_part}"
+    for _f, _g in (("Index", "Index"), ("Middle", "Middle"), ("Ring", "Ring"), ("Pinky", "Little")):
+        for _i, _part in enumerate(("Proximal", "Intermediate", "Distal"), 1):
+            HUMANOID_BONES[f"{_s}Hand{_f}{_i}"] = f"{_s}{_g}{_part}"
+HUMANOID_CORE = {"Hips", "Spine", "Head", "LeftArm", "LeftForeArm", "LeftHand", "RightArm", "RightForeArm", "RightHand",
+                 "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"}
+
+
+def _rigged(glb: bytes) -> tuple[str, list[str], bool] | None:
+    """For a rigged lods.glb: LOD0's skeleton path in Godot, its bone names, and whether every level is on that one
+    skeleton (lod.mjs shares it when the levels' bones match). None when the model has no skeleton."""
+    import json
+    import struct
+
+    n = struct.unpack("<I", glb[12:16])[0]
+    j = json.loads(glb[20:20 + n])
+    if not j.get("skins"):
+        return None
+    nodes = j["nodes"]
+    parent = {c: i for i, nd in enumerate(nodes) for c in nd.get("children", [])}
+    joints = j["skins"][0]["joints"]  # LOD0's: the file starts from LOD0
+    chain, i = [], parent.get(joints[0])
+    while i is not None:  # the armature = the first bone's parent (Godot puts Skeleton3D under it)
+        chain.append(nodes[i].get("name", ""))
+        i = parent.get(i)
+    one = all(s["joints"] == joints for s in j["skins"])
+    return "/".join(reversed(chain)) + "/Skeleton3D", [nodes[i].get("name", "") for i in joints], one
+
+
+def _import_file(path: str) -> str:
+    """model.glb.import: Godot's humanoid Bone Map on the skeleton (written inline, so the folder can move)."""
+    pairs = ",".join(f'"bone_map/{g}":&"{ours}"' for ours, g in HUMANOID_BONES.items())
+    bone_map = f'Object(BoneMap,"profile":Object(SkeletonProfileHumanoid,"script":null),{pairs},"script":null)'
+    return ('[remap]\n\nimporter="scene"\nimporter_version=1\ntype="PackedScene"\n\n[params]\n\n'
+            '_subresources={\n"nodes": {\n"PATH:' + path + '": {\n"retarget/bone_map": ' + bone_map + "\n}\n}\n}\n")
+
+
 def _entry(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(f"{FOLDER}/{name}", date_time=(1980, 1, 1, 0, 0, 0))
     info.external_attr = 0o644 << 16
@@ -290,18 +343,29 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
     os.close(fd)  # written by name; an open handle would lock it on Windows
     packed = Path(name)
     try:
+        glb = Path(lods).read_bytes()
+        rig = _rigged(glb)
+        humanoid = bool(rig) and HUMANOID_CORE <= set(rig[1])
         with zipfile.ZipFile(packed, "w") as z:
             body = moving and bool(pieces)
             collision = (README_MOVING if body else README_COLLISION).format(count=len(pieces)) if pieces else ""
+            if rig:
+                one = "All levels are on this one skeleton, so one animation moves them all" if rig[2] else (
+                    "Only LOD0 is on this skeleton: the other levels' bones didn't match it, so they keep their own")
+                collision += (README_HUMANOID if humanoid else README_RIG).format(
+                    n=5 if pieces else 4, bones=len(rig[1]), levels="; " + one[0].lower() + one[1:], levels_cap=one)
             readme = README.format(count=len(levels), chain=chain, switch=switch, collision=collision,
-                                   more="  moving_body.gd the moving body, with Size\n" if body else "",
+                                   more=("  moving_body.gd the moving body, with Size\n" if body else "")
+                                   + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else ""),
                                    fov_node='"levels" node' if body else "scene's root node",
                                    scaling=SCALING_MOVING if body else SCALING)
             z.writestr(_entry("README.txt"), readme, zipfile.ZIP_DEFLATED)
             z.writestr(_entry("lod_switch.gd"), LOD_SWITCH_GD, zipfile.ZIP_DEFLATED)
             if body:
                 z.writestr(_entry("moving_body.gd"), MOVING_BODY_GD, zipfile.ZIP_DEFLATED)
-            z.writestr(_entry("model.glb"), Path(lods).read_bytes(), zipfile.ZIP_STORED)  # textures inside are already packed
+            if humanoid:
+                z.writestr(_entry("model.glb.import"), _import_file(rig[0]), zipfile.ZIP_DEFLATED)
+            z.writestr(_entry("model.glb"), glb, zipfile.ZIP_STORED)  # textures inside are already packed
             z.writestr(_entry("model.tscn"), _scene(px, pieces, moving), zipfile.ZIP_DEFLATED)
     except Exception as exc:  # a full disk or the like: the job's other files are still good
         packed.unlink(missing_ok=True)
@@ -312,7 +376,10 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                       "collisionPieces": len(pieces or []), "fileMb": round(packed.stat().st_size / 1048576, 2)}
     if moving and pieces:
         after["godot"]["body"] = "RigidBody3D"
+    if rig:
+        after["godot"]["skeleton"] = "humanoid" if humanoid else "own"
     steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself"
                  + (f", with {len(pieces)} collision pieces" if pieces else "")
+                 + ("; its skeleton is mapped to Godot's humanoid profile for ready-made animations" if humanoid else "")
                  + (" (a RigidBody3D: it falls and can be pushed)" if moving and pieces else "")
                  + ("; not a moving body: that needs the collision pieces (collision: true)" if moving and not pieces else ""))
