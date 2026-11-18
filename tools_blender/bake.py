@@ -465,6 +465,148 @@ if TILT:
     a[:, :3] = (v + 1) / 2
     img.pixels.foreach_set(a.ravel())
 
+# Height (parallax) for game engines: how far the heavy surface stands out from the light one, along the light one's
+# normal, as bakers measure it (xNormal, Substance's "height from mesh"). Blender bakes no height from another object,
+# so it is put together from what it bakes: where the rays that drew the normal map met the heavy surface (POSITION,
+# selected to active: the same reach, so height and normal map agree), and the light surface's own point and smooth
+# normal under each texel. Float images throughout; written as a 16-bit grey PNG (glTF has no place for it: the engine
+# package takes it), white the light surface, black the deepest point (`low`, in the JSON). Only with "height": the other maps stay as they were.
+HEIGHT = bool(PARAMS.get("height"))
+height = None
+if HEIGHT:
+    t = time.time()
+
+    def float_image(name, size):
+        img = bpy.data.images.new(name, size, size, alpha=False, float_buffer=True)
+        img.colorspace_settings.name = "Non-Color"
+        return img
+
+    def run_own(kind, img):
+        """Bake the light model alone (no rays to the heavy one)."""
+        slot.image = img
+        bake.use_selected_to_active = False
+        try:
+            bpy.ops.object.select_all(action="DESELECT")
+            for i, o in enumerate(low):
+                o.select_set(True)
+                bpy.context.view_layer.objects.active = o
+                bpy.ops.object.bake(type=kind, use_clear=(i == 0), margin=MARGIN)
+                o.select_set(False)
+        finally:
+            bake.use_selected_to_active = True
+
+    scene.cycles.samples = NORMAL_SAMPLES
+    hit = float_image("hit", BAKE)
+    run("POSITION", hit)
+    met = np.abs(rgba(hit)[..., :3]).sum(-1) > 0  # a miss stays cleared to black
+    if not met.all():  # once more with longer rays, for the texels the first ones missed (as the other maps)
+        longer = float_image("hit_longer", BAKE)
+        set_reach(LONG_REACH * REACH)
+        try:
+            run("POSITION", longer)
+        finally:
+            set_reach(REACH)
+        a, b = rgba(hit), rgba(longer)
+        a[~met] = b[~met]
+        hit.pixels.foreach_set(a.ravel())
+        bpy.data.images.remove(longer)
+    own = float_image("own", BAKE)
+    run_own("POSITION", own)
+    # the light surface's smooth normal, world space, as light it gives off (0..1)
+    tree = target.node_tree
+    out_node = next(n for n in tree.nodes if n.type == "OUTPUT_MATERIAL")
+    was = [link.from_socket for link in out_node.inputs["Surface"].links]
+    geo = tree.nodes.new("ShaderNodeNewGeometry")
+    half = tree.nodes.new("ShaderNodeVectorMath")
+    half.operation = "MULTIPLY_ADD"
+    half.inputs[1].default_value = (0.5, 0.5, 0.5)
+    half.inputs[2].default_value = (0.5, 0.5, 0.5)
+    glow = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(geo.outputs["Normal"], half.inputs[0])
+    tree.links.new(half.outputs["Vector"], glow.inputs["Color"])
+    tree.links.new(glow.outputs["Emission"], out_node.inputs["Surface"])
+    up = float_image("up", BAKE)
+    try:
+        run_own("EMIT", up)
+    finally:
+        for n in (geo, half, glow):
+            tree.nodes.remove(n)
+        for s in was:
+            tree.links.new(s, out_node.inputs["Surface"])
+    scene.cycles.samples = SAMPLES
+    H, P, N = rgba(hit)[..., :3], rgba(own)[..., :3], rgba(up)[..., :3] * 2 - 1
+    if PARAMS.get("heightDebug"):
+        np.savez_compressed(os.path.join(OUT, "height_debug.npz"), H=H, P=P, N=N, cov=covered(BAKE), extent=extent)
+    h = ((H - P) * N).sum(-1)
+    # A ray starts REACH out and stops REACH in (LONG_REACH times that, taken again): a height past that is no hit of
+    # this texel's ray but two bakes that took the texel from different faces, at the islands' edges (0.6% of the Rodin
+    # computer's texels, 1 texel from the edge at the median, up to 2.3 m off). Those, and misses, take their
+    # neighbours' height, as the bake's margin fills texels past the islands' edges.
+    ok = (np.abs(H).sum(-1) > 0) & (np.abs(h) <= LONG_REACH * REACH * extent)
+    h[~ok] = 0.0
+    for _ in range(MARGIN):
+        if ok.all():
+            break
+        total = np.zeros_like(h)
+        count = np.zeros_like(h)
+        for axis, step in ((0, 1), (0, -1), (1, 1), (1, -1)):
+            total += np.roll(np.where(ok, h, 0.0), step, axis)
+            count += np.roll(ok, step, axis)
+        grow = ~ok & (count > 0)
+        h[grow] = total[grow] / count[grow]
+        ok |= grow
+    met = ok
+    inside = covered(BAKE) & ok
+    lo, hi = (float(h[inside].min()), float(h[inside].max())) if inside.any() else (0.0, 0.0)
+    for img in (hit, own, up):
+        bpy.data.images.remove(img)
+    # texture density: UV units per world unit, one for the whole model (average_islands_scale made it even)
+    uv_area = world_area = 0.0
+    for o in low:
+        m = o.data
+        co = np.empty(len(m.vertices) * 3)
+        m.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3) @ np.array(o.matrix_world)[:3, :3].T
+        lv = np.empty(len(m.loops), dtype=np.int64)
+        m.loops.foreach_get("vertex_index", lv)
+        uv = np.empty(len(m.loops) * 2)
+        m.uv_layers.active.data.foreach_get("uv", uv)
+        tri, tuv = co[lv].reshape(-1, 3, 3), uv.reshape(-1, 3, 2)
+        world_area += float(np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum()) / 2
+        e1, e2 = tuv[:, 1] - tuv[:, 0], tuv[:, 2] - tuv[:, 0]
+        uv_area += float(np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]).sum()) / 2
+    # White is the light surface itself, black the deepest point under it. Parallax (Godot's, Unreal's bump offset into
+    # the surface) sinks the texture from white down: with white at the highest point instead, every flat part read as
+    # sunk 28 mm on the Rodin computer and slid sideways, each island its own way, tearing the seams. Where the heavy
+    # surface stands out of the light one, parallax has nothing to show (it carves, it can't raise): white there.
+    if lo < -1e-6 * extent:
+        g = (1 - h / lo).clip(0, 1).astype(np.float32)
+        img = float_image("height", BAKE)
+        img.pixels.foreach_set(np.repeat(g[..., None], 4, -1).ravel())
+        if BAKE != SIZE:
+            img.scale(SIZE, SIZE)
+        height = {"low": lo, "high": hi, "uvPerUnit": math.sqrt(uv_area / world_area) if world_area else 0.0,
+                  "missedTexels": int((covered(BAKE) & ~met).sum()), "image": img}
+    timings["height"] = round(time.time() - t, 1)
+
+
+def png16(path, grey):
+    """A 16-bit grey PNG of grey (0..1, rows from the bottom as Blender keeps them): written here, so no colour
+    management touches the values."""
+    import struct
+    import zlib
+
+    rows = np.flipud((grey.clip(0, 1) * 65535 + 0.5).astype(">u2"))
+    raw = b"".join(b"\x00" + r.tobytes() for r in rows)
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    head = struct.pack(">IIBBBBB", grey.shape[1], grey.shape[0], 16, 0, 0, 0, 0)
+    with open(path, "wb") as fh:
+        fh.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
 # glTF keeps roughness in G and metalness in B of one texture.
 for img in maps.values():
     if img.size[0] != SIZE:
@@ -494,6 +636,8 @@ for name in ("normal",) if NORMAL_ONLY else ("baseColor", "metallicRoughness", "
     img.filepath_raw = os.path.join(OUT, name + ".png")
     img.file_format = "PNG"
     img.save()
+if height:
+    png16(os.path.join(OUT, "height.png"), rgba(height.pop("image"))[..., 0])
 meshes = []
 corners = []
 for o in low:
@@ -514,4 +658,4 @@ for o in low:
 np.vstack(corners).tofile(os.path.join(OUT, "corners.f32"))
 with open(os.path.join(OUT, "corners.json"), "w") as fh:
     json.dump(meshes, fh)
-print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "missedTexels": [missed_first, missed_left], "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings}}))
+print(json.dumps({"bake": {"size": SIZE, "normalOnly": NORMAL_ONLY, "supersample": SUPER, "samples": SAMPLES, "reachPct": REACH * 100, "overlappedFaces": overlapped, "missedTexels": [missed_first, missed_left], "steepPct": round(100 * float(steep.mean()), 3) if steep.size else 0.0, "seconds": round(time.time() - t0, 1), "passes": timings, **({"height": height} if height else {})}}))

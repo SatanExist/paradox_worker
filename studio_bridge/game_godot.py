@@ -177,6 +177,73 @@ func apply() -> void:
 	center_of_mass = mass_centre * size
 """
 
+PARALLAX_GD = '''@tool
+extends Node
+## PolyLab height map: parallax on LOD0, so grooves, vents and seams the light model has no triangles for look deep
+## up close. The height map (white: the model's surface, black: the deepest groove) was baked from the original, and
+## Depth Scale is that depth as Godot's height scale wants it. Far levels are too small on screen for it to show.
+
+@export var height_map: Texture2D:
+	set(v):
+		height_map = v
+		apply()
+## Godot's Height Scale for this model: its deepest groove, measured by PolyLab. Larger exaggerates, 0 is flat.
+@export var depth_scale := 1.0:
+	set(v):
+		depth_scale = v
+		apply()
+@export var enabled := true:
+	set(v):
+		enabled = v
+		apply()
+
+
+func _ready() -> void:
+	apply()
+
+
+func apply() -> void:
+	if not is_inside_tree():
+		return
+	for m in _lod0(get_parent(), false, []):
+		for s in m.mesh.get_surface_count():
+			var base := m.mesh.surface_get_material(s) as BaseMaterial3D
+			if base == null:
+				continue
+			if not enabled or height_map == null:
+				m.set_surface_override_material(s, null)
+				continue
+			var mat: BaseMaterial3D = base.duplicate()
+			mat.heightmap_enabled = true
+			mat.heightmap_texture = height_map
+			mat.heightmap_scale = depth_scale
+			mat.heightmap_deep_parallax = true
+			m.set_surface_override_material(s, mat)
+
+
+## LOD0's meshes: named <name>_LOD0 themselves or under a node so named (lod_switch.gd reads the levels the same way).
+func _lod0(n: Node, inside: bool, out: Array) -> Array:
+	var name := String(n.name)
+	var at := name.rfind("_LOD")
+	if at >= 0 and name.substr(at + 4).is_valid_int():
+		inside = int(name.substr(at + 4)) == 0
+	if inside and n is MeshInstance3D and n.mesh:
+		out.append(n)
+	for c in n.get_children():
+		_lod0(c, inside, out)
+	return out
+'''
+
+# Godot compresses a texture a 3D material uses (VRAM, 4x4 blocks): on a height map the steps would show as parallax
+# terraces. Kept lossless, with mipmaps.
+HEIGHT_IMPORT = ('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n'
+                 'compress/mode=0\ndetect_3d/compress_to=0\nmipmaps/generate=true\n')
+
+PARALLAX_NODE = ('\n[node name="parallax" type="Node" parent="."]\nscript = ExtResource("4_par")\n'
+                 'height_map = ExtResource("5_height")\ndepth_scale = {scale:g}\n')
+PARALLAX_RES = ('[ext_resource type="Script" path="parallax.gd" id="4_par"]\n'
+                '[ext_resource type="Texture2D" path="height.png" id="5_height"]\n')
+
 SCENE_TSCN = """[gd_scene load_steps={steps} format=3]
 
 [ext_resource type="Script" path="lod_switch.gd" id="1_lod"]
@@ -190,10 +257,23 @@ SCENE_TSCN = """[gd_scene load_steps={steps} format=3]
 LOD_PROPS = 'script = ExtResource("1_lod")\nlod_screen_px = PackedFloat32Array({px})\n'
 
 
-def _scene(px: list[float], pieces: list | None, moving: bool = False) -> str:
+def _scene(px: list[float], pieces: list | None, moving: bool = False, depth: float | None = None) -> str:
     """model.tscn; with collision pieces, a StaticBody3D "collision" holding one convex shape per piece. moving: the
     root is a RigidBody3D instead (moving_body.gd, with Size), the pieces right under it and the LOD switch on
-    "levels", so the model falls and can be pushed."""
+    "levels", so the model falls and can be pushed. depth: with a height map, a "parallax" node (parallax.gd) with
+    this Height Scale."""
+    scene = _scene_body(px, pieces, moving)
+    if depth is None:
+        return scene
+    head, _, rest = scene.partition("\n")
+    steps = int(head.split("load_steps=")[1].split()[0])
+    head = head.replace(f"load_steps={steps}", f"load_steps={steps + 2}")
+    at = rest.index("[ext_resource type=\"PackedScene\"")
+    rest = rest[:at] + PARALLAX_RES + rest[at:]
+    return head + "\n" + rest + PARALLAX_NODE.format(scale=depth)
+
+
+def _scene_body(px: list[float], pieces: list | None, moving: bool = False) -> str:
     pieces = pieces or []
     moving = moving and bool(pieces)
     # A moving body needs its centre of mass. Godot Physics takes each shape's node origin for the shape's centre, so
@@ -259,6 +339,9 @@ README_MOVING = '''  4. Physics: the scene's root is a RigidBody3D with {count} 
      rolls and can be pushed. Its weight is Godot's default 1 kg: set Mass on the root to what the prop weighs.
      The centre of mass is worked out from the pieces.
 '''
+README_PARALLAX = ('  parallax.gd    parallax on LOD0 from height.png, so grooves look deep up close (Height Scale\n'
+                   '                 measured from the original; set Enabled off on the "parallax" node to drop it)\n'
+                   '  height.png     the height map: white the surface, black the deepest groove (16-bit)\n')
 SCALING = "Scaling the scene is fine: the switch distances follow its size."
 SCALING_MOVING = ("To make the prop bigger or smaller, set Size on the root and leave its Scale at 1 (Godot Physics sets a\n"
                   "moving body's Scale back to 1 when the game runs); the switch distances follow the size.")
@@ -332,8 +415,11 @@ def _entry(name: str) -> zipfile.ZipInfo:
 def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | None = None, moving: bool = False) -> None:
     """Adds extraFiles["godot.zip"] and after.godot when the job made LOD levels; otherwise a step says why not.
     pieces: the collision pieces (game_collision), already where the model is. moving: a prop that falls and can be
-    pushed (the root a RigidBody3D); it needs the pieces. Never fails the job."""
+    pushed (the root a RigidBody3D); it needs the pieces. A height map (extraFiles["height.png"], after.height) goes in
+    with parallax.gd, which turns parallax on for LOD0. Never fails the job."""
     after, steps = report["after"], report["steps"]
+    height = (report.get("extraFiles") or {}).get("height.png")
+    depth = (after.get("height") or {}).get("godotScale") if height else None
     lods = (report.get("extraFiles") or {}).get("lods.glb")
     levels = (after.get("lod") or {}).get("levels") or []
     if not lods or len(levels) < 2:
@@ -361,7 +447,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                     n=5 if pieces else 4, bones=len(rig[1]), levels="; " + one[0].lower() + one[1:], levels_cap=one)
             readme = README.format(count=len(levels), chain=chain, switch=switch, collision=collision,
                                    more=("  moving_body.gd the moving body, with Size\n" if body else "")
-                                   + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else ""),
+                                   + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else "")
+                                   + (README_PARALLAX if depth is not None else ""),
                                    fov_node='"levels" node' if body else "scene's root node",
                                    scaling=SCALING_MOVING if body else SCALING)
             z.writestr(_entry("README.txt"), readme, zipfile.ZIP_DEFLATED)
@@ -371,7 +458,11 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
             if humanoid:
                 z.writestr(_entry("model.glb.import"), _import_file(rig[0]), zipfile.ZIP_DEFLATED)
             z.writestr(_entry("model.glb"), glb, zipfile.ZIP_STORED)  # textures inside are already packed
-            z.writestr(_entry("model.tscn"), _scene(px, pieces, moving), zipfile.ZIP_DEFLATED)
+            if depth is not None:
+                z.writestr(_entry("parallax.gd"), PARALLAX_GD, zipfile.ZIP_DEFLATED)
+                z.writestr(_entry("height.png"), Path(height).read_bytes(), zipfile.ZIP_STORED)  # PNG: packed already
+                z.writestr(_entry("height.png.import"), HEIGHT_IMPORT, zipfile.ZIP_DEFLATED)
+            z.writestr(_entry("model.tscn"), _scene(px, pieces, moving, depth), zipfile.ZIP_DEFLATED)
     except Exception as exc:  # a full disk or the like: the job's other files are still good
         packed.unlink(missing_ok=True)
         steps.append(f"no Godot package: {str(exc)[:160]}")
@@ -386,5 +477,6 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
     steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself"
                  + (f", with {len(pieces)} collision pieces" if pieces else "")
                  + ("; its skeleton is mapped to Godot's humanoid profile for ready-made animations" if humanoid else "")
+                 + ("; LOD0 has parallax from the height map (parallax.gd)" if depth is not None else "")
                  + (" (a RigidBody3D: it falls and can be pushed)" if moving and pieces else "")
                  + ("; not a moving body: that needs the collision pieces (collision: true)" if moving and not pieces else ""))

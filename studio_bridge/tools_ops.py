@@ -1046,7 +1046,7 @@ class _BakeTooLong(RuntimeError):
 
 
 def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Path | None = None, quick: bool = False,
-          fill: bool = False) -> dict[str, Any]:
+          fill: bool = False, height: bool = False) -> dict[str, Any]:
     """Bake the original's look onto the cut in place: Blender (tools_blender/bake.py) makes new UVs and
     bakes base colour, roughness, metalness and a normal map carrying the shape the cut took away, then
     tools_node/graft.mjs puts them into the cut itself, so its nodes, skins, clips and morph targets stay
@@ -1056,7 +1056,8 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     for less time and memory. The kept bake (not `quick`) first turns the cut's diagonals to lie on the original
     better (game_turn), then smooths steps the original has not got, thin dark lines (game_steps). The search's
     quick bakes skip both, so the budget picks stay as they were. `fill`: paint the empty texture between islands
-    too (bake.py), for the far LOD levels' small textures."""
+    too (bake.py), for the far LOD levels' small textures. `height`: also a height map for parallax (bake.py), returned
+    as info["height"] with its file ("path", the caller's to keep or delete) and the depth Godot's parallax wants."""
     turned = steps = None
     if not quick:
         from studio_bridge.game_steps import load_original, smooth_steps
@@ -1075,7 +1076,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {}), **({"fill": True} if fill else {})})],
+             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {}), **({"fill": True} if fill else {}), **({"height": True} if height else {})})],
             capture_output=True,
             text=True,
             timeout=900,
@@ -1100,6 +1101,17 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
             info["diagonalsTurned"] = turned["turned"]
         if steps is not None:
             info["stepsSmoothed"] = steps["moved"]
+        if info.get("height") and (work / "height.png").is_file():
+            fd, kept = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            shutil.copyfile(work / "height.png", kept)
+            h = info["height"]
+            depth = -h["low"]  # white: the light surface, black: this far under it
+            # Godot's parallax moves the texture by heightmap_scale / 100 UV units at black: that depth in UV units
+            info["height"] = {"path": kept, "depthMm": round(depth * 1000, 3), "uvPerUnit": round(h["uvPerUnit"], 4),
+                              "godotScale": round(100 * depth * h["uvPerUnit"], 4), "missedTexels": h["missedTexels"]}
+        else:
+            info.pop("height", None)
         return info
     except subprocess.TimeoutExpired as exc:
         raise _BakeTooLong(f"baking took over {exc.timeout:g} s") from exc
@@ -1786,8 +1798,15 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
             deviation, _ = reference.compare(out_path, result["shift"])
         see = {k: v for k, v in holes.items() if k != "originalFaces"}
 
+    height = None
     if job.get("forBake"):
-        baked = _bake(in_path, out_path, result["shift"], job["textureSize"], fill=bool(params.get("fill")))
+        baked = _bake(in_path, out_path, result["shift"], job["textureSize"], fill=bool(params.get("fill")),
+                      height=bool(params.get("height")))
+        height = baked.get("height")
+        if params.get("height"):
+            steps.append(f"height map baked for parallax: grooves of the original down to {height['depthMm']:g} mm under the light surface "
+                         "(white the surface, black the deepest; an engine's parallax reads it, glTF has no place for it, so it comes as height.png)"
+                         if height else "no height map: nothing of the original lies under the light surface")
         steps.append(f"normal map baked from the original onto new UVs, the model's own colours kept ({baked['seconds']:g} s)" if baked.get("normalOnly")
                      else f"textures baked from the original onto new UVs: colour, roughness, metalness, normal map"
                           f"{', glow' if 'emissive' in baked.get('passes', {}) else ''} ({baked['seconds']:g} s)")
@@ -1815,6 +1834,9 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
         after["specksRemoved"] = result["specks"]
     # "shift": where the cut was moved to, for the LOD levels (game_lod); game_prep takes it out of the report.
     report: dict[str, Any] = {"operation": "game_prep", "steps": steps, "before": result["before"], "after": after, "shift": result["shift"]}
+    if height:
+        report["extraFiles"] = {**(report.get("extraFiles") or {}), "height.png": height.pop("path")}
+        after["height"] = height
 
     # How it looks next to the original from six fixed views, and the picture of it for the page. The
     # shape measuring is done: let its copy of the original go first, or a huge model sits in memory twice.
@@ -1830,7 +1852,7 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     try:
         purpose_name, purpose = _purpose(params)
         after["look"] = {**look(in_path, out_path, result["shift"], Path(preview_name), res=int(params.get("lookRes") or purpose["res"])), "purpose": purpose_name}
-        report["extraFiles"] = {"preview.png": preview_name}
+        report["extraFiles"] = {**(report.get("extraFiles") or {}), "preview.png": preview_name}
         if not params.get("maxErrorPct"):
             if after["look"]["noticeablePct"] > purpose["bakeOkPct" if job.get("forBake") else "okPct"]:
                 steps.append(
