@@ -56,7 +56,7 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
                 pass
     if isinstance(scene, trimesh.Trimesh):
         scene = trimesh.Scene(scene)
-    from studio_bridge.tools_ops import _as_drawn, _world_node
+    from studio_bridge.tools_ops import _as_drawn, _in_world, _world_node
 
     world = _world_node(path)
 
@@ -72,10 +72,10 @@ def _load(path: Path, tex: int = TEX) -> dict[str, Any]:
         if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
             continue
         gv, gf, gn, corner = _as_drawn(geom)
-        n = gn @ matrix[:3, :3].T
-        verts.append(trimesh.transform_points(gv, matrix))
-        normals.append(n / np.linalg.norm(n, axis=1, keepdims=True).clip(1e-12))
-        faces.append(gf + offset)
+        wv, wf, wn = _in_world(gv, gf, gn, matrix)
+        verts.append(wv)
+        normals.append(wn)
+        faces.append(wf + offset)
         uv = getattr(geom.visual, "uv", None)
         uvs.append(np.asarray(uv, float)[corner] if uv is not None and len(uv) == len(geom.vertices) else np.zeros((len(gv), 2)))
         owner.append(np.full(len(geom.faces), len(mats)))

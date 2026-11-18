@@ -6,13 +6,14 @@
 // Two ways to cut: to a triangle budget (targetTris), or — with maxErrorPct — to as few
 // triangles as keep the surface within that share of the model's size, targetTris then
 // being the most it may keep.
-import { readFileSync, statSync } from "node:fs";
-import { ImageUtils, Logger, NodeIO } from "@gltf-transform/core";
+import { readFileSync } from "node:fs";
+import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { center, compactPrimitive, dedup, dequantize, getBounds, prune, reorder, textureCompress, weld } from "@gltf-transform/functions";
 import draco3d from "draco3dgltf";
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from "meshoptimizer";
 import sharp from "sharp";
+import { stats, TRIANGLES } from "./stats.mjs";
 
 const [input, output, rawParams] = process.argv.slice(2);
 if (!input || !output) {
@@ -36,7 +37,6 @@ const keep = params.keepFile ? new Float32Array(new Uint8Array(readFileSync(para
 // three corners on them is left out before the cut.
 const hidden = params.dropFile ? new Float32Array(new Uint8Array(readFileSync(params.dropFile)).buffer) : null;
 
-const TRIANGLES = 4;
 /** Pieces smaller than this share of the model are specks the generator left floating around it. */
 const SPECK = 0.005;
 /**
@@ -50,44 +50,6 @@ const BUDGET_NORMAL_WEIGHT = 0.2;
 /** How much a rigged vertex's pull (skinPull) counts, in both modes: of 0.5, 1, 2 and 4, 1 bent best over the clips. */
 const SKIN_WEIGHT = 1.0;
 
-/** What a game dev looks at: triangles drawn, vertices, materials, how big the textures are. */
-function stats(doc, path) {
-  let triangles = 0;
-  let vertices = 0;
-  for (const scene of doc.getRoot().listScenes()) {
-    scene.traverse((node) => {
-      const mesh = node.getMesh();
-      if (!mesh) return;
-      for (const prim of mesh.listPrimitives()) {
-        if (prim.getMode() !== TRIANGLES) continue;
-        const position = prim.getAttribute("POSITION");
-        const indices = prim.getIndices();
-        triangles += Math.floor((indices ? indices.getCount() : position ? position.getCount() : 0) / 3);
-        vertices += position ? position.getCount() : 0;
-      }
-    });
-  }
-  let textureMax = 0;
-  let textureBytes = 0;
-  const textures = doc.getRoot().listTextures();
-  for (const texture of textures) {
-    const image = texture.getImage();
-    if (!image) continue;
-    textureBytes += image.byteLength;
-    const size = ImageUtils.getSize(image, texture.getMimeType());
-    if (size) textureMax = Math.max(textureMax, size[0], size[1]);
-  }
-  return {
-    triangles,
-    vertices,
-    meshes: doc.getRoot().listMeshes().length,
-    materials: doc.getRoot().listMaterials().length,
-    textures: textures.length,
-    textureMaxPx: textureMax,
-    textureMb: Math.round((textureBytes / 1048576) * 100) / 100,
-    fileMb: path ? Math.round((statSync(path).size / 1048576) * 100) / 100 : undefined,
-  };
-}
 
 /**
  * How often the GPU shades a vertex again (ACMR: vertex cache misses per triangle), drawn through a cache
@@ -243,6 +205,54 @@ function triangleMeshes(doc) {
     }
   }
   return out;
+}
+
+/**
+ * Vertices on a skin cut: at one place with another vertex the bones pull differently (the auto rig parts
+ * the skin where the generator fused parts that move apart, a fist grown into a thigh). Joined there, one
+ * side's weights win and a web stretches between the parts again (20k cut of the Step1X knight,
+ * 2026-11-16). A UV seam splits a point too, but both copies carry the same weights. Null without a skin.
+ */
+function skinCuts(p) {
+  if (p.channels.skin === undefined) return null;
+  const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
+  const count = p.positions.length / 3;
+  const pull = (v, c) => p.attributes[v * p.stride + p.channels.skin + c];
+  const split = new Uint8Array(count);
+  for (let v = 0; v < count; v++) {
+    const r = remap[v];
+    if (r !== v && (pull(v, 0) !== pull(r, 0) || pull(v, 1) !== pull(r, 1) || pull(v, 2) !== pull(r, 2))) split[r] = 1;
+  }
+  const cut = new Uint8Array(count);
+  let any = false;
+  for (let v = 0; v < count; v++) if (split[remap[v]]) any = cut[v] = 1;
+  return any ? cut : null;
+}
+
+/** Where vertices at one place join: by position, but a skin cut's sides only with their own side. */
+function joinByPosition(p) {
+  const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
+  if (!p.skinCut) return remap;
+  const first = new Map();
+  const at = p.channels.skin;
+  return remap.map((r, v) => {
+    if (!p.skinCut[v]) return r;
+    const key = `${r}:${p.attributes[v * p.stride + at]},${p.attributes[v * p.stride + at + 1]},${p.attributes[v * p.stride + at + 2]}`;
+    if (!first.has(key)) first.set(key, v);
+    return first.get(key);
+  });
+}
+
+/** meshoptimizer's per-vertex flag: in Permissive mode a protected vertex is not collapsed across its seam. */
+const PROTECT = 2;
+
+/** Skin cuts stay apart when seams are loosened: their vertices are protected (keeping any lock). */
+function protectSkinCuts(prims) {
+  for (const p of prims) {
+    if (!p.skinCut) continue;
+    p.lock ??= new Uint8Array(p.positions.length / 3);
+    for (let v = 0; v < p.lock.length; v++) if (p.skinCut[v]) p.lock[v] |= PROTECT;
+  }
 }
 
 /** Separate pieces, joined by position (UV seams split vertices, not the surface). */
@@ -442,6 +452,7 @@ function cutWithin(prims, error, modelScale) {
 
 const triangleCount = (prims) => prims.reduce((n, p) => n + p.indices.length / 3, 0);
 
+
 await MeshoptDecoder.ready;
 await MeshoptSimplifier.ready;
 const io = new NodeIO()
@@ -469,6 +480,7 @@ await doc.transform(dedup(), weld());
 steps.push("welded");
 
 const prims = triangleMeshes(doc);
+for (const p of prims) p.skinCut = skinCuts(p);
 if (hidden) {
   const dropped = dropHidden(prims);
   if (dropped) steps.push(`left out ${dropped} triangles no one can see from outside (under plates, inside shells)`);
@@ -477,7 +489,7 @@ if (params.forBake) {
   // The textures will be baked afterwards onto new UVs, so the old seams need not hold: the
   // triangles go where the shape is, joined across seams, with nothing but positions weighed.
   for (const p of prims) {
-    const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
+    const remap = joinByPosition(p);
     p.indices = p.indices.map((i) => remap[i]);
     if (p.channels.skin === undefined) {
       p.stride = 0;
@@ -506,6 +518,7 @@ if (maxError !== null) {
 }
 if (keep) steps.push(`kept ${keepPoints(prims)} vertices where a first cut lost detail`);
 let seamsLoosened = false;
+protectSkinCuts(prims);
 if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.

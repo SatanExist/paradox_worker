@@ -331,6 +331,21 @@ def _as_drawn(geom):
     return np.asarray(geom.vertices)[corner], np.arange(len(corner)).reshape(-1, 3), flat, corner
 
 
+def _in_world(gv, gf, gn, matrix):
+    """A mesh where its node puts it, as an engine draws it (glTF 2.0): points by the matrix, normals by its
+    inverse transpose (right under a stretch along one axis too), and when the matrix mirrors (determinant
+    below 0) each triangle's corners in reverse order, so its front still faces out. Mirrored but not turned,
+    the whole model faced inwards and the hidden-face finder left every triangle out (the zoo's negscale)."""
+    import numpy as np
+    import trimesh
+
+    m3 = matrix[:3, :3]
+    det = float(np.linalg.det(m3))
+    turned = gn @ (np.linalg.inv(m3).T if abs(det) > 1e-30 else m3).T
+    faces = gf[:, ::-1] if det < 0 else gf
+    return trimesh.transform_points(gv, matrix), faces, turned / np.linalg.norm(turned, axis=1, keepdims=True).clip(1e-12)
+
+
 def _shaded(path: Path):
     """Vertices, faces and the file's own vertex normals (what the light uses), in model space,
     and, when a node moves a mesh, every vertex where its mesh holds it (else None).
@@ -362,11 +377,11 @@ def _shaded(path: Path):
             continue
         moved = moved or not np.allclose(matrix, np.eye(4))
         gv, gf, gn, _ = _as_drawn(geom)
-        turned = gn @ matrix[:3, :3].T
-        normals.append(turned / np.linalg.norm(turned, axis=1, keepdims=True).clip(1e-12))
-        verts.append(trimesh.transform_points(gv, matrix))
+        wv, wf, wn = _in_world(gv, gf, gn, matrix)
+        normals.append(wn)
+        verts.append(wv)
         own.append(gv)
-        faces.append(gf + offset)
+        faces.append(wf + offset)
         offset += len(gv)
     if not faces:
         raise ValueError("could not read the model's geometry")
@@ -392,6 +407,18 @@ def _spread(area, count: int, phase: float = 0.5):
     over = u + v > 1
     u[over], v[over] = 1 - u[over], 1 - v[over]
     return pick, np.stack([1 - u - v, u, v], axis=1)[:, :, None]
+
+
+def _reach_all(*points):
+    """meshlab's Hausdorff keeps only the samples it finds a closest point for within `maxdist` (by default half
+    the box diagonal) and drops the rest without a word: a cut that lost a whole part came back with fewer
+    samples than vertices and the job failed (the zoo's tjunction). No two points of these meshes lie further
+    apart than the diagonal of the box around all of them, so with that as the limit every sample comes back."""
+    import numpy as np
+    import pymeshlab
+
+    every = np.vstack([np.asarray(p, float).reshape(-1, 3) for p in points])
+    return pymeshlab.PureValue(float(np.linalg.norm(every.max(0) - every.min(0))) * 1.001 + 1e-9)
 
 
 class _Reference:
@@ -469,7 +496,8 @@ class _Reference:
 
         # Old → new: every original vertex. Meshlab gives them back in vertex order.
         ms.get_hausdorff_distance(
-            sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(self.ov), savesample=True
+            sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(self.ov), savesample=True,
+            maxdist=_reach_all(self.ov, rv),
         )
         saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
         sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
@@ -486,7 +514,8 @@ class _Reference:
         ms.add_mesh(pymeshlab.Mesh(cloud))
         cloud_at = ms.mesh_number() - 1
         to_old = ms.get_hausdorff_distance(
-            sampledmesh=cloud_at, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud), savesample=find_lost
+            sampledmesh=cloud_at, targetmesh=0, samplevert=True, sampleface=False, samplenum=len(cloud), savesample=find_lost,
+            maxdist=_reach_all(self.ov, cloud),
         )
 
         mean_to_new = float((to_new * self.vertex_area).sum() / self.vertex_area.sum())
@@ -682,7 +711,7 @@ def _rays_seen(asked):
 
 def _seen_faces(V, F, directions: int):
     """Which faces a ray from far off meets first at their centre, from one of `directions` directions on
-    their front side."""
+    their front side (faces turned inwards were turned back before: _mended)."""
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
@@ -945,7 +974,8 @@ class _Moves:
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(mine, self.faces.astype(np.int32)))
             ms.add_mesh(pymeshlab.Mesh(theirs - offset, faces.astype(np.int32)))
-            ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(mine), savesample=True)
+            ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplevert=True, sampleface=False, samplenum=len(mine), savesample=True,
+                                      maxdist=_reach_all(mine, theirs - offset))
             saved = {ms.mesh(i).label(): ms.mesh(i).vertex_matrix() for i in range(2, ms.mesh_number())}
             sampled, nearest = saved["Hausdorff Sample Point"], saved["Hausdorff Closest Points"]
             if sampled.shape != mine.shape or not np.allclose(sampled, mine, atol=1e-6 * self.size):
@@ -1429,30 +1459,68 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
     With bake, each cut is also made baked, and the one that looks closer is kept.
     With collision, convex pieces for game physics are made from the original alongside (game_collision)."""
     collision = None
+    # A broken model is mended first, and everything after (hidden faces, cuts, bakes, look check, collision,
+    # LODs) works on the mended one: the search for hidden faces tells the outside by the front of a face, and
+    # a face turned inwards would read as hidden and be left out, a hole where it was.
+    mended = _mended(in_path)
+    work = mended["path"] if mended else in_path
     try:
         if params.get("collision"):
             from studio_bridge.game_collision import Collision
 
-            collision = Collision(in_path)
-        report = _game_prep_job(in_path, out_path, params)
+            collision = Collision(work)
+        report = _game_prep_job(work, out_path, params)
         pieces = collision.finish(report, report.get("shift")) if collision else None
         if params.get("lods"):
             from studio_bridge.game_lod import add_lods
 
-            add_lods(in_path, out_path, params, report)
+            add_lods(work, out_path, params, report)
         if params.get("godot"):
             from studio_bridge.game_godot import add_godot
 
             add_godot(report, bool(params.get("lods")), pieces, bool(params.get("moving")))
         report.pop("shift", None)
+        if mended:
+            report["before"] = mended["before"]  # the model as uploaded, not the mended copy
+            steps = report.setdefault("steps", [])
+            steps[1 if steps[:1] == ["welded"] else 0 : 0] = mended["steps"]
         return report
     finally:
         if collision:
             collision.stop()
-        _forget_hidden(in_path)  # what's hidden was worked out once for every cut of this job
+        _forget_hidden(work)  # what's hidden was worked out once for every cut of this job
         from studio_bridge.game_look import forget_close
 
-        forget_close(in_path)
+        forget_close(work)
+        if mended:
+            work.unlink(missing_ok=True)
+
+
+def _mended(in_path: Path) -> dict[str, Any] | None:
+    """The model with what shows as holes mended (tools_node/repair.mjs: T-junctions stitched, faces turned
+    inwards turned back), in a file of its own with the original's stats and the report steps; None when
+    nothing needed mending, so a sound model goes on as it was uploaded."""
+    node = shutil.which("node")
+    if not node or not (TOOLS_NODE / "repair.mjs").is_file():
+        raise RuntimeError("no gltf-transform here to prepare the model")
+    fd, name = tempfile.mkstemp(suffix=".glb")
+    os.close(fd)
+    path = Path(name)
+    done = subprocess.run([node, str(TOOLS_NODE / "repair.mjs"), str(in_path), name], capture_output=True, text=True, timeout=600)
+    lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
+    if done.returncode != 0 or not lines:
+        path.unlink(missing_ok=True)
+        raise RuntimeError(f"could not read the model: {(done.stderr or done.stdout).strip()[-300:]}")
+    result = json.loads(lines[-1])
+    if not result["wrote"]:
+        path.unlink(missing_ok=True)
+        return None
+    steps = []
+    if result["stitched"]:
+        steps.append(f"stitched {result['stitched']} T-junctions (edges that met without sharing a vertex: seen as holes, they stop the cut)")
+    if result["turned"]:
+        steps.append(f"turned {result['turned']} triangles that faced inwards (an engine draws only their front, so they showed as holes)")
+    return {"path": path, "before": result["before"], "steps": steps}
 
 
 def _game_prep_job(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
