@@ -1469,7 +1469,8 @@ def _best_of(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
 def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     """With autoBudget, first the smallest budget that doesn't look noticeably different, then the cut.
     With bake, each cut is also made baked, and the one that looks closer is kept.
-    With collision, convex pieces for game physics are made from the original alongside (game_collision)."""
+    With collision, convex pieces for game physics are made from the original alongside (game_collision).
+    With impostor, the finished model is pictured for the farthest view (game_impostor)."""
     collision = None
     # A broken model is mended first, and everything after (hidden faces, cuts, bakes, look check, collision,
     # LODs) works on the mended one: the search for hidden faces tells the outside by the front of a face, and
@@ -1487,6 +1488,10 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
             from studio_bridge.game_lod import add_lods
 
             add_lods(work, out_path, params, report)
+        if params.get("impostor"):
+            from studio_bridge.game_impostor import add_impostor
+
+            add_impostor(out_path, report)
         if params.get("godot"):
             from studio_bridge.game_godot import add_godot
 

@@ -244,6 +244,211 @@ PARALLAX_NODE = ('\n[node name="parallax" type="Node" parent="."]\nscript = ExtR
 PARALLAX_RES = ('[ext_resource type="Script" path="parallax.gd" id="4_par"]\n'
                 '[ext_resource type="Texture2D" path="height.png" id="5_height"]\n')
 
+IMPOSTOR_GDSHADER = '''// PolyLab impostor (octahedral): a quad that faces the camera and shows the model from the atlas pictures.
+// Three nearest pictures are blended (a triangle of the grid), each one looked up where the view ray meets
+// that picture's plane, then moved once along the ray by the picture's depth (parallax), as in Ryan Brucks'
+// impostors. Pictures cover the upper half-sphere (hemi-octahedral map), glTF axes, Y up. It lights itself from
+// the pictures' normals, occlusion, roughness and metalness, and writes the pictures' depth, so the sun's shadow map
+// holds the model's shape: it shades itself and casts a real shadow (pixel depth offset, as in Brucks' impostors).
+shader_type spatial;
+render_mode world_vertex_coords, cull_disabled;
+
+uniform sampler2D color_atlas : source_color, filter_linear_mipmap, repeat_disable;
+uniform sampler2D normal_atlas : filter_linear_mipmap, repeat_disable;
+uniform sampler2D orm_atlas : filter_linear_mipmap, repeat_disable;
+uniform float frames = 12.0;
+uniform float radius = 1.0;
+uniform vec3 centre = vec3(0.0);
+uniform bool parallax = true;
+uniform bool occlusion = true;
+// Light from the averaged normal (see light()); off = Godot's own light, for comparing.
+uniform bool filtered = true;
+
+// How much the normals under this pixel agree: 1 all the same, less the more they differ (length of their average).
+varying float normal_len;
+
+void vertex() {
+	vec3 c = (MODEL_MATRIX * vec4(centre, 1.0)).xyz;
+	bool ortho = PROJECTION_MATRIX[3][3] == 1.0;
+	vec3 to = INV_VIEW_MATRIX[3].xyz - c;
+	float d = length(to);
+	vec3 f = ortho ? normalize(INV_VIEW_MATRIX[2].xyz) : to / d;
+	vec3 ref = abs(f.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, -1.0);
+	vec3 r = normalize(cross(ref, f));
+	vec3 u = cross(f, r);
+	float R = radius * length(MODEL_MATRIX[0].xyz);
+	float q = ortho ? R : R * d / sqrt(max(d * d - R * R, 1e-8));  // the sphere's outline seen in perspective
+	VERTEX = c + (r * (UV.x * 2.0 - 1.0) + u * (1.0 - UV.y * 2.0)) * q;
+	NORMAL = f;
+}
+
+vec3 frame_dir(vec2 ij) {
+	vec2 g = ij / (frames - 1.0) * 2.0 - 1.0;
+	float x = (g.x - g.y) * 0.5;
+	float z = (g.x + g.y) * 0.5;
+	return normalize(vec3(x, 1.0 - abs(x) - abs(z), z));
+}
+
+// Pixel of picture ij hit by the ray o + t*rd (model space); plane at `lift` along the picture's direction.
+vec2 lookup(vec2 ij, vec3 o, vec3 rd, float lift, out vec3 f, out vec3 hit) {
+	f = frame_dir(ij);
+	vec3 ref = abs(f.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, -1.0);
+	vec3 r = normalize(cross(ref, f));
+	vec3 u = cross(f, r);
+	vec3 p0 = centre + f * lift;
+	float t = dot(p0 - o, f) / dot(rd, f);
+	hit = o + rd * t;
+	vec3 h = hit - centre;
+	vec2 st = clamp(vec2(dot(h, r), dot(h, u)) / (2.0 * radius) + 0.5, 0.0, 1.0);
+	return (ij + vec2(st.x, 1.0 - st.y)) / frames;
+}
+
+void sample_frame(vec2 ij, vec3 o, vec3 rd, out vec4 col, out vec4 nd, out vec4 orm, out vec3 hit) {
+	vec3 f;
+	vec2 uv = lookup(ij, o, rd, 0.0, f, hit);
+	if (parallax) {
+		// depth 0 = the sphere's near side (lift R), 1 = its far side (lift -R)
+		float dep = textureLod(normal_atlas, uv, 0.0).a;
+		uv = lookup(ij, o, rd, radius - dep * 2.0 * radius, f, hit);
+	}
+	col = texture(color_atlas, uv);
+	nd = texture(normal_atlas, uv);
+	orm = texture(orm_atlas, uv);
+}
+
+void fragment() {
+	mat4 inv = inverse(MODEL_MATRIX);
+	bool ortho = PROJECTION_MATRIX[3][3] == 1.0;
+	vec3 p = (inv * (INV_VIEW_MATRIX * vec4(VERTEX, 1.0))).xyz;
+	vec3 rd = ortho ? normalize((inv * vec4(-INV_VIEW_MATRIX[2].xyz, 0.0)).xyz) : normalize(p - (inv * INV_VIEW_MATRIX[3]).xyz);
+	vec3 o = p - rd * 4.0 * radius;  // a point on the ray before the model
+	vec3 dir = -rd;
+	if (!ortho) {
+		dir = normalize((inv * INV_VIEW_MATRIX[3]).xyz - centre);
+	}
+	dir.y = max(dir.y, 0.0);
+	dir = normalize(dir);
+	float s = abs(dir.x) + abs(dir.y) + abs(dir.z);
+	vec2 g = (vec2(dir.x + dir.z, dir.z - dir.x) / s * 0.5 + 0.5) * (frames - 1.0);
+	vec2 cell = clamp(floor(g), vec2(0.0), vec2(frames - 2.0));
+	vec2 fr = g - cell;
+	vec2 a; vec2 b; vec2 c; vec3 w;
+	if (fr.x + fr.y <= 1.0) {
+		a = cell; b = cell + vec2(1.0, 0.0); c = cell + vec2(0.0, 1.0);
+		w = vec3(1.0 - fr.x - fr.y, fr.x, fr.y);
+	} else {
+		a = cell + vec2(1.0, 1.0); b = cell + vec2(0.0, 1.0); c = cell + vec2(1.0, 0.0);
+		w = vec3(fr.x + fr.y - 1.0, 1.0 - fr.x, 1.0 - fr.y);
+	}
+	vec4 ca; vec4 cb; vec4 cc; vec4 na; vec4 nb; vec4 nc; vec4 oa; vec4 ob; vec4 oc;
+	vec3 ha; vec3 hb; vec3 hc;
+	sample_frame(a, o, rd, ca, na, oa, ha);
+	sample_frame(b, o, rd, cb, nb, ob, hb);
+	sample_frame(c, o, rd, cc, nc, oc, hc);
+	vec3 wa = w * vec3(ca.a, cb.a, cc.a);
+	float cover = wa.x + wa.y + wa.z;
+	// True depth of the surface under the pixel (the pictures' depth), as Brucks' impostors do with pixel depth
+	// offset: the sun's shadow map then holds the model's shape, so it shades itself and casts a real shadow.
+	vec3 hit = (ha * wa.x + hb * wa.y + hc * wa.z) / max(cover, 1e-4);
+	vec3 hv = (VIEW_MATRIX * (MODEL_MATRIX * vec4(hit, 1.0))).xyz;
+	vec4 clip = PROJECTION_MATRIX * vec4(hv, 1.0);
+	DEPTH = clip.z / clip.w;
+	LIGHT_VERTEX = hv;  // light and shadow are taken there, not on the flat card
+	ALBEDO = (ca.rgb * wa.x + cb.rgb * wa.y + cc.rgb * wa.z) / max(cover, 1e-4);
+	vec3 n = (na.rgb * 2.0 - 1.0) * wa.x + (nb.rgb * 2.0 - 1.0) * wa.y + (nc.rgb * 2.0 - 1.0) * wa.z;
+	NORMAL = normalize((VIEW_MATRIX * (MODEL_MATRIX * vec4(normalize(n + vec3(0.0, 1e-5, 0.0)), 0.0))).xyz);
+	vec3 m = (oa.rgb * wa.x + ob.rgb * wa.y + oc.rgb * wa.z) / max(cover, 1e-4);
+	if (occlusion) {
+		AO = m.r;
+	}
+	normal_len = filtered ? clamp(length(n) / max(cover, 1e-4), 1e-3, 1.0) : 1.0;
+	// Toksvig: normals that differ under one pixel spread a highlight like a rougher surface would (Real-Time
+	// Rendering, 4th ed., 9.13.1: GGX alpha^2 + (1 - |n|) / |n|).
+	float alpha = m.g * m.g;
+	ROUGHNESS = sqrt(sqrt(alpha * alpha + (1.0 - normal_len) / normal_len));
+	METALLIC = m.b;
+	ALPHA = w.x * ca.a + w.y * cb.a + w.z * cc.a;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+}
+
+// Average of max(0, n.L) over normals spread as a von Mises-Fisher lobe of sharpness kappa around the unit normal,
+// t = n.L: Stephen Hill's fit of the clamped cosine convolved with a spherical Gaussian (M. Pettineo, "SG Series
+// Part 3: Diffuse Lighting From an SG Light Source", 2016), within 0.01 of the exact average. Sharp lobes give
+// max(0, t); spread ones keep some light past the edge, where some of the small parts under the pixel still face it.
+float lobe_diffuse(float t, float kappa) {
+	float eml = exp(-kappa);
+	float em2l = eml * eml;
+	float rl = 1.0 / kappa;
+	float scale = 1.0 + 2.0 * em2l - rl;
+	float bias = (eml - em2l) * rl - em2l;
+	float x = sqrt(max(1.0 - scale, 0.0));
+	float x0 = 0.36 * t;
+	float x1 = x / (4.0 * 0.36);
+	float n = x0 + x1;
+	float y = abs(x0) <= x1 ? n * n / max(x, 1e-6) : clamp(t, 0.0, 1.0);
+	return scale * y + bias;
+}
+
+float schlick(float u) {
+	float m = 1.0 - u;
+	float m2 = m * m;
+	return m2 * m2 * m;
+}
+
+// Godot 4's own light (Burley diffuse, Schlick-GGX specular, as in scene_forward_lights_inc.glsl), with one change:
+// a pixel of the atlas holds the average of the normals under it, and the light of many normals is not the light of
+// their average. As in Han et al. 2007 ("Frequency domain normal map filtering"), the normals under the pixel are
+// taken as a von Mises-Fisher lobe around their average, its sharpness from the average's length (Banerjee et al.
+// 2005), and diffuse light is that lobe's average.
+void light() {
+	float cNdotL = max(min(dot(NORMAL, LIGHT), 1.0), 0.0);
+	float cNdotV = max(dot(NORMAL, VIEW), 1e-4);
+	vec3 H = normalize(VIEW + LIGHT);
+	float cLdotH = clamp(dot(LIGHT, H), 0.0, 1.0);
+	float cNdotH = clamp(dot(NORMAL, H), 0.0, 1.0);
+	if (METALLIC < 1.0) {
+		float fd90 = 2.0 * cLdotH * cLdotH * ROUGHNESS - 0.5;
+		float burley = (1.0 + fd90 * schlick(cNdotV)) * (1.0 + fd90 * schlick(cNdotL));  // Burley's shape, without n.L
+		float r = min(normal_len, 0.999);  // a unit average is a lobe of one normal (kappa ~ 1000 here)
+		float kappa = r * (3.0 - r * r) / (1.0 - r * r);
+		float e = filtered ? lobe_diffuse(dot(NORMAL, LIGHT), kappa) : cNdotL;
+		DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * burley * e / PI;
+	}
+	if (ROUGHNESS > 0.0) {
+		float a = ROUGHNESS * ROUGHNESS;
+		float ah = cNdotH * a;
+		float k = a / (1.0 - cNdotH * cNdotH + ah * ah);
+		float d = k * k / PI;
+		float g = 0.5 / mix(2.0 * cNdotL * cNdotV, cNdotL + cNdotV, a);
+		vec3 f0 = mix(vec3(0.16 * 0.5 * 0.5), ALBEDO, METALLIC);  // Godot's F0 at its default specular 0.5
+		float f90 = clamp(dot(f0, vec3(50.0 * 0.33)), METALLIC, 1.0);
+		vec3 f = f0 + (f90 - f0) * schlick(cLdotH);
+		SPECULAR_LIGHT += cNdotL * d * f * g * LIGHT_COLOR * ATTENUATION * SPECULAR_AMOUNT;
+	}
+}
+'''
+
+# Colour and occlusion/roughness/metalness as Godot compresses textures for 3D (VRAM, with mipmaps): a far view needs
+# no more, a quarter of the memory. Normal + depth kept lossless: compressed, its smaller copies lit white patches on
+# the mech at 60 and 40 px (2026-11-18; Godot 4.7, block compression of three free normal components plus depth).
+IMPOSTOR_IMPORT = {k: ('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n'
+                       f'compress/mode={0 if k == "normal" else 2}\ndetect_3d/compress_to=0\nmipmaps/generate=true\n')
+                   for k in ("color", "normal", "orm")}
+IMPOSTOR_RES = ('[ext_resource type="Shader" path="impostor.gdshader" id="6_imp"]\n'
+                '[ext_resource type="Texture2D" path="impostor_color.png" id="7_imc"]\n'
+                '[ext_resource type="Texture2D" path="impostor_normal.png" id="8_imn"]\n'
+                '[ext_resource type="Texture2D" path="impostor_orm.png" id="9_imo"]\n')
+IMPOSTOR_SUB = ('\n[sub_resource type="QuadMesh" id="imp_quad"]\nsize = Vector2(2, 2)\n'
+                '\n[sub_resource type="ShaderMaterial" id="imp_mat"]\nrender_priority = 0\nshader = ExtResource("6_imp")\n'
+                'shader_parameter/color_atlas = ExtResource("7_imc")\nshader_parameter/normal_atlas = ExtResource("8_imn")\n'
+                'shader_parameter/orm_atlas = ExtResource("9_imo")\nshader_parameter/frames = {frames}.0\n'
+                'shader_parameter/radius = {radius:g}\nshader_parameter/centre = Vector3({centre})\n')
+# The shader places the square around the centre, facing the camera, a little over the radius from it in perspective:
+# Godot culls by this box, which holds it from any side.
+IMPOSTOR_NODE = ('\n[node name="impostor_LOD{level}" type="MeshInstance3D" parent="{parent}"]\n'
+                 'custom_aabb = AABB({corner}, {side:g}, {side:g}, {side:g})\n'
+                 'mesh = SubResource("imp_quad")\nmaterial_override = SubResource("imp_mat")\n')
+
 SCENE_TSCN = """[gd_scene load_steps={steps} format=3]
 
 [ext_resource type="Script" path="lod_switch.gd" id="1_lod"]
@@ -257,20 +462,29 @@ SCENE_TSCN = """[gd_scene load_steps={steps} format=3]
 LOD_PROPS = 'script = ExtResource("1_lod")\nlod_screen_px = PackedFloat32Array({px})\n'
 
 
-def _scene(px: list[float], pieces: list | None, moving: bool = False, depth: float | None = None) -> str:
+def _scene(px: list[float], pieces: list | None, moving: bool = False, depth: float | None = None,
+           impostor: dict | None = None, level: int = 0) -> str:
     """model.tscn; with collision pieces, a StaticBody3D "collision" holding one convex shape per piece. moving: the
     root is a RigidBody3D instead (moving_body.gd, with Size), the pieces right under it and the LOD switch on
     "levels", so the model falls and can be pushed. depth: with a height map, a "parallax" node (parallax.gd) with
-    this Height Scale."""
+    this Height Scale. impostor (after.impostor): a square "impostor_LOD<level>" after the last level, which the LOD
+    switch shows from px's last size down (px has its size already)."""
     scene = _scene_body(px, pieces, moving)
-    if depth is None:
+    if depth is None and impostor is None:
         return scene
     head, _, rest = scene.partition("\n")
     steps = int(head.split("load_steps=")[1].split()[0])
-    head = head.replace(f"load_steps={steps}", f"load_steps={steps + 2}")
+    more = (2 if depth is not None else 0) + (6 if impostor else 0)
+    head = head.replace(f"load_steps={steps}", f"load_steps={steps + more}")
     at = rest.index("[ext_resource type=\"PackedScene\"")
-    rest = rest[:at] + PARALLAX_RES + rest[at:]
-    return head + "\n" + rest + PARALLAX_NODE.format(scale=depth)
+    rest = rest[:at] + (PARALLAX_RES if depth is not None else "") + (IMPOSTOR_RES if impostor else "") + rest[at:]
+    if impostor:
+        r, c = impostor["radius"], np.asarray(impostor["centre"], float)
+        at = rest.index("\n[node ")
+        rest = rest[:at] + IMPOSTOR_SUB.format(frames=impostor["frames"], radius=r, centre=_vec(c)) + rest[at:]
+        rest += IMPOSTOR_NODE.format(level=level, parent="levels" if 'type="RigidBody3D"' in rest else ".",
+                                     corner=_vec(c - 1.5 * r), side=float(f"{3 * r:.6g}"))
+    return head + "\n" + rest + (PARALLAX_NODE.format(scale=depth) if depth is not None else "")
 
 
 def _scene_body(px: list[float], pieces: list | None, moving: bool = False) -> str:
@@ -342,6 +556,8 @@ README_MOVING = '''  4. Physics: the scene's root is a RigidBody3D with {count} 
 README_PARALLAX = ('  parallax.gd    parallax on LOD0 from height.png, so grooves look deep up close (Height Scale\n'
                    '                 measured from the original; set Enabled off on the "parallax" node to drop it)\n'
                    '  height.png     the height map: white the surface, black the deepest groove (16-bit)\n')
+README_IMPOSTOR = ('  impostor.gdshader, impostor_*.png  the farthest view: the model as pictures on 2 triangles\n'
+                   '                 (node impostor_LOD{level}), shown when the model is under {px:g} px across\n')
 SCALING = "Scaling the scene is fine: the switch distances follow its size."
 SCALING_MOVING = ("To make the prop bigger or smaller, set Size on the root and leave its Scale at 1 (Godot Physics sets a\n"
                   "moving body's Scale back to 1 when the game runs); the switch distances follow the size.")
@@ -418,7 +634,10 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
     pushed (the root a RigidBody3D); it needs the pieces. A height map (extraFiles["height.png"], after.height) goes in
     with parallax.gd, which turns parallax on for LOD0. Never fails the job."""
     after, steps = report["after"], report["steps"]
-    height = (report.get("extraFiles") or {}).get("height.png")
+    extra = report.get("extraFiles") or {}
+    height = extra.get("height.png")
+    imp_files = [extra.get(f"impostor_{k}.png") for k in ("color", "normal", "orm")]
+    impostor = after.get("impostor") if all(imp_files) else None
     depth = (after.get("height") or {}).get("godotScale") if height else None
     lods = (report.get("extraFiles") or {}).get("lods.glb")
     levels = (after.get("lod") or {}).get("levels") or []
@@ -427,6 +646,12 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                      ("this job made none (see the LOD step)" if lods_asked else "they come with lods: true"))
         return
     px = [float(level["maxScreenPx"]) for level in levels[1:]]
+    imp_px = None
+    switch_px = px
+    if impostor:
+        # Under its own size, but never before the last level: the impostor stands in for the farthest one only.
+        imp_px = min(float(impostor["maxScreenPx"]), px[-1])
+        switch_px = px + [imp_px]
     chain = " -> ".join(str(level["triangles"]) for level in levels)
     switch = "\n".join(f"       LOD{level['level']} when the model is under {level['maxScreenPx']} px across"
                        for level in levels[1:])
@@ -448,7 +673,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
             readme = README.format(count=len(levels), chain=chain, switch=switch, collision=collision,
                                    more=("  moving_body.gd the moving body, with Size\n" if body else "")
                                    + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else "")
-                                   + (README_PARALLAX if depth is not None else ""),
+                                   + (README_PARALLAX if depth is not None else "")
+                                   + (README_IMPOSTOR.format(level=len(levels), px=imp_px) if impostor else ""),
                                    fov_node='"levels" node' if body else "scene's root node",
                                    scaling=SCALING_MOVING if body else SCALING)
             z.writestr(_entry("README.txt"), readme, zipfile.ZIP_DEFLATED)
@@ -462,7 +688,13 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                 z.writestr(_entry("parallax.gd"), PARALLAX_GD, zipfile.ZIP_DEFLATED)
                 z.writestr(_entry("height.png"), Path(height).read_bytes(), zipfile.ZIP_STORED)  # PNG: packed already
                 z.writestr(_entry("height.png.import"), HEIGHT_IMPORT, zipfile.ZIP_DEFLATED)
-            z.writestr(_entry("model.tscn"), _scene(px, pieces, moving, depth), zipfile.ZIP_DEFLATED)
+            if impostor:
+                z.writestr(_entry("impostor.gdshader"), IMPOSTOR_GDSHADER, zipfile.ZIP_DEFLATED)
+                for k, f in zip(("color", "normal", "orm"), imp_files):
+                    z.writestr(_entry(f"impostor_{k}.png"), Path(f).read_bytes(), zipfile.ZIP_STORED)
+                    z.writestr(_entry(f"impostor_{k}.png.import"), IMPOSTOR_IMPORT[k], zipfile.ZIP_DEFLATED)
+            z.writestr(_entry("model.tscn"), _scene(switch_px, pieces, moving, depth, impostor, len(levels)),
+                       zipfile.ZIP_DEFLATED)
     except Exception as exc:  # a full disk or the like: the job's other files are still good
         packed.unlink(missing_ok=True)
         steps.append(f"no Godot package: {str(exc)[:160]}")
@@ -472,11 +704,14 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                       "collisionPieces": len(pieces or []), "fileMb": round(packed.stat().st_size / 1048576, 2)}
     if moving and pieces:
         after["godot"]["body"] = "RigidBody3D"
+    if impostor:
+        after["godot"]["impostorPx"] = imp_px
     if rig:
         after["godot"]["skeleton"] = "humanoid" if humanoid else "own"
     steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself"
                  + (f", with {len(pieces)} collision pieces" if pieces else "")
                  + ("; its skeleton is mapped to Godot's humanoid profile for ready-made animations" if humanoid else "")
                  + ("; LOD0 has parallax from the height map (parallax.gd)" if depth is not None else "")
+                 + (f"; under {imp_px:g} px across the impostor stands in (2 triangles)" if impostor else "")
                  + (" (a RigidBody3D: it falls and can be pushed)" if moving and pieces else "")
                  + ("; not a moving body: that needs the collision pieces (collision: true)" if moving and not pieces else ""))
