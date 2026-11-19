@@ -54,12 +54,15 @@ RUN pip install --upgrade pip && \
     pip install "torch==2.7.0" "torchvision==0.22.0" --index-url https://download.pytorch.org/whl/cu128
 
 # SkinTokens' requirements.txt at the versions tested on the PC, plus runpod/boto3 (handler, R2), libigl (bend
-# judge, fused parts) and trimesh (tools_ops)
+# judge, fused parts) and trimesh (tools_ops). Two differ from the PC on purpose: there gradio 6.32 + Pillow 13 sit
+# next to huggingface_hub 0.36 only because they were installed one by one (gradio 6.21+ needs hub >= 1.16, which
+# transformers 4.57 refuses). gradio 6.17.3 is the newest that takes hub 0.36, and it wants Pillow < 13. Neither is on
+# the rig's path: gradio is only imported by demo.py for its web page, Pillow only draws judge pictures.
 RUN pip install runpod requests boto3 \
     "numpy==1.26.4" "scipy==1.17.1" "transformers==4.57.1" "tokenizers==0.22.2" "diffusers==0.35.2" \
     "python-box==8.0.0" "einops==0.8.2" "omegaconf==2.4.0" "lightning==2.6.6" "addict==2.4.0" \
     "fast_simplification==0.2.0" "bpy==5.0.1" "trimesh==5.2.1" "open3d==0.20.0" "huggingface_hub==0.36.2" \
-    "gradio==6.32.0" "bottle==0.13.4" "tornado==6.6.1" "safetensors==0.8.0" "pillow==13.0.0" "tqdm==4.70.1" \
+    "gradio==6.17.3" "bottle==0.13.4" "tornado==6.6.1" "safetensors==0.8.0" "pillow==12.3.0" "tqdm==4.70.1" \
     "PyYAML==6.0.3" "libigl==2.6.3"
 
 # The repo at the commit we tested, with the attention change (flash-attn 2 is not installed; SDPA, as on the PC)
