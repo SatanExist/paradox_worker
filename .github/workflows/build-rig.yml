@@ -9,6 +9,7 @@ on:
       - "Dockerfile.rig"
       - "docker/skintokens_sdpa.patch"
       - "docker/smoke_rig_imports.py"
+      - "docker/flash_attn_sdpa/**"
       - "worker_tools.py"
       - "studio_bridge/tools_ops.py"
       - "studio_bridge/mesh_repair.py"

@@ -65,6 +65,9 @@ RUN pip install runpod requests boto3 \
     "gradio==6.17.3" "bottle==0.13.4" "tornado==6.6.1" "safetensors==0.8.0" "pillow==12.3.0" "tqdm==4.70.1" \
     "PyYAML==6.0.3" "libigl==2.6.3"
 
+# flash_attn's API on PyTorch SDPA, the same package the PC has (SkinTokens' skin VAE imports flash_attn)
+COPY docker/flash_attn_sdpa /usr/local/lib/python3.11/site-packages/flash_attn
+
 # The repo at the commit we tested, with the attention change (flash-attn 2 is not installed; SDPA, as on the PC)
 ENV SKINTOKENS_SHA=273b691d35989d71cd17ff2895fdc735097b92d1
 COPY docker/skintokens_sdpa.patch /tmp/skintokens_sdpa.patch

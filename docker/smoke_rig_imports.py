@@ -14,6 +14,8 @@ for name in ("experiments/skin_vae_2_10_32768/last.ckpt",
              "models/Qwen3-0.6B/config.json"):
     assert (repo / name).is_file(), f"missing {name}"
 assert 'attn_implementation="sdpa"' in (repo / "src/model/tokenrig.py").read_text(), "SDPA patch not applied"
+import flash_attn  # noqa: E402
+assert flash_attn.__version__.endswith(".shim"), "flash_attn must be the SDPA package from docker/flash_attn_sdpa"
 
 import bpy  # noqa: F401,E402  Blender as a module: SkinTokens' loader and weight transfer
 import igl  # noqa: F401,E402
