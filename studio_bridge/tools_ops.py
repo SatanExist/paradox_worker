@@ -1,7 +1,7 @@
 """Tools on a finished model — the work itself, shared by the RunPod tools worker and local runs.
 
 Each tool takes a GLB on disk and writes a new GLB plus a report (checks before and after).
-No GPU and no network here: the caller downloads the input and uploads the result.
+No network here: the caller downloads the input and uploads the result.
 
 Compressed GLBs (Draco, meshopt, quantized — what Tripo, Meshy and our own showcase ship) are
 unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read them as zeros.
@@ -13,6 +13,8 @@ unpacked first with gltf-transform (tools_node/decode.mjs): trimesh would read t
               params["floating"] is "keep"; the other choice is written too, as the "alternate" file
   game_prep   cut triangles to a budget and shrink textures, keeping materials and UVs
               (gltf-transform: tools_node/game.mjs), stand the model on the floor
+  auto_rig    a skeleton and skin weights for any creature (SkinTokens, tools_rig/); the one tool that needs a
+              GPU: it runs on the rig worker (Dockerfile.rig), the others on the CPU tools worker
 """
 
 from __future__ import annotations
@@ -1900,9 +1902,55 @@ def _game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[st
     return report
 
 
+TOOLS_RIG = Path(__file__).resolve().parents[1] / "tools_rig"
+RIG_TYPES = ("creature", "human")
+MAX_RIG_TRIES = 3
+
+
+def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    """A skeleton and skin weights for any creature (SkinTokens, MIT), like Mixamo / AccuRIG but not only people.
+    Needs the rig worker (GPU, Dockerfile.rig) or this PC's SkinTokens install: SKINTOKENS_DIR (its folder, the cwd)
+    and RIG_PYTHON (its Python). params: rigType "creature" (own skeleton, the default) or "human" (standard bone
+    names, so ready-made humanoid animations play); tries 1-3 (best by the bend test). The model keeps its mesh and
+    materials; game_prep on the result keeps the skin (its cut keeps original points with their weights)."""
+    rig_type = str(params.get("rigType") or "creature").lower()
+    if rig_type not in RIG_TYPES:
+        raise ValueError(f"rigType must be one of {', '.join(RIG_TYPES)}")
+    tries = int(params.get("tries") or 1)
+    if not 1 <= tries <= MAX_RIG_TRIES:
+        raise ValueError(f"tries must be 1 to {MAX_RIG_TRIES}")
+    folder, python = os.getenv("SKINTOKENS_DIR", ""), os.getenv("RIG_PYTHON", "")
+    if not (folder and python and Path(folder, "demo.py").is_file()):
+        raise RuntimeError("auto_rig runs on the rig worker (SKINTOKENS_DIR and RIG_PYTHON are not set here)")
+    plain = _unpacked(in_path)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "model.glb"
+            shutil.copyfile(plain, src)
+            done = subprocess.run(
+                [python, str(TOOLS_RIG / "autorig.py"), str(Path(tmp) / "out"), "--tries", str(tries), "--kind", rig_type, str(src)],
+                cwd=folder, capture_output=True, text=True, timeout=600 * tries + 600,
+                env={**os.environ, "CUBLAS_WORKSPACE_CONFIG": ":4096:8"},
+            )
+            report_path, rig_path = Path(tmp) / "out" / "model_report.json", Path(tmp) / "out" / "model_rig.glb"
+            if not report_path.is_file():
+                raise RuntimeError(f"the rig worker stopped: {(done.stderr or done.stdout).strip()[-400:]}")
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if report.get("after", {}).get("kind") == "failed" or not rig_path.is_file():
+                raise RuntimeError("no rig: " + "; ".join(report.get("steps") or [])[-400:])
+            shutil.copyfile(rig_path, out_path)
+    finally:
+        if plain != in_path:
+            plain.unlink(missing_ok=True)
+    report["before"] = {"triangles": _triangles_in_file(in_path)}  # declared counts: right for packed files too
+    report["after"]["triangles"] = _triangles_in_file(out_path)
+    return report
+
+
 OPERATIONS: dict[str, Callable[[Path, Path, dict[str, Any]], dict[str, Any]]] = {
     "print_prep": print_prep,
     "game_prep": game_prep,
+    "auto_rig": auto_rig,
 }
 
 

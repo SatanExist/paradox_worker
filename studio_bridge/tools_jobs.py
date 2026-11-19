@@ -3,9 +3,11 @@
 The lab is a small CPU box and must stay responsive for the site, so mesh work goes to the
 tools worker on RunPod (worker_tools.py, Dockerfile.tools) — the same hookup as TRELLIS.2.
 With no endpoint set and STUDIO_TOOLS_LOCAL=1 the lab runs tools itself, one at a time
-(development on this PC). Job ids:
+(development on this PC). auto_rig needs a GPU, so it has its own worker and endpoint (worker_tools.py
+in Dockerfile.rig, RUNPOD_ENDPOINT_ID_RIG); locally it needs this PC's SkinTokens (tools_ops.auto_rig). Job ids:
 
   tool:rp:<runpod-uuid>   on the tools worker
+  tool:rig:<runpod-uuid>  on the rig worker
   tool:local:<uuid>       in this process (lost if the lab restarts)
 """
 
@@ -26,9 +28,11 @@ from studio_bridge.normalize import map_runpod_status
 
 TOOL_PREFIX = "tool:"
 RP_PREFIX = "tool:rp:"
+RIG_PREFIX = "tool:rig:"
 LOCAL_PREFIX = "tool:local:"
 
-OPERATIONS = {"print_prep", "game_prep"}
+OPERATIONS = {"print_prep", "game_prep", "auto_rig"}
+GPU_OPERATIONS = {"auto_rig"}  # on the rig worker; the rest on the CPU tools worker
 OUTPUT_KEY = re.compile(r"^tools/[A-Za-z0-9_.:-]{6,120}\.glb$")
 MAX_INPUT_BYTES = 200 * 1024 * 1024
 
@@ -41,8 +45,12 @@ def is_tool_job(job_id: str) -> bool:
     return (job_id or "").startswith(TOOL_PREFIX)
 
 
-def _endpoint() -> str:
-    return os.getenv("RUNPOD_ENDPOINT_ID_TOOLS", "").strip()
+def _endpoint_env(operation: str) -> str:
+    return "RUNPOD_ENDPOINT_ID_RIG" if operation in GPU_OPERATIONS else "RUNPOD_ENDPOINT_ID_TOOLS"
+
+
+def _endpoint(operation: str = "") -> str:
+    return os.getenv(_endpoint_env(operation), "").strip()
 
 
 def _local_enabled() -> bool:
@@ -121,13 +129,14 @@ def create_tool_job(*, operation: str, model_url: str, params: dict[str, Any], o
     _check(operation, model_url, output_key)
     job_input = {"operation": operation, "model_url": model_url, "params": params or {}, "output_key": output_key}
 
-    endpoint = _endpoint()
+    endpoint = _endpoint(operation)
     if endpoint:
         from studio_bridge.gateway import _runpod_key
         from runpod_queue_watchdog import submit_job
 
         runpod_id = submit_job(endpoint, _runpod_key(), job_input)
-        return {"jobId": f"{RP_PREFIX}{runpod_id}", "status": "queued", "provider": "runpod"}
+        prefix = RIG_PREFIX if operation in GPU_OPERATIONS else RP_PREFIX
+        return {"jobId": f"{prefix}{runpod_id}", "status": "queued", "provider": "runpod"}
 
     if _local_enabled():
         job_id = f"{LOCAL_PREFIX}{uuid.uuid4().hex}"
@@ -136,7 +145,7 @@ def create_tool_job(*, operation: str, model_url: str, params: dict[str, Any], o
         _pool.submit(_run_local, job_id, operation, model_url, params or {}, output_key)
         return {"jobId": job_id, "status": "queued", "provider": "local"}
 
-    raise ToolsNotConfiguredError("RUNPOD_ENDPOINT_ID_TOOLS is not set")
+    raise ToolsNotConfiguredError(f"{_endpoint_env(operation)} is not set")
 
 
 def get_tool_job(job_id: str) -> dict[str, Any]:
@@ -148,14 +157,16 @@ def get_tool_job(job_id: str) -> dict[str, Any]:
             return {"jobId": job_id, "status": "failed", "error": "The tool was interrupted. Try again."}
         return {"jobId": job_id, "provider": "local", **job}
 
-    if job_id.startswith(RP_PREFIX):
-        endpoint = _endpoint()
+    prefix = next((p for p in (RP_PREFIX, RIG_PREFIX) if job_id.startswith(p)), None)
+    if prefix:
+        operation = "auto_rig" if prefix == RIG_PREFIX else ""
+        endpoint = _endpoint(operation)
         if not endpoint:
-            raise ToolsNotConfiguredError("RUNPOD_ENDPOINT_ID_TOOLS is not set")
+            raise ToolsNotConfiguredError(f"{_endpoint_env(operation)} is not set")
         from studio_bridge.gateway import _runpod_key
         from runpod_queue_watchdog import get_status
 
-        raw = get_status(endpoint, job_id[len(RP_PREFIX) :], _runpod_key())
+        raw = get_status(endpoint, job_id[len(prefix) :], _runpod_key())
         status = map_runpod_status(raw.get("status"))
         output = raw.get("output") if isinstance(raw.get("output"), dict) else {}
         error = raw.get("error") or output.get("error")
