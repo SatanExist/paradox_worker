@@ -1723,9 +1723,9 @@ def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Pr
     measured again, and the least changed after thickening wins (first of equals: the order they were built in).
     Judged as built, a hollow wrap that looks a little better loses most to the thickening (tripo_blaster: wrap 5.3 %
     as built, 14.0 % thickened, against the restored repair's 8.3 % and 8.6 %). The winner keeps its thickened mesh
-    in "_thick", so it isn't thickened twice; the losers' go at once. A candidate the thickening fails on keeps its
-    place by the first measure only if nothing could be judged. Nothing to do where the pick had one to choose from,
-    or none kept the surface."""
+    in "_thick", so it isn't thickened twice; the losers' meshes, thickened and as built, go at once. A candidate the
+    thickening fails on keeps its place by the first measure only if nothing could be judged. Nothing to do where the
+    pick had one to choose from, or none kept the surface."""
     ok, note = _passing(cands, printer)
     if best is None or note or len(ok) < 2:
         return best
@@ -1741,10 +1741,16 @@ def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Pr
         c["changedAfter"], c["lostAfter"] = a["changedShare"], a["lostShare"]
         log(f"  {c['method']} after thickening: changed {a['changedShare']}, lost {a['lostShare']}")
         if judged is None or c["changedAfter"] < judged["changedAfter"]:
-            if judged is not None:
+            if judged is not None:  # the one it beat goes
                 judged.pop("_thick", None)
-            c["_thick"], judged = (out, info), c
+            c["_thick"], judged = (out, info), c  # what goes on: as built it isn't needed any more
+        c.pop("_mesh", None)
         del out, info
+        gc.collect()
+    if judged is not None:  # one that couldn't be thickened can't win either
+        for c in ok:
+            if c is not judged:
+                c.pop("_mesh", None)
     return judged or best
 
 
@@ -1871,12 +1877,22 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             build("restored", _restored)
             best, note = _pick(cands, printer)
     if thicken_walls:
+        # thickening is the hungriest step, and the pick now thickens every candidate it chooses from: what can't
+        # win and what was kept for building go first (meshy_rover peaked at 6.8 GB with them, 6.2 before the pick
+        # judged after thickening)
+        can_win = {id(c) for c in _passing(cands, printer)[0]} | {id(best)}
+        for c in cands:
+            if id(c) not in can_win:
+                c.pop("_mesh", None)
+        shared.clear()
+        repaired = None
+        gc.collect()
         t1 = time.time()
         best = _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer, log, thicken_seen)
         stages["pickPrinted"] = round(time.time() - t1, 1)
     if best is None:
         raise RuntimeError(note)
-    out = best["_mesh"]
+    out = best.get("_mesh")  # None when the pick already thickened it: that goes on (see _pick_printed)
     thickened = None
     if thicken_walls:
         # the hungriest step: what lost the pick goes first
