@@ -4,7 +4,7 @@ Generated models come in two kinds. TRELLIS draws a thin double "paper skin" (0.
 hollow, with holes into it; Hunyuan draws one surface, open in places or already closed. A slicer
 prints a paper skin as paper. So candidates are built, measured against the original, and the
 best one is kept ("auto pick"). Every model first gets a local repair (cut a small patch round every
-defect and refill it); then:
+defect and refill it by a minimum-weight triangulation, faces near the cut split to its size first); then:
 
   repair     drop inside-out pockets and crumbs, one exact self-union (CGAL via libigl), bridge pieces
              floating within 1.5 mm. The surface stays as modelled, apart from the patches.
@@ -16,6 +16,7 @@ defect and refill it); then:
   wrap       CGAL Alpha Wrap at 0.5 mm, then the same bridges. Closed and manifold by construction, and it
              fills thin openwork (beads, lace) solid, at the cost of rounding up to 0.5 mm. Only built for
              models that came in open.
+  restored   the repair with the original's own faces it lost given back as slabs, whenever it lost some.
 
 Candidates are built in the order they usually win, and the rest are skipped once one can't be beaten
 (kept everything, one part, nothing seen changed by a print layer): on a real solid the repair, on a paper
@@ -25,7 +26,8 @@ won on a paper skin and the wrap never won after a clean repair.
 A candidate that left original surface behind (farther than 1 mm and outside the result) on more than
 0.1 % of it fails. A paper result (walls under 1 mm) loses to any solid one. On resin a result that left the
 chamber behind the skin hollow loses to one that filled it (see Printer.hollow_traps). Of the rest the one that
-changed least where it shows wins, measured both ways (see _measure).
+changed least where it shows wins, measured both ways (see _measure), after each is thickened as it will be
+printed (see _pick_printed).
 When every result is paper the report says so (thinWalls). Lengths are in mm at the working print height.
 """
 
@@ -42,6 +44,7 @@ FINE_BALL_MM = 1.0  # and its narrow parts are where a ball this size fits that 
 WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
+SLAB_FLOOR_MM = 0.02  # a given-back slab goes at least this deep, and is cut back no shallower where it folds (see _slabs)
 BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own length are left as they are
 BRIDGE_FIRST_MM = 0.5  # pieces this close are tied first; the step grows by BRIDGE_STEP until all that can be are (see _bridge)
 BRIDGE_STEP = 1.5
@@ -55,7 +58,7 @@ SKIN_MM = 1.0  # mean wall (2·volume/area) below this is a paper skin with a ho
 SAMPLES = 200_000
 SEED = 0
 VIS_RAYS = 32  # rays per point when telling surface seen from outside from hidden
-HOLE_BAND_RINGS = 6  # rings of faces round a hole handed to meshlab with it
+PATCH_MM = 0.5  # the local repair cuts this far round a defect, as much farther each round (see _local_repair)
 LEAN_FROM_FACES = 2_000_000  # meshes this big drop their cached tables after each stage (see _lean)
 COLLECT_FROM_FACES = 500_000  # and from this size what the stage left is freed at once (see _lean)
 THICKNESS_SAMPLES = 100_000  # surface points the wall thickness is measured at
@@ -295,51 +298,368 @@ def _cut_around(m, bad, radius: float):
     return sel
 
 
-def _close_holes_near(ms) -> None:
-    """meshlab's close_holes on the current mesh, run only on a band of faces round the holes.
+def _split_longest(V, F, need, E, fe, L):
+    """Longest-edge refinement (M.-C. Rivara, "Algorithms for refining triangular grids suitable for adaptive and
+    multigrid techniques", 1984; the 4T / LEPP closure): each face in `need` has its longest edge split; any face
+    with a split edge that is not its longest gets its longest split too, until nothing changes (the closure ends:
+    each step moves to a strictly longer edge). Every face then has its longest edge split, alone or with one or two
+    others, and is cut along the median from that edge's midpoint first: the smallest angle stays at least half the
+    original's (Rivara), no slivers from the cutting itself. Ties among equal edges go to the lower edge number.
+    `E`, `fe`, `L`: the mesh's unique edges, each face's three of them (edge r runs from corner r to r+1), lengths."""
+    import numpy as np
 
-    On the whole mesh the filter costs about a minute per million faces, though the holes are a few patches;
-    on a band of a few rings it gives the same triangles in seconds. The band's own cut edge stays open:
-    only holes whose rim faces are selected get closed. The refine length is fixed to what "3 %" means on
-    the whole mesh, so the patches come out the same as before."""
+    rank = np.empty(len(E), np.int64)
+    rank[np.lexsort((np.arange(len(E)), L))] = np.arange(len(E))
+    lr = np.argmax(rank[fe], axis=1)  # which of the face's edges is its longest
+    longest = fe[np.arange(len(F)), lr]
+    mark = np.zeros(len(E), bool)
+    mark[longest[need]] = True
+    while True:
+        has = mark[fe].any(axis=1) & ~mark[longest]
+        if not has.any():
+            break
+        mark[longest[has]] = True
+    nid = np.full(len(E), -1, np.int64)
+    m = np.flatnonzero(mark)
+    nid[m] = len(V) + np.arange(len(m))
+    V2 = np.vstack([V, V[E[m]].mean(1)])
+    mk = mark[fe]
+    k = mk.sum(1)
+    out = [F[k == 0]]
+    for r in range(3):
+        sel = (k > 0) & (lr == r)
+        a, b, c = F[sel, r], F[sel, (r + 1) % 3], F[sel, (r + 2) % 3]  # longest edge a->b, far corner c
+        f = fe[sel]
+        n = nid[f[:, r]]  # midpoint of a->b
+        nbc, nca = nid[f[:, (r + 1) % 3]], nid[f[:, (r + 2) % 3]]
+        hb, ha = mk[sel, (r + 1) % 3], mk[sel, (r + 2) % 3]  # b->c split, c->a split
+        # the median n->c first: halves (a, n, c) and (n, b, c), each split again where its other edge is
+        x = ~ha
+        out.append(np.c_[a[x], n[x], c[x]])
+        x = ha
+        out += [np.c_[a[x], n[x], nca[x]], np.c_[n[x], c[x], nca[x]]]
+        x = ~hb
+        out.append(np.c_[n[x], b[x], c[x]])
+        x = hb
+        out += [np.c_[n[x], b[x], nbc[x]], np.c_[n[x], nbc[x], c[x]]]
+    return V2, np.vstack(out)
+
+
+def _refine_cut(m, radius: float, size: float, rounds: int = 200):
+    """The faces near the first cut split down to `size`, so a cut `radius` mm round a defect takes that much and
+    not whole faces: generated models carry faces of several mm (hunyuan_lighthouse: edges 4.9 mm median, the cut
+    took 41 % of its surface), and what a cut takes the repair can lose. Faces the cut needs finer: those it removes
+    outright (touching a defect face, see _cut_around) and those its ball's surface crosses, while longer than
+    `size`. Split by longest-edge refinement (see _split_longest): splitting the crossing edges alone never ends on
+    a long thin face, the new edge from the midpoint to the far corner crosses the ball again as long as before
+    (hunyuan31_drill: one 0.64 mm edge split 26 times; tripo_blaster 10 439 -> 203 480 faces in 30 rounds);
+    red-green refinement (Bank, Sherman & Weiser 1983) spread on big faces (tripo_blaster, 43 mm faces: 363 614).
+    Midpoint splits: the surface doesn't move. `rounds` only stops a runaway: a face's longest edge halves at least
+    every other split."""
+    import numpy as np
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    V, F = np.asarray(m.vertices, np.float64), np.asarray(m.faces, np.int64)
+    for _ in range(rounds):
+        t = trimesh.Trimesh(V, F, process=False)
+        bad = _open_faces(t)
+        if not bad.any():
+            break
+        E, fe, L = t.edges_unique, t.faces_unique_edges, t.edges_unique_length
+        bv = np.zeros(len(V), bool)
+        bv[F[bad].ravel()] = True
+        ring = bv[F].any(axis=1)
+        d = cKDTree(t.triangles_center[bad]).query(V, distance_upper_bound=4 * radius + L.max())[0]
+        inside = (d < radius)[F]
+        crossed = inside.any(axis=1) & ~inside.all(axis=1)
+        need = (ring | crossed) & (L[fe].max(axis=1) > size)
+        if not need.any():
+            break
+        V, F = _split_longest(V, F, need, E, fe, L)
+    return trimesh.Trimesh(V, F, process=False)
+
+
+def _rim_vertices(F, nv: int):
+    """Vertices on an open half-edge (one whose reverse no face holds)."""
+    import numpy as np
+
+    a = F.ravel()
+    b = np.roll(F, -1, axis=1).ravel()
+    open_ = ~np.isin(a * nv + b, b * nv + a)
+    rim = np.zeros(nv, bool)
+    rim[a[open_]] = True
+    rim[b[open_]] = True
+    return rim
+
+
+def _hole_loops(F, rim):
+    """Every hole as a simple loop of vertices, in the order its faces walk them. `F`: the faces with a corner on the
+    rim, `rim`: the rim's vertices (the walk only turns round rim vertices, whose faces are all in `F`; a half-edge
+    without its reverse here is open in the whole mesh only when both its ends are on the rim). Where holes touch the
+    walk keeps to its own fan of faces, and a loop that still passes a vertex twice is split there."""
+    he = {}
+    for f, (a, b, c) in enumerate(F.tolist()):
+        he[(a, b)] = (f, 0)
+        he[(b, c)] = (f, 1)
+        he[(c, a)] = (f, 2)
+    used, out = set(), []
+    for h0 in [k for k in he if rim[k[0]] and rim[k[1]] and (k[1], k[0]) not in he]:
+        if h0 in used:
+            continue
+        loop, h = [], h0
+        while h is not None and h not in used:
+            used.add(h)
+            loop.append(h[0])
+            f, k = he[h]
+            g = (F[f][(k + 1) % 3], F[f][(k + 2) % 3])
+            turned = set()
+            while (g[1], g[0]) in he:
+                # where faces round a vertex disagree on their direction (an edge walked twice the same way, before
+                # the repair orients the surface), turning can come back to where it began: no rim there
+                if g in turned:
+                    g = None
+                    break
+                turned.add(g)
+                f2, k2 = he[(g[1], g[0])]
+                g = (F[f2][(k2 + 1) % 3], F[f2][(k2 + 2) % 3])
+            h = g
+        if h != h0:
+            continue
+        stack = [loop]
+        while stack:
+            lp = stack.pop()
+            seen = {}
+            for i, v in enumerate(lp):
+                if v in seen:
+                    j = seen[v]
+                    stack += [lp[j:i], lp[:j] + lp[i:]]
+                    break
+                seen[v] = i
+            else:
+                if len(lp) >= 3:
+                    out.append(lp)
+    return out
+
+
+def _flat(Q) -> bool:
+    """All points on the line through the first and last (to rounding): a polygon of no area."""
+    import numpy as np
+
+    a, b = Q[0], Q[-1]
+    d = b - a
+    L = np.linalg.norm(d)
+    if L == 0:
+        return np.ptp(Q, axis=0).max() <= 1e-9
+    return np.linalg.norm(np.cross(Q - a, d / L), axis=1).max() <= 1e-9 * L
+
+
+def _split_hole(V, loop, adj, gap: float):
+    """A hole split where its rim comes back within `gap` (the cut's diameter) of itself: two corners that close,
+    not neighbours along the rim nor joined by a mesh edge, were parted only by the cut. Shortest split first, then
+    each part again. Meshmixer and Cyclone 3DR split big holes the same way, by hand. Filled whole, a hole the cut
+    opened round a thin strap or a fold spans the strap's two sides with one flat patch."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    out, stack = [], [loop]
+    while stack:
+        lp = stack.pop()
+        n = len(lp)
+        best = None
+        if n >= 6:
+            P = V[lp]
+            pairs = cKDTree(P).query_pairs(gap, output_type="ndarray")
+            if len(pairs):
+                i, k = pairs[:, 0], pairs[:, 1]
+                arc = np.minimum(k - i, n - (k - i))
+                d = np.linalg.norm(P[i] - P[k], axis=1)
+                # a vertex meshlab split where the surface pinched leaves two copies on one spot: no split between them
+                good = (arc >= 2) & (d > 0) & np.array([lp[b] not in adj.get(lp[a], ()) for a, b in zip(i, k)], bool)
+                order = np.lexsort((k, i, d))  # shortest first; ties by position, so the same mesh splits the same way
+                for j in order[good[order]]:
+                    a, b = int(i[j]), int(k[j])
+                    # both parts must be real polygons: points close along a straight run of the rim give a flat part
+                    if _flat(P[a:b + 1]) or _flat(np.vstack([P[b:], P[:a + 1]])):
+                        continue
+                    best = (a, b)
+                    break
+        if best is None:
+            out.append(lp)
+            continue
+        a, b = best
+        stack += [lp[a:b + 1], lp[b:] + lp[:a + 1]]
+    return out
+
+
+def _unit(n):
+    import numpy as np
+
+    ln = np.linalg.norm(n, axis=-1, keepdims=True)
+    return n / np.where(ln > 0, ln, 1.0), ln[..., 0]
+
+
+def _fill_hole(V, F, loop, adj, he, base: int):
+    """Triangles closing one hole by Liepa's minimum-weight triangulation (P. Liepa, "Filling holes in meshes",
+    SGP 2003; the same weight as CGAL's triangulate_hole: first the largest dihedral angle, then the total area,
+    both smallest), written here because it has to know the mesh round the hole: a triangle may not use a chord that
+    is already an edge of the mesh (it would be that edge's third face). CGAL's polyline version doesn't know the
+    mesh; its mesh version gives up on long rims. The dynamic program is the textbook O(n³) one, a whole diagonal at
+    a time in numpy. Points on straight runs of the rim (split points) carry no shape: they are left out of the
+    search and put back by fanning the triangle on their run from its centroid.
+    `loop`: the rim's vertices in the order its faces walk them; `adj`: each vertex's neighbours (sets); `he`:
+    (a, b) -> the face holding the half-edge a->b. Each triangle holds the rim edges reversed. Returns the triangles
+    and the new vertices (numbered from `base`); nothing when no triangulation avoids the mesh's edges."""
+    import numpy as np
+
+    loop = list(loop)
+    n0 = len(loop)
+    p = V[loop]
+    u = p - np.roll(p, 1, 0)
+    w = np.roll(p, -1, 0) - p
+    straight = (np.linalg.norm(np.cross(u, w), axis=1) <= 1e-9 * np.linalg.norm(u, axis=1) * np.linalg.norm(w, axis=1)) & ((u * w).sum(1) > 0)
+    keep = np.flatnonzero(~straight)
+    n = len(keep)
+    if n < 3:
+        return [], []
+    K = [loop[i] for i in keep]
+    P = V[K].astype(np.float64)
+    runs = [[loop[(keep[j] + s) % n0] for s in range(1, (keep[(j + 1) % n] - keep[j]) % n0 or n0)] for j in range(n)]
+    pos = {v: j for j, v in enumerate(K)}
+    # chords already in the mesh
+    chord_ok = np.ones((n, n), bool)
+    for i, a in enumerate(K):
+        for b in adj.get(a, ()):
+            k = pos.get(b)
+            if k is not None:
+                chord_ok[i, k] = chord_ok[k, i] = False
+    # the mesh face on each rim edge (corner j -> j+1): its unit normal, for the dihedral at the rim
+    rim_n = np.zeros((n, 3), np.float32)
+    for j in range(n):
+        a = K[j]
+        b = runs[j][0] if runs[j] else K[(j + 1) % n]
+        f = he.get((a, b))
+        if f is not None:
+            t = V[F[f]]
+            rim_n[j] = _unit(np.cross(t[1] - t[0], t[2] - t[0]))[0]
+    scale = float(np.ptp(P, axis=0).max()) or 1.0
+    Wa = np.full((n, n), np.inf)  # largest dihedral measure (1 - cos) inside the sub-polygon i..k
+    Ws = np.full((n, n), np.inf)  # its area
+    Nr = np.zeros((n, n, 3), np.float32)  # unit normal of the triangle on chord (i, k), in rim order
+    O = np.full((n, n), -1, np.int64)
+    idx = np.arange(n - 1)
+    Wa[idx, idx + 1] = 0.0
+    Ws[idx, idx + 1] = 0.0
+    for g in range(2, n):
+        I = np.arange(n - g)[:, None]
+        M = I + 1 + np.arange(g - 1)[None, :]
+        Kk = I + g
+        nrm, ln = _unit(np.cross(P[M] - P[I], P[Kk] - P[I]))
+        nrm = nrm.astype(np.float32)
+        area = ln / 2
+        # the neighbour across (i, m) and (m, k): the triangle chosen there, or the mesh face where it is a rim edge
+        cl = np.einsum("abc,abc->ab", nrm, Nr[I, M])
+        cr = np.einsum("abc,abc->ab", nrm, Nr[M, Kk])
+        cl[:, 0] = -np.einsum("ac,ac->a", nrm[:, 0], rim_n[I[:, 0]])
+        cr[:, -1] = -np.einsum("ac,ac->a", nrm[:, -1], rim_n[M[:, -1]])
+        a = np.maximum(np.maximum(1 - cl, 1 - cr), np.maximum(Wa[I, M], Wa[M, Kk]))
+        s = Ws[I, M] + Ws[M, Kk] + area
+        ok = np.isfinite(s) & (ln > 1e-12 * scale * scale)
+        if g == n - 1:  # the last triangle also sits on the rim edge n-1 -> 0
+            a = np.maximum(a, 1 + np.einsum("abc,c->ab", nrm, rim_n[n - 1]))
+        else:
+            ok &= chord_ok[I, Kk]
+        a = np.where(ok, a, np.inf)
+        s = np.where(ok, s, np.inf)
+        amin = a.min(1, keepdims=True)
+        s2 = np.where(a <= amin, s, np.inf)
+        best = s2.argmin(1)
+        r = np.arange(n - g)
+        i, k, m = r, r + g, r + 1 + best
+        Wa[i, k] = a[r, best]
+        Ws[i, k] = s2[r, best]
+        O[i, k] = m
+        Nr[i, k] = nrm[r, best]
+    if not np.isfinite(Ws[0, n - 1]):
+        return [], []
+    T = []
+    stack = [(0, n - 1)]
+    while stack:
+        i, k = stack.pop()
+        if k - i < 2:
+            continue
+        m = int(O[i, k])
+        T.append((i, m, k))
+        stack += [(i, m), (m, k)]
+    out, new = [], []
+    for i, m, k in T:
+        # the triangle's sides in rim order i->m->k->i, each with the rim points on it (only rim edges have any)
+        ring = []
+        for a_, b_ in ((i, m), (m, k), (k, i)):
+            ring.append(K[a_])
+            if (b_ - a_) % n == 1 and runs[a_]:
+                ring += runs[a_]
+        ring = ring[::-1]  # the patch runs the rim the other way
+        if len(ring) == 3:
+            out.append(tuple(ring))
+            continue
+        # points on its sides: fanned from a new point at the triangle's centroid, in its plane: no shape change
+        c = base + len(new)
+        new.append(P[[i, m, k]].mean(0))
+        out += [(ring[t], ring[(t + 1) % len(ring)], c) for t in range(len(ring))]
+    return out, new
+
+
+def _close_holes_near(ms, gap: float) -> None:
+    """Every hole of the current mesh closed: split where its rim comes back within `gap` of itself (see _split_hole),
+    each part filled by Liepa's triangulation (see _fill_hole). The tables are built on the faces round the holes
+    only: everything looked up is a rim vertex's or a rim edge's (hunyuan31_scorpion, 930 000 faces: built on the
+    whole mesh they took 11 s of a 27 s repair, and memory enough to stop the wrap beside it).
+    Until 2026-11-19 meshlab's close_holes filled them: on a hole round a thin strap or a fold it spanned both sides
+    with one flat patch, and it left zero-width slits where a rim runs straight through split points."""
     import numpy as np
     import pymeshlab
 
     cm = ms.current_mesh()
-    V, F = cm.vertex_matrix(), cm.face_matrix()
-    e = np.sort(F[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2).astype(np.int64), axis=1)
-    _, inv, cnt = np.unique(e[:, 0] * len(V) + e[:, 1], return_inverse=True, return_counts=True)
-    rim_v = np.zeros(len(V), dtype=bool)
-    rim_v[e[cnt[inv.ravel()] == 1].ravel()] = True
-    if not rim_v.any():
-        return
-    rim = rim_v[F].any(axis=1)
-    band = rim.copy()
-    for _ in range(HOLE_BAND_RINGS):
-        v = np.zeros(len(V), dtype=bool)
-        v[F[band].ravel()] = True
-        band |= v[F].any(axis=1)
-    used = np.unique(F[band])
-    remap = np.full(len(V), -1, dtype=np.int64)
-    remap[used] = np.arange(len(used))
-    edge = pymeshlab.PureValue(0.03 * float(np.linalg.norm(V.max(0) - V.min(0))))
-    part = pymeshlab.MeshSet()
-    part.add_mesh(pymeshlab.Mesh(V[used], remap[F[band]].astype(np.int32), f_scalar_array=rim[band].astype(np.float64)))
-    part.compute_selection_by_condition_per_face(condselect="fq > 0.5")
-    part.meshing_close_holes(maxholesize=100000, selected=True, refinehole=True, refineholeedgelen=edge, selfintersection=False)
-    pm = part.current_mesh()
-    PV, PF = pm.vertex_matrix(), pm.face_matrix()
-    # The band keeps its vertices in order; vertices the patches added come after them.
-    back = np.concatenate([used, len(V) + np.arange(len(PV) - len(used))])
-    ms.add_mesh(pymeshlab.Mesh(np.vstack([V, PV[len(used):]]), np.vstack([F[~band], back[PF]]).astype(np.int32)))
+    V, F = cm.vertex_matrix(), cm.face_matrix().astype(np.int64)
+    rim = _rim_vertices(F, len(V))
+    near = np.flatnonzero(rim[F].any(axis=1))
+    Fn = F[near]
+    adj, he = {}, {}
+    for f, (a, b, c) in zip(near.tolist(), Fn.tolist()):
+        he[(a, b)] = he[(b, c)] = he[(c, a)] = f
+        for x, y in ((a, b), (b, c), (c, a)):
+            adj.setdefault(x, set()).add(y)
+            adj.setdefault(y, set()).add(x)
+    tris, newv = [], []
+    for hole in _hole_loops(Fn, rim):
+        for lp in _split_hole(V, hole, adj, gap):
+            t, nv = _fill_hole(V, F, lp, adj, he, len(V) + len(newv))
+            tris += t
+            newv += nv
+            for tri in t:  # the next hole must not reuse this one's new edges either
+                for x, y in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+                    adj.setdefault(x, set()).add(y)
+                    adj.setdefault(y, set()).add(x)
+    if tris:
+        V2 = np.vstack([V] + ([np.array(newv)] if newv else []))
+        ms.add_mesh(pymeshlab.Mesh(V2, np.vstack([F, np.array(tris, np.int64)]).astype(np.int32)))
 
 
 def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
-    """Keep the surface; cut a small patch round each defect and refill it, growing the patch each round."""
+    """Keep the surface; cut a small patch round each defect and refill it, growing the patch each round. The faces
+    near the first cut are split down to its size first (see _refine_cut)."""
     import numpy as np
     import trimesh
 
     m = _weld(m)
+    n0 = len(m.faces)
+    m = _refine_cut(m, PATCH_MM, PATCH_MM)
+    if len(m.faces) != n0:
+        log(f"  refined round the first cut: {n0} -> {len(m.faces)} faces")
+        # a midpoint can land on a vertex across a crack (a T-junction): welded, the crack closes before any cut
+        # (tripo_sword: 3 open faces fewer in the first round)
+        m = _weld(m)
     for r in range(rounds):
         lab = trimesh.graph.connected_component_labels(m.face_adjacency, node_count=len(m.faces))
         area = np.bincount(lab, m.area_faces)
@@ -354,14 +674,14 @@ def _local_repair(m, log: Log, rounds: int = 10, cut_first: bool = True):
         if not bad.any():
             break
         log(f"  repair round {r}: {kind} faces {int(bad.sum())}, pieces {int(keep.sum())}")
+        radius = PATCH_MM * (r + 1) if cut_first else PATCH_MM * max(r, 1)
         if cut_first or r or not _open_faces(m).any():
-            radius = 0.5 * (r + 1) if cut_first else 0.5 * max(r, 1)
             m.update_faces(~_cut_around(m, bad, radius))
             m.remove_unreferenced_vertices()
         ms = _ms(m)
         ms.meshing_repair_non_manifold_edges(method=0)
         ms.meshing_repair_non_manifold_vertices()
-        _close_holes_near(ms)
+        _close_holes_near(ms, 2 * radius)
         m = _from_ms(ms)
         del ms
         if len(m.faces) >= COLLECT_FROM_FACES:  # the round's meshes go now, not whenever the collector runs (see _lean)
@@ -915,7 +1235,7 @@ def _filled(orig, repaired, shared, log: Log):
     block, chamber = _block(orig, shared, log)
     t = time.time()
     m = _drop_pockets(_union(repaired.copy(), block))
-    m, given, slabs, single = _given_back(orig, m, shared["printer"])
+    m, given, slabs, single = _given_back(orig, m, shared["printer"], log)
     log(f"  fill union {time.time() - t:.0f}s, given back {given} faces as {slabs} slabs and {single} single faces")
     t = _tick(shared, "union", t)
     m, bridged = _bridge(m, log, shared["printer"])
@@ -956,24 +1276,35 @@ def _inward(orig, idx, depth_max: float):
     sooner (a ray each way from the face's centre: an inside-out face of a broken model would otherwise grow
     outwards), and only as deep as that, up to `depth_max`: a strap thinner than a wall keeps its thickness, the
     thickening sees to it later. A face with nothing behind it either way (an open sheet) goes in along its normal.
-    Returns `flip` (the face's normal points in) and the depth."""
+    Where the face behind is given back too (both sides of a strap), the space between is shared: each goes in half
+    of it, or the two copies swap places (the medial bound, as the Blender Solidify GSoC 2016 proposal bounds its
+    depth by the shape's skeleton). Returns `flip` (the face's normal points in) and the depth."""
     import igl.embree
     import numpy as np
 
-    V, F = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)[idx]
+    V, Fa = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)
+    F = Fa[idx]
     n = np.asarray(orig.face_normals, np.float64)[idx]
     c = V[F].mean(1)
     ei = igl.embree.EmbreeIntersector()
-    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(np.asarray(orig.faces), np.int32), True)
+    ei.init(np.asfortranarray(V, np.float32), np.asfortranarray(Fa, np.int32), True)
     back = np.full((len(F), 2), np.inf)
+    hit = np.full((len(F), 2), -1, np.int64)
     for j, sgn in enumerate((-1.0, 1.0)):
         start, d = (c + sgn * n * 1e-3).astype(np.float32), (sgn * n).astype(np.float32)
         for i in range(len(F)):
             f, t, _, _ = ei.intersectRay_first(start[i], d[i])
             if f >= 0:
                 back[i, j] = t + 1e-3
+                hit[i, j] = f
     flip = back[:, 1] < back[:, 0]
-    return flip, np.clip(np.minimum(back.min(1), depth_max), 0.02, depth_max)
+    near = back.argmin(1)
+    t = back[np.arange(len(F)), near]
+    h = hit[np.arange(len(F)), near]
+    given = np.zeros(len(Fa), bool)
+    given[idx] = True
+    shared = (h >= 0) & given[np.maximum(h, 0)]
+    return flip, np.clip(np.minimum(np.where(shared, t / 2, t), depth_max), SLAB_FLOOR_MM, depth_max)
 
 
 def _prisms(V, F, n, flip, depth):
@@ -997,16 +1328,53 @@ def _prisms(V, F, n, flip, depth):
     return [trimesh.Trimesh(verts[i * 6:(i + 1) * 6], faces_out[i::k] - i * 6, process=False) for i in range(k)]
 
 
-def _slabs(orig, faces, depth_max: float, body=None):
+def _pinned(tris0, dv, m: int, k: int):
+    """A slab's faces (see _slabs) with every vertex at depth 0 being its own outside vertex: faces that then repeat
+    a vertex (a rim wall there) are gone, and where all three corners stayed the inside face lies on the outside one,
+    reversed: no solid there, both go. Returns the faces (outside ones first) and how many are outside."""
+    import numpy as np
+
+    idx = np.arange(2 * m)
+    idx[m:][dv <= 0] = np.flatnonzero(dv <= 0)
+    T = idx[tris0]
+    keep = (T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 2] != T[:, 0])
+    flat = (dv[tris0[:k]] <= 0).all(1)
+    keep[:k] &= ~flat
+    keep[k:2 * k] &= ~flat
+    return T[keep], int((~flat).sum())
+
+
+def _crossing_pairs(V, T):
+    """Pairs of faces that cross each other, by CGAL's exact test (via libigl)."""
+    import igl.copyleft.cgal as cgal
+    import numpy as np
+
+    r = cgal.remesh_self_intersections(V, T, detect_only=True, first_only=False)
+    return np.asarray(r[2], np.int64).reshape(-1, 2)
+
+
+def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
     """The original's own faces `faces` as solids, so the surface stays exactly as modelled: each connected patch
     is one slab (patches part at an edge of three faces), the patch itself outside, a copy of it pushed in (see
     _inward) and walls round its rim. One solid per face met its neighbours wall to wall, and the union cut every shared wall into slivers (hunyuan31_scorpion:
-    21k faces given back grew the body by 450k faces and the thickening ran out of memory). A patch that makes no
-    clean slab (its own faces wound against each other, a fold that crosses itself) goes back face by face. Returns
-    the solids, how many are slabs, and how many faces went back one by one.
+    21k faces given back grew the body by 450k faces and the thickening ran out of memory). A patch whose own faces
+    are wound against each other goes back face by face. Returns the solids, how many are slabs, and how many faces
+    went back one by one.
     Where the full depth in still lands inside `body` (a sleeve over a core: tripo_sword's grip), the slab goes the
     full depth: what is behind is solid anyway, and a slab as thin as the gap to the core read as a thin wall, which
-    the thickening blew up into ridges along its edges. Elsewhere (a strap hanging free) it stays as thin as modelled."""
+    the thickening blew up into ridges along its edges. Elsewhere (a strap hanging free) it stays as thin as modelled.
+    The copy pushed in crossed itself on most slabs (14 of 24 on hunyuan_lighthouse, 25 of 27 on tripo_pack, 7 of 7 on
+    hunyuan31_scorpion): two sides of a strap swapped places (the shared depth in _inward ends that), and at creases
+    and small features a mitered copy folds whatever the depth bound (no depth bound alone promises a fold-free
+    offset of a nonconvex shape). There the depth is cut back only at the vertices of the faces that still cross, by
+    half each round (backtracking, as in flip-free mesh optimisation), by CGAL's exact test: from `depth_max` down to
+    SLAB_FLOOR_MM that is at most log2(depth_max / floor) rounds. Where the original's own faces cross each other no
+    depth helps: the slab goes as it is, as those faces went before. What still crosses at the floor is a knife edge,
+    where the two sides of a sheet meet: only the faces round those crossings go back face by face (the whole patch
+    face by face gave the scorpion 11k prisms; resolving the slab by itself pinched a thin strap to nothing, and the
+    thickening then lost it). A slab thinner than a wall is fine: the thickening grows it, as a thin strap."""
+    import math
+
     import numpy as np
     import trimesh
 
@@ -1033,11 +1401,15 @@ def _slabs(orig, faces, depth_max: float, body=None):
     except ImportError:
         mf = None
     out, loose = [], [np.flatnonzero(~sound)]
-    for c in comps:
-        c = np.asarray(c, np.int64)
+    rounds = max(1, math.ceil(math.log2(depth_max / SLAB_FLOOR_MM)))  # halvings down to the floor
+    shrunk = knife = own = most = 0
+    work = [(np.asarray(c, np.int64), None) for c in comps]
+    while work:
+        c, turn = work.pop()
         # In is decided once for the whole patch, by its faces' votes weighted by area: on a thin strap the two
         # rays come back nearly together and a quarter of the faces voted the wrong way one by one
-        turn = float((area[c] * flip[c]).sum()) > 0.5 * float(area[c].sum())
+        if turn is None:
+            turn = float((area[c] * flip[c]).sum()) > 0.5 * float(area[c].sum())
         Fc = F[c][:, [0, 2, 1]] if turn else F[c]  # wound outwards
         inward_c = n[c] if turn else -n[c]
         e = Fc[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
@@ -1061,19 +1433,56 @@ def _slabs(orig, faces, depth_max: float, body=None):
         P = V[uv]
         rim = Fl[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)[cnt[inv] == 1]
         a, b = rim[:, :1], rim[:, 1:]
-        tris = np.vstack([Fl, Fl[:, ::-1] + m, np.hstack([b, a, a + m]), np.hstack([b, a + m, b + m])])
-        slab = trimesh.Trimesh(np.vstack([P, P + vn * dv[:, None]]), tris, process=False)
+        tris0 = np.vstack([Fl, Fl[:, ::-1] + m, np.hstack([b, a, a + m]), np.hstack([b, a + m, b + m])])
+        ok = False
+        for r in range(rounds + 1):
+            tris, k = _pinned(tris0, dv, m, len(Fl))
+            Vs = np.vstack([P, P + vn * dv[:, None]])
+            X = _crossing_pairs(Vs, tris)
+            if not len(X):
+                ok = True
+                break
+            movable = X[(X >= k).any(1)]  # pairs with a face that moved: the inside copy or a rim wall
+            if not len(movable):  # only the original's own faces cross each other
+                ok = True
+                own += 1
+                break
+            if r == rounds:
+                break
+            fs = np.unique(movable.ravel())
+            vs = np.unique(tris[fs[fs >= k]].ravel())
+            vs = vs[vs >= m] - m
+            if (dv[vs] <= SLAB_FLOOR_MM).all():
+                break
+            dv[vs] = np.maximum(dv[vs] / 2, SLAB_FLOOR_MM)
+            most = max(most, r + 1)
+        if not ok:  # a knife edge: the faces round its crossings go face by face, the rest is a slab again
+            bad_v = np.unique(tris[np.unique(movable.ravel())].ravel()) % m
+            bad = np.isin(Fl, bad_v).any(1)
+            loose.append(c[bad])
+            flip[c[bad]] = turn  # in the way the patch voted, as deep as the slab got there
+            depth[c[bad]] = dv[Fl[bad]].min(1)
+            knife += 1
+            if (~bad).any():
+                work.append((c[~bad], turn))
+            continue
+        if r:
+            shrunk += 1
+        slab = trimesh.Trimesh(Vs, tris, process=False)
         if mf is not None:
             q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(slab.vertices, np.float64),
                                       tri_verts=np.ascontiguousarray(slab.faces, np.uint64)))
             if q.status() != mf.Error.NoError or q.volume() <= 0:
                 loose.append(c)
+                knife += 1
                 continue
         out.append(slab)
     loose = np.concatenate(loose)
     if len(loose):
         full = fills[loose, flip[loose].astype(int)]
         out += _prisms(V, F[loose], n[loose], flip[loose], np.where(full, depth_max, depth[loose]))
+    log(f"  slabs: {len(comps)} patches, {shrunk} shrunk where they folded (up to {most} rounds), {knife} times faces "
+        f"round a knife edge went one by one, {own} with the original crossing itself, {len(loose)} single faces")
     return out, len(out) - len(loose), len(loose)
 
 
@@ -1083,7 +1492,7 @@ def _restored(orig, repaired, shared, log: Log):
     original's own faces it lost given back as they were (see _slabs) and joined in one union. The pick still
     judges the result by what moved and what is lost."""
     t = time.time()
-    m, given, slabs, single = _given_back(orig, shared["repairMesh"].copy(), shared["printer"])
+    m, given, slabs, single = _given_back(orig, shared["repairMesh"].copy(), shared["printer"], log)
     if not given:
         raise RuntimeError("the repair lost nothing")
     log(f"  given back {given} faces as {slabs} slabs and {single} single faces, {len(m.faces)} faces now {time.time() - t:.0f}s")
@@ -1093,13 +1502,13 @@ def _restored(orig, repaired, shared, log: Log):
     return m, {"piecesBridged": bridged, "facesGivenBack": given}
 
 
-def _given_back(orig, m, printer: Printer):
+def _given_back(orig, m, printer: Printer, log: Log = print):
     """`m` with the original's own faces it lost given back as they were (see _lost_faces, _slabs), in one union.
     Returns the mesh, how many faces went back, as how many slabs and how many single faces."""
     bad, patch = _lost_faces(orig, m)
     if not bad.any():
         return m, 0, 0, 0
-    solids, slabs, single = _slabs(orig, patch, printer.min_wall_mm, body=m)
+    solids, slabs, single = _slabs(orig, patch, printer.min_wall_mm, body=m, log=log)
     return _drop_pockets(_union(m, *solids)), int(patch.sum()), slabs, single
 
 
@@ -1279,9 +1688,20 @@ def _fills(c: dict[str, Any]) -> bool:
 
 
 def _pick(cands: list[dict[str, Any]], printer: Printer):
+    ok, note = _passing(cands, printer)
+    if not ok:
+        return None, note
+    # first of equals: the order they were built in. Until 2026-11-15 a "filled" candidate also replaced solidify or
+    # wrap when it changed at most 0.1 % more: the one-way measure counted the wrap's coat as kept. Measured both ways
+    # it wins on its own where it should (resin trellis2_bust, trellis2_crown, trellis2_statue), so the rule went.
+    return min(ok, key=lambda c: c["changedShare"]), note
+
+
+def _passing(cands: list[dict[str, Any]], printer: Printer):
+    """The candidates the pick chooses from, and a note when none kept the surface (then the ones that lost least)."""
     closed = [c for c in cands if c["watertight"] and (c["volumeCm3"] or 0) > 0]
     if not closed:
-        return None, "no candidate came out closed"
+        return [], "no candidate came out closed"
     ok = [c for c in closed if c["lostShare"] <= LOST_MAX_SHARE]
     note = None
     if not ok:
@@ -1295,11 +1715,37 @@ def _pick(cands: list[dict[str, Any]], printer: Printer):
     # Chandelier_01 wrapped kept its vase hollow behind a 0.5-1 mm slit, filling it changed 3 % more of its look.
     if printer.hollow_traps and any(_fills(c) for c in ok):
         ok = [c for c in ok if _fills(c)]
-    # first of equals: the order they were built in. Until 2026-11-15 a "filled" candidate also replaced solidify or
-    # wrap when it changed at most 0.1 % more: the one-way measure counted the wrap's coat as kept. Measured both ways
-    # it wins on its own where it should (resin trellis2_bust, trellis2_crown, trellis2_statue), so the rule went.
-    best = min(ok, key=lambda c: c["changedShare"])
-    return best, note
+    return ok, note
+
+
+def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Printer, log: Log, thicken_seen: bool):
+    """The pick judged on what is printed: every candidate the pick chooses from is thickened (see thicken) and
+    measured again, and the least changed after thickening wins (first of equals: the order they were built in).
+    Judged as built, a hollow wrap that looks a little better loses most to the thickening (tripo_blaster: wrap 5.3 %
+    as built, 14.0 % thickened, against the restored repair's 8.3 % and 8.6 %). The winner keeps its thickened mesh
+    in "_thick", so it isn't thickened twice; the losers' go at once. A candidate the thickening fails on keeps its
+    place by the first measure only if nothing could be judged. Nothing to do where the pick had one to choose from,
+    or none kept the surface."""
+    ok, note = _passing(cands, printer)
+    if best is None or note or len(ok) < 2:
+        return best
+    judged = None
+    for c in ok:
+        log(f" {c['method']} thickened, to judge what is printed:")
+        try:
+            out, info = thicken(c["_mesh"].copy(), printer, log, seen_too=thicken_seen)
+        except Exception as exc:  # noqa: BLE001 - it can't be judged after
+            log(f"  thicken failed: {exc}")
+            continue
+        a = _measure(orig, orig_pts, out, printer, orig_tree, orig_seen)
+        c["changedAfter"], c["lostAfter"] = a["changedShare"], a["lostShare"]
+        log(f"  {c['method']} after thickening: changed {a['changedShare']}, lost {a['lostShare']}")
+        if judged is None or c["changedAfter"] < judged["changedAfter"]:
+            if judged is not None:
+                judged.pop("_thick", None)
+            c["_thick"], judged = (out, info), c
+        del out, info
+    return judged or best
 
 
 def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: Printer = PRINTERS[DEFAULT_PRINTER],
@@ -1415,13 +1861,19 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
     if "shellJob" in shared:  # neither wrap nor solidify was built
         shared.pop("shellJob").cancel()
     best, note = _pick(cands, printer)
-    # Only where the wrap is winning: a model the repair already wins stays exactly as it was.
-    if best is not None and best["method"] == "wrap" and not paper:
+    # Whenever the repair lost something, it is given back (see _restored), whoever wins so far: give-back is there
+    # for what the repair lost (tripo_spellbook: the repair won and had lost the top of its page block, 1.07 mm).
+    # Until 2026-11-19 only where the wrap was winning. _restored raises when the repair lost nothing.
+    if best is not None and not paper and not _settled(cands):
         got = next((c for c in cands if c["method"] == "repair"), None)
         if got is not None:
             shared["repairMesh"] = got["_mesh"]
             build("restored", _restored)
             best, note = _pick(cands, printer)
+    if thicken_walls:
+        t1 = time.time()
+        best = _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer, log, thicken_seen)
+        stages["pickPrinted"] = round(time.time() - t1, 1)
     if best is None:
         raise RuntimeError(note)
     out = best["_mesh"]
@@ -1435,7 +1887,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         gc.collect()
         t1 = time.time()
         try:
-            out, thickened = thicken(out, printer, log, seen_too=thicken_seen)
+            out, thickened = best.pop("_thick") if "_thick" in best else thicken(out, printer, log, seen_too=thicken_seen)
         except Exception as exc:  # the model stays as picked; its thin spots are still reported
             log(f" thicken failed: {exc}")
         if thickened:  # measured against the original like the candidates, so the report says what it cost
