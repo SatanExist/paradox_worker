@@ -37,12 +37,23 @@ class Envelope:
         self.rad = cKDTree(skin_points).query(heads)[0]  # limb radius at each joint
         self.env = np.maximum(env * self.rad, 1e-9)
 
-    def may_blend(self, pts, A_, B_, chunk=50000):
-        """Point pts[i] may blend bones A_[i] and B_[i]."""
-        res = np.empty(len(pts), bool)
-        for s0 in range(0, len(pts), chunk):
-            sl = slice(s0, s0 + chunk)
-            D = np.linalg.norm(pts[sl, None, :] - self.heads[None], axis=2) / self.env
-            m = self.PM[A_[sl], B_[sl]]
-            res[sl] = ((D * m).max(1) <= 1) | (m.sum(1) <= 1)
+    def may_blend(self, pts, A_, B_):
+        """Point pts[i] may blend bones A_[i] and B_[i]. Only the joints between each pair are measured (points grouped
+        by pair): the same numbers as measuring every joint and masking, without the points x all-joints table."""
+        J = len(self.heads)
+        res = np.ones(len(pts), bool)
+        pair = np.asarray(A_, np.int64) * J + np.asarray(B_, np.int64)
+        order = np.argsort(pair, kind="stable")
+        keys, starts = np.unique(pair[order], return_index=True)
+        ends = np.append(starts[1:], len(order))
+        for key, s0, s1 in zip(keys.tolist(), starts.tolist(), ends.tolist()):
+            joints = np.flatnonzero(self.PM[key // J, key % J])
+            if len(joints) <= 1:  # across one joint skin always blends
+                continue
+            idx = order[s0:s1]
+            P = pts[idx]
+            ok = np.ones(len(idx), bool)
+            for x in joints.tolist():
+                ok &= np.linalg.norm(P - self.heads[x], axis=1) / self.env[x] <= 1
+            res[idx] = ok
         return res

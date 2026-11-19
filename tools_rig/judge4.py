@@ -22,6 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from judge import rig, rot
+from ourxfer import flat_free
 
 AXES = np.eye(3)
 
@@ -39,7 +40,7 @@ def judge4(path, angle=30.0, detail=False):
             stack += kids[i]
         sub.append(s)
     dbl = np.linalg.norm(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1)
-    Fa = F[dbl > 1e-12 * dbl.max()]
+    Fa = flat_free(V, F)
     area = 0.5 * dbl.sum()
     L = sp.triu(igl.intrinsic_delaunay_cotmatrix(V, Fa)[0].tocsr(), 1).tocoo()
     keep = L.data > 0

@@ -155,10 +155,13 @@ side = np.concatenate([side_a, side_b])
 lead_c = W.argmax(1)
 lf = lead_c[F]
 wn_own = np.zeros(len(tris))
+# a corner's answer depends only on its point (place + leading bone): ask once per distinct point (UV seams store a
+# point several times)
+_, first, inv = np.unique(np.column_stack([V, lead_c]), axis=0, return_index=True, return_inverse=True)
+Vu, lu, inv = V[first], lead_c[first], inv.ravel()
 for b in np.unique(side):
-    okf = np.ones(len(F), bool)
-    for k in range(3):
-        okf &= rule.may_blend(V[F[:, k]], lf[:, k], np.full(len(F), b)) | (lf[:, k] == b)
+    okv = (rule.may_blend(Vu, lu, np.full(len(Vu), b)) | (lu == b))[inv]
+    okf = okv[F].all(1)
     m = side == b
     wn_own[m] = igl.fast_winding_number(Vw, Fw[okf].astype(np.int64), X[tris[m]].mean(1))
 case = np.rint(np.clip(wn_own, 0, 1) * 2)  # 0 outside own skin, 1 on its opening, 2 inside it

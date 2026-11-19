@@ -69,12 +69,15 @@ RUN pip install runpod requests boto3 \
 COPY docker/flash_attn_sdpa /usr/local/lib/python3.11/site-packages/flash_attn
 
 # The repo at the commit we tested, with the attention change (flash-attn 2 is not installed; SDPA, as on the PC)
+# and the faster Blender mesh read + weight write (docker/skintokens_speed.patch: the same files byte for byte,
+# checked on 42 models for the read and old/new files for the transfer; the Blender steps about 2x faster)
 ENV SKINTOKENS_SHA=273b691d35989d71cd17ff2895fdc735097b92d1
-COPY docker/skintokens_sdpa.patch /tmp/skintokens_sdpa.patch
+COPY docker/skintokens_sdpa.patch docker/skintokens_speed.patch /tmp/
 RUN git clone https://github.com/VAST-AI-Research/SkinTokens.git /app/SkinTokens && \
     git -C /app/SkinTokens checkout "$SKINTOKENS_SHA" && \
-    git -C /app/SkinTokens apply --whitespace=nowarn /tmp/skintokens_sdpa.patch && \
-    grep -q 'attn_implementation="sdpa"' /app/SkinTokens/src/model/tokenrig.py
+    git -C /app/SkinTokens apply --whitespace=nowarn /tmp/skintokens_sdpa.patch /tmp/skintokens_speed.patch && \
+    grep -q 'attn_implementation="sdpa"' /app/SkinTokens/src/model/tokenrig.py && \
+    grep -q '_triangle_faces' /app/SkinTokens/src/rig_package/parser/bpy.py
 
 # Weights and the LLM config at the revisions we tested (same files download.py fetches)
 RUN cd /app/SkinTokens && python - <<'EOF'

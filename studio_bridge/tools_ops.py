@@ -1907,6 +1907,27 @@ RIG_TYPES = ("creature", "human")
 MAX_RIG_TRIES = 3
 
 
+def _run_tree(cmd, cwd, timeout, env):
+    """subprocess.run, but a timeout stops the whole process tree: autorig.py starts its own Blender server, and a
+    server left behind would hold the port and stop the next job (autorig.py refuses a server it did not start)."""
+    import signal
+
+    posix = os.name == "posix"
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=posix,
+                            creationflags=0 if posix else subprocess.CREATE_NEW_PROCESS_GROUP)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if posix:
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str, Any]:
     """A skeleton and skin weights for any creature (SkinTokens, MIT), like Mixamo / AccuRIG but not only people.
     Needs the rig worker (GPU, Dockerfile.rig) or this PC's SkinTokens install: SKINTOKENS_DIR (its folder, the cwd)
@@ -1927,10 +1948,9 @@ def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "model.glb"
             shutil.copyfile(plain, src)
-            done = subprocess.run(
+            done = _run_tree(
                 [python, str(TOOLS_RIG / "autorig.py"), str(Path(tmp) / "out"), "--tries", str(tries), "--kind", rig_type, str(src)],
-                cwd=folder, capture_output=True, text=True, timeout=600 * tries + 600,
-                env={**os.environ, "CUBLAS_WORKSPACE_CONFIG": ":4096:8"},
+                cwd=folder, timeout=600 * tries + 600, env={**os.environ, "CUBLAS_WORKSPACE_CONFIG": ":4096:8"},
             )
             report_path, rig_path = Path(tmp) / "out" / "model_report.json", Path(tmp) / "out" / "model_rig.glb"
             if not report_path.is_file():

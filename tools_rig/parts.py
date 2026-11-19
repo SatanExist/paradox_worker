@@ -92,20 +92,20 @@ lf = np.repeat(lead, 3)  # leading bone of each corner's face
 pt_ = Fw.ravel()
 near = np.zeros((len(lf), J), bool)
 near[np.arange(len(lf)), lf] = True
-topb = np.argsort(-Wf, 1)[:, :4]
-for k in range(4):
-    bk = topb[:, k]
-    has = Wf[np.arange(len(lf)), bk] > 0
-    idx = np.nonzero(has)[0]
-    near[idx, bk[idx]] |= may_blend(Vw[pt_[idx]], lf[idx], bk[idx])
+idx, bk = np.nonzero(Wf > 0)  # a point has at most 4 weighted bones (JOINTS_0): all of them, no sort needed
+near[idx, bk] |= may_blend(Vw[pt_[idx]], lf[idx], bk)
+
+
+def per_group(g, n):
+    """Sparse group-membership matrix (n x len(g)) for summing rows by group."""
+    return sp.csr_matrix((np.ones(len(g), np.int64), (g, np.arange(len(g)))), shape=(n, len(g)))
 
 
 def common(g):
     """Bones every face meeting in group g may keep: one set of weights per group keeps the skin closed there, and no
     face's corners reach past its own leading bone's joint, so no face stretches between far-apart parts."""
     n = np.bincount(g)
-    cnt = np.zeros((len(n), J), int)
-    np.add.at(cnt, g, near)
+    cnt = per_group(g, len(n)) @ near.astype(np.int64)  # whole numbers: the same counts as np.add.at, faster
     return cnt == n[:, None]
 
 
@@ -125,8 +125,7 @@ cw = grp
 Wc = Wf * allowed[grp]
 z = Wc.sum(1) <= 0
 if z.any():  # nothing left: the allowed bone nearest (in the skeleton) to all its faces' leads
-    S = np.zeros((grp.max() + 1, J))
-    np.add.at(S, grp, dist[lf].astype(float))
+    S = (per_group(grp, grp.max() + 1) @ dist[lf].astype(np.int64)).astype(float)  # sums of whole numbers: exact
     fb = np.where(allowed, S, np.inf).argmin(1)[grp]
     Wc[z] = 0
     Wc[z, fb[z]] = 1
@@ -146,14 +145,15 @@ def triangulate(X):
     n = len(X)
     C = np.zeros((n, n))
     K = np.zeros((n, n), int)
-    for gap in range(2, n):
-        for i in range(n - gap):
-            j = i + gap
-            ks = np.arange(i + 1, j)
-            cost = C[i, ks] + C[ks, j] + 0.5 * np.linalg.norm(np.cross(X[ks] - X[i], X[j] - X[i]), axis=1)
-            m = int(np.argmin(cost))
-            C[i, j] = cost[m]
-            K[i, j] = ks[m]
+    for gap in range(2, n):  # all spans of one length at once: they only need shorter spans
+        i = np.arange(n - gap)[:, None]
+        j = i + gap
+        ks = i + np.arange(1, gap)[None, :]
+        cost = C[i, ks] + C[ks, j] + 0.5 * np.linalg.norm(np.cross(X[ks] - X[i], X[j] - X[i]), axis=2)
+        m = np.argmin(cost, axis=1)
+        r = np.arange(n - gap)
+        C[r, r + gap] = cost[r, m]
+        K[r, r + gap] = ks[r, m]
     tris, st = [], [(0, n - 1)]
     while st:
         i, j = st.pop()

@@ -50,7 +50,9 @@ def rig(path):
             Jn = acc(j, b, at["JOINTS_0"]).astype(np.int64)
             Wn = acc(j, b, at["WEIGHTS_0"]).astype(np.float64)
             D = np.zeros((len(P), len(joints)))
-            np.add.at(D, (np.repeat(np.arange(len(P)), 4), Jn.ravel()), Wn.ravel())
+            rows = np.arange(len(P))
+            for k in range(4):  # slot by slot: a cell gets its slots added in the same order as np.add.at would, faster
+                D[rows, Jn[:, k]] += Wn[:, k]
             V.append(P)
             F.append(Fi + off)
             W.append(D)

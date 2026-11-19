@@ -37,6 +37,31 @@ def acc(j, binary, i):
     return out
 
 
+def put(j, binary, i, values):
+    """Write float32 values into accessor i in place (binary: bytearray), the mirror of acc(): an interleaved buffer
+    view (byteStride, as gltf-transform writes vertices) keeps the other attributes between the elements."""
+    a = j["accessors"][i]
+    v = j["bufferViews"][a["bufferView"]]
+    k = SIZES[a["type"]]
+    assert a["componentType"] == 5126, "only float accessors are written"
+    start = v.get("byteOffset", 0) + a.get("byteOffset", 0)
+    stride = v.get("byteStride", 0) or 4 * k
+    raw = np.frombuffer(binary, np.uint8, count=stride * (a["count"] - 1) + 4 * k, offset=start)
+    view = np.lib.stride_tricks.as_strided(raw, shape=(a["count"], 4 * k), strides=(stride, 1), writeable=True)
+    view[:] = np.ascontiguousarray(values, dtype=np.float32).reshape(a["count"], k).view(np.uint8)
+
+
+def flat_free(V, F):
+    """F without triangles that are flat at the file's precision: height above the longest edge no bigger than one
+    float32 step of the coordinates (glTF stores float32). Such needles (three points on a line, zero area) give the
+    cotangent Laplacian infinite weights; a fixed area cut-off lets them through. Returns the kept faces."""
+    a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    area2 = np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    longest = np.sqrt(np.max([((b - a) ** 2).sum(1), ((c - b) ** 2).sum(1), ((a - c) ** 2).sum(1)], axis=0))
+    step = float(np.spacing(np.float32(np.abs(V).max())))
+    return F[area2 > step * longest]
+
+
 def local(nd):
     if "matrix" in nd:
         return np.array(nd["matrix"], float).reshape(4, 4).T
@@ -163,9 +188,7 @@ if __name__ == "__main__":
                 y = x.copy()
                 y[:, :3] = x[:, :3] @ R.T
                 y[:, :3] /= np.maximum(np.linalg.norm(y[:, :3], axis=1, keepdims=True), 1e-12)
-            arr2 = np.frombuffer(bo, np.float32, count=arr.size, offset=jo["bufferViews"][jo["accessors"][a]["bufferView"]].get("byteOffset", 0)
-                                 + jo["accessors"][a].get("byteOffset", 0)).reshape(arr.shape)
-            arr2[:] = y.astype(np.float32)
+            put(jo, bo, a, y)
         P_ = np.eye(4) if i not in _parent_o else wo(_parent_o[i])
         for k in ("translation", "rotation", "scale", "matrix"):
             nd.pop(k, None)

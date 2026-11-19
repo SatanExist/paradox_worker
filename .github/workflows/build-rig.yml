@@ -8,6 +8,7 @@ on:
     paths:
       - "Dockerfile.rig"
       - "docker/skintokens_sdpa.patch"
+      - "docker/skintokens_speed.patch"
       - "docker/smoke_rig_imports.py"
       - "docker/flash_attn_sdpa/**"
       - "worker_tools.py"

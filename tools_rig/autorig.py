@@ -70,10 +70,27 @@ def repeatable(demo, torch):
     demo.DatasetConfig.parse = lambda **k: _parse(**{**k, "num_workers": 0, "persistent_workers": False})
 
     def start_bpy_server():
-        proc = subprocess.Popen([sys.executable, str(HERE / "seeded_server.py")],
-                                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        # A server left from another run would answer instead of ours (unseeded, maybe another version): stop, don't
+        # quietly rig through it (happened on the PC 2026-11-19, a stale bpy_server.py held the port).
+        import socket
+        from src.server.spec import BPY_PORT
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", BPY_PORT)) == 0:
+                raise RuntimeError(f"port {BPY_PORT} is already taken by another bpy server; stop it first")
+        posix = os.name == "posix"
+        proc = subprocess.Popen([sys.executable, str(HERE / "seeded_server.py")], start_new_session=posix,
+                                creationflags=0 if posix else subprocess.CREATE_NEW_PROCESS_GROUP)
+
+        def stop():  # the whole tree: a Windows venv python is a launcher with the real python as its child
+            if proc.poll() is not None:
+                return
+            if posix:
+                import signal
+                os.killpg(proc.pid, signal.SIGTERM)
+            else:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
         import atexit
-        atexit.register(proc.terminate)
+        atexit.register(stop)
         return proc
     demo.start_bpy_server = start_bpy_server
     _load = demo.load_model
@@ -124,8 +141,18 @@ if __name__ == "__main__":
         clock[endpoint] = clock.get(endpoint, 0) + time.time() - t
         return r
     demo.post_bpy_payload = timed_post
-    demo.start_bpy_server()
-    demo.wait_for_bpy_server(timeout=120)
+    server = demo.start_bpy_server()
+    t_srv = time.time()
+    while True:  # demo.wait_for_bpy_server, but a server that died (e.g. Blender failed to load) stops us at once
+        try:
+            demo.requests.get(f"{demo.BPY_SERVER}/ping", timeout=1)
+            break
+        except Exception:
+            if server.poll() is not None:
+                raise RuntimeError(f"the Blender server stopped while starting (exit {server.returncode}), see above")
+            if time.time() - t_srv > 120:
+                raise RuntimeError("the Blender server did not start in 120 s")
+            time.sleep(0.5)
     for src in map(Path, args):
         t0 = time.time()
         steps, kept = [], []
@@ -150,10 +177,13 @@ if __name__ == "__main__":
                 if not dst.exists():
                     steps.append(f"try {k + 1}: no file written, trying again")
                     continue
+                tv = time.time()
                 kind, res, info = verdict(dst, mode)
+                print(f"TIME {src.stem} try{k} judge {time.time() - tv:.1f}s", flush=True)
                 total = time.time() - ts
-                print(f"STAGE {src.stem} try{k} total {total:.0f}s transfer {clock.get('transfer', 0):.0f}s "
-                      f"other(load+network) {total - clock.get('transfer', 0):.0f}s -> {kind} {info}", flush=True)
+                server_s = {e: round(v, 1) for e, v in clock.items()}  # Blender server calls by endpoint
+                print(f"STAGE {src.stem} try{k} total {total:.0f}s server {server_s} "
+                      f"rest(network+judge) {total - sum(clock.values()):.0f}s -> {kind} {info}", flush=True)
                 kept.append((score(kind, res, info), k, dst, kind, res, info))
                 break
         if not kept:
@@ -175,6 +205,7 @@ if __name__ == "__main__":
         write(final, j, rest)
         # fused body parts (a fist grown into a thigh, an arm into a pouch): part the skin where two bones may not share
         # it (joint envelopes, parts.py) and cap the openings; runs in the worker venv (numpy + scipy)
+        tp = time.time()
         done = subprocess.run([TOOLS_PY, str(HERE / "parts.py"), str(final), str(final)], capture_output=True, text=True,
                               timeout=1800, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1"})
         if done.returncode == 0:
@@ -187,7 +218,9 @@ if __name__ == "__main__":
             parts_msg = "fused parts: check failed, the rig is kept as the network made it"
             print("PARTS FAILED", src.stem, done.stderr[-400:], flush=True)
         # grown-together limbs (an arm generated stuck to the flank): measured by inner.py (check only), said by grown.py
+        print(f"TIME {src.stem} parts {time.time() - tp:.1f}s", flush=True)
         fused_msgs = []
+        ti = time.time()
         chk = subprocess.run([TOOLS_PY, str(HERE / "inner.py"), str(final), "-"], capture_output=True, text=True,
                              timeout=900, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1", "CHECK": "1"})
         if chk.returncode == 0:
@@ -196,6 +229,7 @@ if __name__ == "__main__":
             fused_msgs = grown.warnings(groups)
         else:
             print("GROWN CHECK FAILED", src.stem, chk.stderr[-400:], flush=True)
+        print(f"TIME {src.stem} inner {time.time() - ti:.1f}s", flush=True)
         msg = {"humanoid": "human-like character: bones have standard names, so ready-made humanoid animations "
                            "(Mixamo style, Godot/Unity humanoid) play on it",
                "creature": "creature rig: it can be animated with its own animations; ready-made human animations won't fit"
