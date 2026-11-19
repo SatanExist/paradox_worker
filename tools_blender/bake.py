@@ -277,6 +277,44 @@ def shine(socket_name):
             p.inputs["Emission Strength"].default_value = 1.0
 
 
+def shine_packed():
+    """Make the heavy model glow with glTF's metal-roughness layout (G roughness, B metalness), so one bake gives
+    the texture that took two (a roughness pass, then metalness as light). Returns what to undo: the model's own
+    emission is baked after this."""
+    undo = []
+    for o in high:
+        for material in o.data.materials:
+            p = principled(material)
+            if not p:
+                continue
+            tree = material.node_tree
+            colour, strength = p.inputs["Emission Color"], p.inputs["Emission Strength"]
+            sources = [link.from_socket for link in colour.links]
+            for link in list(colour.links):
+                tree.links.remove(link)
+            mix = tree.nodes.new("ShaderNodeCombineColor")
+            mix.inputs["Red"].default_value = 0.0
+            for socket_name, channel in (("Roughness", "Green"), ("Metallic", "Blue")):
+                given = p.inputs[socket_name]
+                if given.links:
+                    tree.links.new(given.links[0].from_socket, mix.inputs[channel])
+                else:
+                    mix.inputs[channel].default_value = given.default_value
+            tree.links.new(mix.outputs["Color"], colour)
+            undo.append((tree, p, sources, tuple(colour.default_value), strength.default_value, mix))
+            strength.default_value = 1.0
+    return undo
+
+
+def unshine(undo):
+    for tree, p, sources, colour, strength, mix in undo:
+        tree.nodes.remove(mix)
+        for source in sources:
+            tree.links.new(source, p.inputs["Emission Color"])
+        p.inputs["Emission Color"].default_value = colour
+        p.inputs["Emission Strength"].default_value = strength
+
+
 def glows():
     """Whether the heavy model gives off light of its own: Rodin's models carry all their colour that way
     (black base colour, the picture in the emissive texture), and baked without it the pump came out black."""
@@ -405,17 +443,21 @@ def misses():
     s = n.shape[0] // BAKE
     # Any of the finer normal texels flat: with all of them, the rim of the dog's patch stayed a ring of glossy dots.
     flat = (np.abs(n - (0.5, 0.5, 1.0)) < 0.6 / 255).all(-1).reshape(BAKE, s, BAKE, s).any(axis=(1, 3))
-    return covered(BAKE) & flat & (rgba(maps["roughness"])[..., 1] < 0.6 / 255)
+    return covered(BAKE) & flat & (rgba(maps["metallicRoughness"])[..., 1] < 0.6 / 255)
 
 
 if not NORMAL_ONLY:
     t = time.time()
-    maps["roughness"] = image("roughness", False)
-    run("ROUGHNESS", maps["roughness"])
+    # glTF keeps roughness in G and metalness in B of one texture: baked as light the heavy model gives off, in one
+    # pass (a roughness pass and then metalness as light took 3.5-5 s more a bake, 2026-11-19).
+    undo = shine_packed()
+    maps["metallicRoughness"] = image("metallicRoughness", False)
+    run("EMIT", maps["metallicRoughness"])
     missed = misses()
     missed_first = int(missed.sum())
-    again_longer("roughness", maps["roughness"], lambda img: run("ROUGHNESS", img))
-    timings["roughness"] = round(time.time() - t, 1)
+    again_longer("metallicRoughness", maps["metallicRoughness"], lambda img: run("EMIT", img))
+    unshine(undo)
+    timings["metallicRoughness"] = round(time.time() - t, 1)
     t = time.time()
     scene.cycles.samples = NORMAL_SAMPLES
     again_longer("normal", maps["normal"], bake_normal)
@@ -431,9 +473,9 @@ if not NORMAL_ONLY and glows():
     again_longer("emissive", maps["emissive"], lambda img: run("EMIT", img))
     timings["emissive"] = round(time.time() - t, 1)
 
-# Base colour and metalness are baked as light the heavy model gives off: Cycles' diffuse colour pass
-# is base colour x (1 - metalness), which turned metal parts black.
-for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Color", True), ("metallic", "Metallic", False)]:
+# Base colour is baked as light the heavy model gives off too: Cycles' diffuse colour pass is base colour x
+# (1 - metalness), which turned metal parts black.
+for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Color", True)]:
     t = time.time()
     shine(socket_name)
     maps[name] = image(name, colour)
@@ -607,26 +649,10 @@ def png16(path, grey):
         fh.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
-# glTF keeps roughness in G and metalness in B of one texture.
 for img in maps.values():
     if img.size[0] != SIZE:
         img.scale(SIZE, SIZE)
 
-
-def pixels(img):
-    a = np.empty(SIZE * SIZE * 4, dtype=np.float32)
-    img.pixels.foreach_get(a)
-    return a.reshape(-1, 4)
-
-
-if not NORMAL_ONLY:
-    packed = np.zeros((SIZE * SIZE, 4), dtype=np.float32)
-    packed[:, 1] = pixels(maps["roughness"])[:, 0]
-    packed[:, 2] = pixels(maps["metallic"])[:, 0]
-    packed[:, 3] = 1.0
-    maps["metallicRoughness"] = bpy.data.images.new("metallicRoughness", SIZE, SIZE, alpha=False, float_buffer=False)
-    maps["metallicRoughness"].colorspace_settings.name = "Non-Color"
-    maps["metallicRoughness"].pixels.foreach_set(packed.ravel())
 
 # Out go the baked maps and, for every light mesh, each triangle corner as Blender holds it: position,
 # normal (the smooth ones the normal map was baked against) and new UV. tools_node/graft.mjs puts them
