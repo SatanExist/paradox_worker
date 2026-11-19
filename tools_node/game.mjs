@@ -1,6 +1,6 @@
 // node game.mjs <in.glb> <out.glb> '{"targetTris":20000,"textureSize":2048,"maxErrorPct":0.5}'
 // Makes a model fit for a game engine without losing what trimesh would drop (materials, UVs,
-// textures, separate meshes): unpack, weld, drop floating specks, cut triangles, shrink
+// textures, separate meshes): unpack, weld, cut triangles (separate pieces go only below the cut's error), shrink
 // textures, stand it on the floor. Prints {steps, before, after, ...} as JSON on stdout.
 //
 // Two ways to cut: to a triangle budget (targetTris), or — with maxErrorPct — to as few
@@ -37,8 +37,12 @@ const keep = params.keepFile ? new Float32Array(new Uint8Array(readFileSync(para
 // three corners on them is left out before the cut.
 const hidden = params.dropFile ? new Float32Array(new Uint8Array(readFileSync(params.dropFile)).buffer) : null;
 
-/** Pieces smaller than this share of the model are specks the generator left floating around it. */
-const SPECK = 0.005;
+/**
+ * Separate pieces go only when they are smaller than the error the cut already allows everywhere else
+ * (meshoptimizer's Prune, as Godot's importer uses it): a speck the generator left floating goes at a light
+ * budget, a jewel on a crown or a fragment of a lattice stays as long as the rest of the model is kept finer.
+ */
+const PRUNE = ["Prune"];
 /**
  * In the quality mode normals and UVs count too: with the shape alone meshopt's error estimate
  * ran 2–4x under the measured deviation, with these it lands close to what was asked.
@@ -255,7 +259,7 @@ function protectSkinCuts(prims) {
   }
 }
 
-/** Separate pieces, joined by position (UV seams split vertices, not the surface). */
+/** Separate pieces, joined by position (UV seams split vertices, not the surface): the piece of each vertex. */
 function pieces(p) {
   const remap = MeshoptSimplifier.generatePositionRemap(p.positions, 3);
   const parent = Uint32Array.from(remap.keys());
@@ -270,23 +274,33 @@ function pieces(p) {
       if (r !== a) parent[r] = a;
     }
   }
-  const roots = new Set();
-  for (const v of p.indices) roots.add(find(remap[v]));
-  return roots.size;
+  return Uint32Array.from(remap, find);
 }
 
-/** Drop pieces smaller than SPECK of the model: triangles spent on them are lost to the model itself. */
-function dropSpecks(prims, modelScale) {
-  let removedPieces = 0;
-  let removedTriangles = 0;
-  for (const p of prims) {
-    const before = p.indices.length / 3;
-    const piecesBefore = pieces(p);
-    p.indices = MeshoptSimplifier.simplifyPrune(p.indices, p.positions, 3, (SPECK * modelScale) / p.scale);
-    removedTriangles += before - p.indices.length / 3;
-    removedPieces += piecesBefore - pieces(p);
-  }
-  return { pieces: removedPieces, triangles: removedTriangles };
+/** Before the cut: the piece of every vertex and the triangles of every piece, to tell later which ones went. */
+function piecesBefore(prims) {
+  return prims.map((p) => {
+    const piece = pieces(p);
+    const triangles = new Map();
+    for (let i = 0; i < p.indices.length; i += 3) triangles.set(piece[p.indices[i]], (triangles.get(piece[p.indices[i]]) ?? 0) + 1);
+    return { piece, triangles };
+  });
+}
+
+/** Pieces the cut removed whole (collapses never join pieces, so the labels from before still hold). */
+function piecesGone(prims, before) {
+  let gone = 0;
+  let triangles = 0;
+  prims.forEach((p, k) => {
+    const left = new Set();
+    for (const v of p.indices) left.add(before[k].piece[v]);
+    for (const [root, n] of before[k].triangles) {
+      if (left.has(root)) continue;
+      gone++;
+      triangles += n;
+    }
+  });
+  return { pieces: gone, triangles };
 }
 
 /**
@@ -441,12 +455,12 @@ function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget =
 
 /** As few triangles as keep the surface (normals and UVs counted) within `error` of the model's size. */
 function cutWithin(prims, error, modelScale) {
-  if (prims.length > 1) return cutTogether(prims, { error, budget: false });
+  if (prims.length > 1) return cutTogether(prims, { error, budget: false, flags: PRUNE });
   for (const p of prims) {
     const limit = (error * modelScale) / p.scale;
     [p.indices] = p.stride
-      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.weights, null, 0, limit)
-      : MeshoptSimplifier.simplify(p.indices, p.positions, 3, 0, limit);
+      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, p.attributes, p.stride, p.weights, null, 0, limit, PRUNE)
+      : MeshoptSimplifier.simplify(p.indices, p.positions, 3, 0, limit, PRUNE);
   }
 }
 
@@ -508,10 +522,8 @@ if (params.forBake) {
 // meshopt measures error against each primitive's own size; we speak of the whole model.
 const modelScale = Math.max(...prims.map((p) => p.scale), 1e-9);
 
-const specks = dropSpecks(prims, modelScale);
-if (specks.triangles) steps.push(`removed ${specks.pieces} floating specks (${specks.triangles} triangles)`);
-
 const cleaned = triangleCount(prims);
+const labels = piecesBefore(prims);
 if (maxError !== null) {
   cutWithin(prims, maxError, modelScale);
   steps.push(`triangles cut within ${maxError * 100}% of the model's size`);
@@ -523,15 +535,17 @@ if (triangleCount(prims) > targetTris) {
   // The budget is what was asked for, so the error limit is off. UV seams stay locked, which
   // keeps textures in place; AI models are so full of seams that this can stop well short.
   // Joined across seams (forBake), only Permissive gets far: without it meshopt stalled at 8x the budget.
-  cut(prims, targetTris / triangleCount(prims), [...(params.forBake ? ["Permissive"] : []), ...EVEN]);
+  cut(prims, targetTris / triangleCount(prims), [...(params.forBake ? ["Permissive"] : []), ...EVEN, ...PRUNE]);
   steps.push(`triangles cut to ${targetTris}`);
   if (triangleCount(prims) > targetTris * 1.05) {
     // Only then let it collapse across seams: the budget is met, textures near seams may shift.
-    cut(prims, targetTris / triangleCount(prims), ["Permissive", ...EVEN]);
+    cut(prims, targetTris / triangleCount(prims), ["Permissive", ...EVEN, ...PRUNE]);
     steps.push("UV seams loosened to reach the budget");
     seamsLoosened = true;
   }
 }
+const specks = piecesGone(prims, labels);
+if (specks.pieces) steps.push(`removed ${specks.pieces} separate pieces smaller than the cut's error elsewhere (${specks.triangles} triangles)`);
 let emptied = 0;
 for (const p of prims) {
   if (!p.indices.length) {
