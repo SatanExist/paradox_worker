@@ -1626,18 +1626,20 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None
     watertight = bool(m.is_watertight)
     gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts, V, F)[0])
     far = gone > tol  # nearer than that it is kept, so it doesn't matter which side it is on
+    added = moved & seen
+    i = np.flatnonzero(added)
+    # both questions "inside the result?" in one call: the exact winding number builds its tree for every call
+    # (5 s at 700k faces, trellis2_bust), and each point's answer is its own, so asking once changes nothing
+    w = _winding(V, F, np.concatenate([orig_pts[far], near[i]]), watertight) if far.any() or len(i) else np.zeros(0)
     outside = np.ones(len(orig_pts), dtype=bool)
-    if far.any():
-        outside[far] = _winding(V, F, orig_pts[far], watertight) < 0.5
+    outside[far] = w[:int(far.sum())] < 0.5
     lost = gone * outside
     kept_off = gone > tol
     if orig_seen is not None:
         kept_off = kept_off[orig_seen]
-    added = moved & seen
-    if added.any():
-        i = np.flatnonzero(added)
+    if len(i):
         on = np.sqrt(igl.point_mesh_squared_distance(near[i], V, F)[0]) < tol
-        wraps = on | (_winding(V, F, near[i], watertight) >= 0.5)
+        wraps = on | (w[int(far.sum()):] >= 0.5)
         # straight in: libigl casts both ways along the line and keeps the nearer hit, as a face's normal may be off
         hit = igl.embree.line_mesh_intersection(np.ascontiguousarray(pts[i]), np.ascontiguousarray(-normals[i]), Vo, Fo)
         depth = np.full(len(i), np.inf)
