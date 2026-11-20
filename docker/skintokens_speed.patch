@@ -1,0 +1,91 @@
+diff --git a/src/rig_package/parser/bpy.py b/src/rig_package/parser/bpy.py
+index fc33b8c..a9a79a1 100755
+--- a/src/rig_package/parser/bpy.py
++++ b/src/rig_package/parser/bpy.py
+@@ -295,6 +295,35 @@ def get_armature():
+         return None
+     return armatures[0]
+ 
++def _triangle_faces(me, rot):
++    """extract_mesh's per-polygon loop, vectorised, for meshes made only of triangles with three different corners
++    (what glTF import gives); None for anything else, which then takes the loop. The loop walks a polygon's edges from
++    nodes[0], the first element of list(set(sorted(corners))) - CPython's set order, kept by building the same sets -
++    so a triangle (p, q, r) in loop order comes out as (p, q, r), (q, p, r) or (r, q, p) when nodes[0] is p, q or r.
++    Normals: rot @ polygon.normal, the same float32 matrix-vector product per face."""
++    n = len(me.polygons)
++    if n == 0:
++        return None
++    total = np.empty(n, np.int32)
++    me.polygons.foreach_get("loop_total", total)
++    if not (total == 3).all():
++        return None
++    start = np.empty(n, np.int32)
++    me.polygons.foreach_get("loop_start", start)
++    lv = np.empty(len(me.loops), np.int32)
++    me.loops.foreach_get("vertex_index", lv)
++    pqr = lv[start[:, None] + np.arange(3)].astype(np.int64)
++    if ((pqr[:, 0] == pqr[:, 1]) | (pqr[:, 1] == pqr[:, 2]) | (pqr[:, 0] == pqr[:, 2])).any():
++        return None
++    first = np.fromiter((next(iter(set(t))) for t in np.sort(pqr, axis=1).tolist()), np.int64, n)
++    p, q, r = pqr.T
++    faces = np.where((first == p)[:, None], pqr,
++                     np.where((first == q)[:, None], np.stack([q, p, r], 1), np.stack([r, q, p], 1)))
++    nrm = np.empty(n * 3, np.float32)
++    me.polygons.foreach_get("normal", nrm)
++    normals = np.matmul(rot, nrm.reshape(-1, 3, 1))[:, :, 0]  # float32 like rot @ polygon.normal
++    return faces, normals
++
+ def extract_mesh(bones=None):
+     """
+     Extract vertices, face_normals, faces and skinning(if possible).
+@@ -340,7 +369,8 @@ def extract_mesh(bones=None):
+         faces = []
+         normals = []
+         
+-        for polygon in obj.data.polygons:
++        tri = _triangle_faces(obj.data, rot)  # same faces and normals as the loop below, without a Python loop
++        for polygon in (obj.data.polygons if tri is None else ()):
+             edges = polygon.edge_keys
+             nodes = []
+             adj = {}
+@@ -371,10 +401,14 @@ def extract_mesh(bones=None):
+             for (second, third) in zip(loop[1:], loop[2:]):
+                 faces.append((first, second, third))
+                 normals.append(rot @ normal)
++        if tri is not None:
++            faces, normals = tri
+         faces = np.array(faces, dtype=np.int32)
+         normals = np.array(normals, dtype=np.float32)
+         
+-        coords = np.array([v.co for v in obj_verts])
++        coords = np.empty(len(obj_verts) * 3, np.float32)
++        obj_verts.foreach_get("co", coords)  # float32, as np.array([v.co ...]) gives them
++        coords = coords.reshape(-1, 3)
+         rot_np = np.array(rot)
+         coords = (rot_np @ coords.T).T + matrix_world_bias
+         vertices[0:3, :coords.shape[0]] = coords.T
+@@ -657,11 +691,19 @@ def make_asset(
+             # clean vertex groups first in case skin exists
+             for name in joint_names:
+                 ob.vertex_groups[name].remove(range(990))
+-            for v, w in enumerate(skin):
+-                for ii in range(group_per_vertex):
+-                    j = argsorted[v, ii]
+-                    n = joint_names[j]
+-                    ob.vertex_groups[n].add([v], vertex_group_reweight[v, ii], 'REPLACE')
++            # one add() per (rank, bone, weight) for all its vertices instead of one per vertex: Blender keeps the
++            # weight as float32 (so equal float32 bits = the same stored weight), and each vertex still gets its
++            # groups in rank order 0, 1, 2, ... as in the per-vertex loop
++            groups = [ob.vertex_groups[n] for n in joint_names]
++            w32 = vertex_group_reweight[:, :group_per_vertex].astype(np.float32)
++            for ii in range(group_per_vertex):
++                j, w = argsorted[:, ii], w32[:, ii]
++                bits = w.view(np.int32)
++                order = np.lexsort((bits, j))
++                js, bs = j[order], bits[order]
++                cut = np.flatnonzero((js[1:] != js[:-1]) | (bs[1:] != bs[:-1])) + 1
++                for s0, s1 in zip(np.r_[0, cut].tolist(), np.r_[cut, len(order)].tolist()):
++                    groups[js[s0]].add(order[s0:s1].tolist(), float(w[order[s0]]), 'REPLACE')
+     
+     def to_matrix(x: ndarray):
+         return Matrix((x[0, :], x[1, :], x[2, :], x[3, :]))

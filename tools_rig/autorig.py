@@ -1,0 +1,290 @@
+"""The auto_rig operation's worker side (studio_bridge.tools_ops.auto_rig runs it as its own process).
+Runs in the SkinTokens environment with cwd = the SkinTokens folder (SKINTOKENS_DIR):
+  python autorig.py <out dir> [--tries N] [--post] [--kind human|creature] [--cape] <in.glb> ...
+Per model: SkinTokens (any creature) with retry when the network gives no skeleton (it stops on an assert, ~1 in 40),
+up to N tries kept and the best one chosen (human rig with standard names first, then the one whose skin distorts
+least when each bone bends 30 degrees, judge4.py: published posing + as-rigid-as-possible energy, no cut-offs of ours;
+then more named bones), then the honest verdict: "humanoid" (standard names: ready for Mixamo/Godot humanoid
+animations) or "creature" (own skeleton, its own animations). Every model gets its rig (like Mixamo/AccuRIG); kind.py
+(SigLIP pictures, only where SIGLIP_DIR and Blender are set up) adds a note when it doesn't look like a character.
+--kind is the user's switch, as Mixamo / AccuRIG ask it: human (standard names by the humanoid template and plain
+signs, no proportion limits) or creature (own skeleton, no names; the default).
+--cape (the user's switch, off by default; human rigs): loose cloth (capes, robes, long skirts) gets its own bone
+chains hung from the hips (cape.py), so it no longer stretches with the legs and an engine can swing it. Off, the
+rig file is the same as without the switch.
+Repeatable: same model and switches on the same machine -> the same rig file, byte for byte (repeatable(),
+seeded_server.py). judge4 / parts / inner need libigl + scipy: they run in RIG_TOOLS_PYTHON (default: this Python).
+Writes <name>_rig.glb (names applied when human) and <name>_report.json; prints timings per stage."""
+import json
+import os
+import random
+import subprocess
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, os.getcwd())
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
+import grown  # noqa: E402
+
+MAX_ATTEMPTS = 3  # per try: the first run plus up to 2 retries when no skeleton comes out
+# judge4 / parts / inner need libigl + scipy; the worker image has them next to SkinTokens, this PC in another venv
+TOOLS_PY = os.environ.get("RIG_TOOLS_PYTHON") or sys.executable
+
+
+def verdict(path, mode="creature"):
+    """-> (kind, names map or None, info) from the rigged file. mode: the user's switch human / creature."""
+    import numpy as np
+    from rename import label, read, skeleton
+    j, rest = read(path)
+    pos, parents, nodes = skeleton(j, rest)
+    res, why = (None, "the user chose Creature") if mode == "creature" else label(pos, parents)
+    here = os.path.dirname(os.path.abspath(__file__))
+    done = subprocess.run([TOOLS_PY, os.path.join(here, "judge4.py"), os.path.abspath(path)], capture_output=True,
+                          text=True, timeout=900, cwd=here, env={**os.environ, "OPENBLAS_NUM_THREADS": "1"})
+    bend = json.loads(done.stdout.strip().splitlines()[-1])
+    if res is not None:
+        return "humanoid", res, {"bones": len(nodes), "bend": bend}
+    return "creature", None, {"bones": len(nodes), "whyNotHuman": why, "bend": bend}
+
+
+def score(kind, res, info):
+    named = len(res[0]) if res else 0
+    return (kind == "humanoid", -info["bend"]["distortion"], named, info["bones"])
+
+
+def repeatable(demo, torch):
+    """Same model -> same rig, every run (PyTorch "Reproducibility" notes). Two causes were found in SkinTokens itself
+    (probe 2026-11-19: equal input, yet both encoders gave other numbers each run):
+    - nobody calls model.eval() after loading (only the VAE is put in eval), so the shape encoder runs in training mode
+      and picks its points with an unseeded np.random.default_rng();
+    - TokenRig.generate() does not pass the seed its VAE encoder takes, so that one picks points from OS entropy too
+      (seed=0, as the shape encoder's own eval branch does).
+    Plus the usual: deterministic GPU kernels, no loader worker process (its numpy is not seeded on Windows), and a bpy
+    server that reseeds every request. Proper home of the two model fixes: SkinTokens upstream (demo / generate)."""
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    _parse = demo.DatasetConfig.parse
+    demo.DatasetConfig.parse = lambda **k: _parse(**{**k, "num_workers": 0, "persistent_workers": False})
+
+    def start_bpy_server():
+        # A server left from another run would answer instead of ours (unseeded, maybe another version): stop, don't
+        # quietly rig through it (happened on the PC 2026-11-19, a stale bpy_server.py held the port).
+        import socket
+        from src.server.spec import BPY_PORT
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", BPY_PORT)) == 0:
+                raise RuntimeError(f"port {BPY_PORT} is already taken by another bpy server; stop it first")
+        posix = os.name == "posix"
+        proc = subprocess.Popen([sys.executable, str(HERE / "seeded_server.py")], start_new_session=posix,
+                                creationflags=0 if posix else subprocess.CREATE_NEW_PROCESS_GROUP)
+
+        def stop():  # the whole tree: a Windows venv python is a launcher with the real python as its child
+            if proc.poll() is not None:
+                return
+            if posix:
+                import signal
+                os.killpg(proc.pid, signal.SIGTERM)
+            else:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        import atexit
+        atexit.register(stop)
+        return proc
+    demo.start_bpy_server = start_bpy_server
+    _load = demo.load_model
+
+    def load_model(*a, **k):
+        r = _load(*a, **k)
+        demo.model.eval()
+        vcls = type(demo.model.vae.model)
+        if not getattr(vcls, "_seeded", False):
+            _enc = vcls._encode
+
+            def _encode(self, *ea, **ek):
+                if ek.get("seed") is None:
+                    ek["seed"] = 0
+                return _enc(self, *ea, **ek)
+            vcls._encode, vcls._seeded = _encode, True
+        return r
+    demo.load_model = load_model
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")  # needed by deterministic cuBLAS, before CUDA starts
+    import numpy as np
+    import torch
+    import demo
+    from rename import read, write
+    repeatable(demo, torch)
+
+    args = sys.argv[1:]
+    out = Path(args.pop(0))
+    tries, post, mode, cape = 1, False, "creature", False
+    while args and args[0].startswith("--"):
+        a = args.pop(0)
+        if a == "--tries":
+            tries = int(args.pop(0))
+        elif a == "--post":
+            post = True
+        elif a == "--kind":
+            mode = args.pop(0)
+            assert mode in ("human", "creature"), mode
+        elif a == "--cape":
+            cape = True
+    out.mkdir(parents=True, exist_ok=True)
+    clock = {}
+    _post = demo.post_bpy_payload
+
+    def timed_post(endpoint, payload):
+        t = time.time()
+        r = _post(endpoint, payload)
+        clock[endpoint] = clock.get(endpoint, 0) + time.time() - t
+        return r
+    demo.post_bpy_payload = timed_post
+    server = demo.start_bpy_server()
+    t_srv = time.time()
+    while True:  # demo.wait_for_bpy_server, but a server that died (e.g. Blender failed to load) stops us at once
+        try:
+            demo.requests.get(f"{demo.BPY_SERVER}/ping", timeout=1)
+            break
+        except Exception:
+            if server.poll() is not None:
+                raise RuntimeError(f"the Blender server stopped while starting (exit {server.returncode}), see above")
+            if time.time() - t_srv > 120:
+                raise RuntimeError("the Blender server did not start in 120 s")
+            time.sleep(0.5)
+    for src in map(Path, args):
+        t0 = time.time()
+        steps, kept = [], []
+        import kind as looks
+        seen = looks.look(src) if looks.available() else None
+        print("LOOK", src.stem, seen, flush=True)
+        for k in range(tries):
+            for attempt in range(MAX_ATTEMPTS):
+                seed = 1 + 1000 * k + attempt
+                random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+                dst = out / f"{src.stem}_try{k}.glb"
+                clock.clear()
+                ts = time.time()
+                try:
+                    demo.run_cli(SimpleNamespace(input=str(src), output=str(dst), top_k=5, top_p=0.95, temperature=1.0,
+                                                 repetition_penalty=2.0, num_beams=10, use_skeleton=False, use_transfer=True,
+                                                 use_postprocess=post, model_ckpt=demo.MODEL_CKPTS[0], hf_path=None))
+                except Exception as exc:  # no skeleton (assert) or a broken bone sequence (ValueError) etc.
+                    steps.append(f"try {k + 1}: the network gave no usable skeleton ({type(exc).__name__}), trying again")
+                    print('RETRY', src.stem, type(exc).__name__, str(exc)[:80], flush=True)
+                    continue
+                if not dst.exists():
+                    steps.append(f"try {k + 1}: no file written, trying again")
+                    continue
+                tv = time.time()
+                kind, res, info = verdict(dst, mode)
+                print(f"TIME {src.stem} try{k} judge {time.time() - tv:.1f}s", flush=True)
+                total = time.time() - ts
+                server_s = {e: round(v, 1) for e, v in clock.items()}  # Blender server calls by endpoint
+                print(f"STAGE {src.stem} try{k} total {total:.0f}s server {server_s} "
+                      f"rest(network+judge) {total - sum(clock.values()):.0f}s -> {kind} {info}", flush=True)
+                kept.append((score(kind, res, info), k, dst, kind, res, info))
+                break
+        if not kept:
+            rep = {"operation": "auto_rig", "steps": steps + ["no rig: the network gave no skeleton in any try"],
+                   "before": {}, "after": {"kind": "failed"}}
+            json.dump(rep, open(out / f"{src.stem}_report.json", "w"), indent=1)
+            print("RIG", src.stem, "FAILED", flush=True)
+            continue
+        kept.sort(key=lambda x: (x[0], -x[1]), reverse=True)
+        sc, k, dst, kind, res, info = kept[0]
+        final = out / f"{src.stem}_rig.glb"
+        j, rest = read(dst)
+        if kind == "humanoid":
+            m, extra = res
+            nodes = j["skins"][0]["joints"]
+            for b, nm in m.items():
+                j["nodes"][nodes[b]]["name"] = nm
+            info.update(namedBones=len(m), fingers=extra.get("fingers"))
+        write(final, j, rest)
+        # cape bones (only when asked): before parts.py, which lets cloth bones blend with each other (envelope.py)
+        cape_msgs = []
+        if cape and kind != "humanoid":
+            cape_msgs.append("cape bones: not added, they hang from the named hips and legs, so they need Rig type: Human")
+        elif cape:
+            tc = time.time()
+            done = subprocess.run([sys.executable, str(HERE / "cape.py"), str(final), str(final)], capture_output=True,
+                                  text=True, timeout=900, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1"})
+            if done.returncode != 0:
+                cape_msgs.append("cape bones: the check failed, the rig has none")
+                print("CAPE FAILED", src.stem, done.stderr[-400:], flush=True)
+            else:
+                cp = json.loads(done.stdout.strip().splitlines()[-1])
+                info.update(cape=cp)
+                if not cp["chains"]:
+                    cape_msgs.append(f"cape bones: none added ({cp['why']})")
+                else:
+                    cape_msgs.append(f"cape bones: {cp['chains']} chains of swinging bones hung from the hips for the "
+                                     f"loose cloth ({cp['clothPct']} % of the skin), so it no longer stretches with the "
+                                     "legs; game_prep's Godot package swings them with spring bones")
+                    if cp["outsideLegs"] < 0.5:  # fewer than half of the moved points hang outside the legs
+                        cape_msgs.append(f"warning: only {round(100 * cp['outsideLegs'])} % of what was taken as cloth "
+                                         "hangs outside the legs; the rest lies inside their thickness, which looks "
+                                         "like armour plates or double walls rather than a cape. If the model has no "
+                                         "cape, rig it again with Cape off")
+            print(f"TIME {src.stem} cape {time.time() - tc:.1f}s", flush=True)
+        # fused body parts (a fist grown into a thigh, an arm into a pouch): part the skin where two bones may not share
+        # it (joint envelopes, parts.py) and cap the openings; runs in the worker venv (numpy + scipy)
+        tp = time.time()
+        done = subprocess.run([TOOLS_PY, str(HERE / "parts.py"), str(final), str(final)], capture_output=True, text=True,
+                              timeout=1800, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1"})
+        if done.returncode == 0:
+            pp = json.loads(done.stdout.strip().splitlines()[-1])
+            info.update(fusedParts=pp)
+            parts_msg = (f"fused parts: the skin was parted at {pp['partedPoints']} points where the model had grown "
+                         f"parts together that move apart (like a fist on a thigh); {pp['cappedOpenings']} openings "
+                         f"closed; {pp['weightMassRemovedPct']} % of the skin weights moved")
+        else:
+            parts_msg = "fused parts: check failed, the rig is kept as the network made it"
+            print("PARTS FAILED", src.stem, done.stderr[-400:], flush=True)
+        # grown-together limbs (an arm generated stuck to the flank): measured by inner.py (check only), said by grown.py
+        print(f"TIME {src.stem} parts {time.time() - tp:.1f}s", flush=True)
+        fused_msgs = []
+        ti = time.time()
+        chk = subprocess.run([TOOLS_PY, str(HERE / "inner.py"), str(final), "-"], capture_output=True, text=True,
+                             timeout=900, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1", "CHECK": "1"})
+        if chk.returncode == 0:
+            groups = json.loads(chk.stdout.strip().splitlines()[-1]).get("parts", [])
+            info.update(grownTogether=[g for g in groups if g["sections"] >= grown.NOISE])
+            fused_msgs = grown.warnings(groups)
+        else:
+            print("GROWN CHECK FAILED", src.stem, chk.stderr[-400:], flush=True)
+        print(f"TIME {src.stem} inner {time.time() - ti:.1f}s", flush=True)
+        msg = {"humanoid": "human-like character: bones have standard names, so ready-made humanoid animations "
+                           "(Mixamo style, Godot/Unity humanoid) play on it",
+               "creature": "creature rig: it can be animated with its own animations; ready-made human animations won't fit"
+                           + {"human": f" (no human skeleton found: {info.get('whyNotHuman')})",
+                              "creature": " (if it is a person, choose Rig type: Human and the bones get standard names)"
+                                          if seen is None or seen["pick"] == "character" else ""}[mode]}[kind]
+        steps.append(f"chose try {k + 1} of {len(kept)}: {kind}, {info['bones']} bones; bend test: "
+                     f"skin distortion {info['bend']['distortion']} when each bone bends 30 degrees (lower is better)"
+                     + ("" if len(kept) < 2 else " (others: " + ", ".join(f"{x[5]['bend']['distortion']}" for x in kept[1:]) + ")"))
+        steps.append(msg)
+        steps.append(parts_msg)
+        steps.extend(fused_msgs)
+        steps.extend(cape_msgs)
+        # Known limit, said whenever cape bones were not asked for (like Mixamo / AccuRIG, no bones for loose cloth by
+        # default): long loose parts follow the nearest body bone; games swing them with cloth or spring bones.
+        if not cape:
+            steps.append("note: long loose parts (capes, long skirts, long hair) have no bones of their own and follow "
+                         "the nearest body bone, so a cape can stretch with the legs; for a cape, robe or long skirt "
+                         "turn on Cape (Rig type: Human) and it gets swinging bones; or add cloth physics or spring "
+                         "bones in your engine (Godot SpringBoneSimulator3D, Unity cloth, Unreal Chaos Cloth)")
+        if seen is not None and seen["pick"] != "character":
+            steps.append(f"note: on the pictures this looks like {'a statue' if seen['pick'] == 'statue' else 'an object'}, "
+                         "not a character; the rig is there if you want to animate it anyway")
+        rep = {"operation": "auto_rig", "steps": steps, "before": {"file": src.name},
+               "after": {"kind": kind, "rigType": mode, "cape": cape, "looksLike": seen, "tries": len(kept), "chosenTry": k + 1, "seconds": round(time.time() - t0), **info}}
+        json.dump(rep, open(out / f"{src.stem}_report.json", "w"), indent=1)
+        print("RIG", src.stem, kind, info, round(time.time() - t0), "s", flush=True)
