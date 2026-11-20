@@ -892,7 +892,7 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
         alpha_wrap_3(pts, polys, alpha, offset, P)
     # The bindings have no array export. Their OFF writer took longer than the wraps themselves on big shells
     # (25 s at 0.86M faces, harbor 204 s over 8 wraps), so the mesh is read off the handles, in the writer's
-    # order and rounded to the 5 significant digits it wrote: the same vertices and faces, byte for byte.
+    # order, at full precision (the writer's 5 significant digits moved points up to 0.005 mm at 100 mm).
     X = []
     for i, v in enumerate(P.vertices()):
         v.set_id(i)
@@ -904,8 +904,7 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
         a = h.vertex().id()
         h = h.next()
         Fo.append((a, h.vertex().id(), h.next().vertex().id()))
-    V5 = np.array([float(f"{x:.5g}") for x in np.asarray(X, np.float64).ravel()], np.float64).reshape(-1, 3)
-    return trimesh.Trimesh(V5, np.asarray(Fo, np.int64).reshape(-1, 3), process=False)
+    return trimesh.Trimesh(np.asarray(X, np.float64).reshape(-1, 3), np.asarray(Fo, np.int64).reshape(-1, 3), process=False)
 
 
 def _bridge(m, log: Log, printer: "Printer | None" = None):
