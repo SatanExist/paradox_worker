@@ -34,12 +34,14 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # git for the clone; the rest are what bpy (Blender as a module) and open3d load at import time, headless
+# (open3d's Linux wheel links libusb-1.0 for its RealSense support: without it `import open3d` fails)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libgl1 \
     libegl1 \
     libglib2.0-0 \
     libgomp1 \
+    libusb-1.0-0 \
     libx11-6 \
     libxrender1 \
     libxxf86vm1 \
