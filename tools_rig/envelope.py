@@ -2,13 +2,16 @@
 Two bones may blend at a point only if it lies inside the envelope of EVERY joint between them (the joints whose
 turning pulls the two bones' copies of the point apart); a joint's envelope is a ball of ENV x its limb radius (the
 distance from the joint to the nearest skin; ENV 2 = Blender's envelope radius + equal fade distance). Across one
-joint (parent and child) skin always blends: that is the joint itself."""
+joint (parent and child) skin always blends: that is the joint itself.
+A cloth joint (a bone chain added for a cape or skirt, marked "cloth" in the node's extras) has no limb and no radius:
+the cloth is one sheet, so its envelope is unbounded. Two cloth bones blend anywhere; a cloth bone and a body bone
+blend only where the body's own joints between them allow."""
 import numpy as np
 from scipy.spatial import cKDTree
 
 
 class Envelope:
-    def __init__(self, skin_points, heads, kids, env=2.0):
+    def __init__(self, skin_points, heads, kids, env=2.0, cloth=None):
         J = len(heads)
         self.heads = heads
         par = np.full(J, -1)
@@ -36,6 +39,8 @@ class Envelope:
         self.PM = PM
         self.rad = cKDTree(skin_points).query(heads)[0]  # limb radius at each joint
         self.env = np.maximum(env * self.rad, 1e-9)
+        if cloth is not None:
+            self.env[np.asarray(cloth, bool)] = np.inf
 
     def may_blend(self, pts, A_, B_):
         """Point pts[i] may blend bones A_[i] and B_[i]. Only the joints between each pair are measured (points grouped

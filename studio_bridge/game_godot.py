@@ -18,11 +18,16 @@ A rigged model (auto-rig): lods.glb already has every level on LOD0's one skelet
 the levels' meshes under that skeleton, so each mesh carries its level in its name and lod_switch.gd reads it there
 (a mesh's own name first, else its nearest parent's: plain models switch as before). With standard
 human bone names model.glb.import maps it to Godot's humanoid profile (Bone Map written inline, so the folder can
-move), so ready-made humanoid animations play on it.
+move), so ready-made humanoid animations play on it. With cape bones (auto_rig cape: true: chains Cape<s>_0..Cape<s>_<n>
+marked "cloth") the scene gets cape_springs.gd: Godot's own SpringBoneSimulator3D (4.5+) swings each chain, and
+capsules on the upper and lower legs (radius from the bones' "clothCollider" extras) keep the cape off the legs.
+Checked on Godot 4.7.2 (2026-11-20, rodin knight cut to 20k by game_prep): the script finds the humanoid-mapped
+skeleton (GeneralSkeleton), 8 chains and 4 capsules, the cape swings on a jog, no cracks.
 """
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import zipfile
 from pathlib import Path
@@ -569,8 +574,7 @@ README_HUMANOID = '''  {n}. Animation: the model has a human skeleton with stand
      maps them to Godot's humanoid profile (Retarget > Bone Map), so ready-made humanoid animations play on it:
      LOD0's skeleton becomes %GeneralSkeleton, the name Godot's retargeted animations look for. Import an animation
      pack with the same humanoid Bone Map, then add its AnimationLibrary to an AnimationPlayer under the model.
-     {levels_cap}. Cloth such as capes follows the legs and arms; give it spring bones or cloth in Godot if it
-     needs to swing.
+     {levels_cap}.{cloth}
 '''
 
 # Our auto-rig's standard bone names (Mixamo style) -> Godot's SkeletonProfileHumanoid.
@@ -586,6 +590,92 @@ for _s in ("Left", "Right"):
             HUMANOID_BONES[f"{_s}Hand{_f}{_i}"] = f"{_s}{_g}{_part}"
 HUMANOID_CORE = {"Hips", "Spine", "Head", "LeftArm", "LeftForeArm", "LeftHand", "RightArm", "RightForeArm", "RightHand",
                  "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"}
+
+
+CAPE_SPRINGS_GD = '''extends Node
+## PolyLab cape springs: the cape's bone chains (Cape<s>_0 .. Cape<s>_<n>, added by auto-rig) swing by themselves with
+## Godot's SpringBoneSimulator3D (Godot 4.5+), and capsules on the legs keep the cape from passing through them.
+## Tune the swing on the "springs" node it makes under the skeleton (stiffness, drag, gravity per chain), or delete
+## this node to have no swing.
+
+@export var chains: PackedStringArray  ## root bone, end bone, root bone, end bone, ...
+@export var leg_bones: PackedStringArray  ## our bone name, Godot humanoid name, ... (whichever the skeleton has)
+@export var leg_radii: PackedFloat32Array  ## capsule radius per leg bone
+
+func _ready() -> void:
+	var sk: Skeleton3D = null
+	for s in get_parent().find_children("*", "Skeleton3D", true, false):
+		if s.find_bone(chains[0]) >= 0:
+			sk = s
+			break
+	if sk == null:
+		push_warning("cape_springs: no skeleton with the cape bones")
+		return
+	var sim := SpringBoneSimulator3D.new()
+	sim.name = "springs"
+	sk.add_child(sim)
+	sim.setting_count = chains.size() / 2
+	for k in sim.setting_count:
+		sim.set_root_bone_name(k, chains[2 * k])
+		sim.set_end_bone_name(k, chains[2 * k + 1])
+		sim.set_enable_all_child_collisions(k, true)
+	for k in leg_radii.size():
+		var bone := leg_bones[2 * k + 1] if sk.find_bone(leg_bones[2 * k + 1]) >= 0 else leg_bones[2 * k]
+		var bi := sk.find_bone(bone)
+		if bi < 0 or sk.get_bone_children(bi).is_empty():
+			continue
+		var d: Vector3 = sk.get_bone_rest(sk.get_bone_children(bi)[0]).origin  # along the bone to its child
+		var cap := SpringBoneCollisionCapsule3D.new()
+		sim.add_child(cap)
+		cap.bone_name = bone
+		cap.radius = leg_radii[k]
+		cap.mid_height = d.length()
+		cap.position_offset = d * 0.5
+		cap.rotation_offset = Quaternion(Vector3.UP, d.normalized())
+'''
+README_CAPE = '''  {n}. Cape: its {chains} bone chains swing by themselves (cape_springs.gd, Godot's SpringBoneSimulator3D, Godot 4.5+),
+     and capsules on the legs keep it off them. Tune the swing on the "springs" node under the skeleton when the
+     game runs (stiffness, drag, gravity), or delete the "cape_springs" node to have no swing.
+'''
+
+def _cape(glb: bytes) -> tuple[list[str], list[str], list[float]] | None:
+    """Cape bones in a rigged lods.glb (auto_rig cape: true): the chains' root and end bones, the leg bones with a
+    "clothCollider" radius (our name, Godot's humanoid name) and their radii. None without cape bones."""
+    import json
+    import struct
+
+    n = struct.unpack("<I", glb[12:16])[0]
+    j = json.loads(glb[20:20 + n])
+    if not j.get("skins"):
+        return None
+    nodes = [j["nodes"][i] for i in j["skins"][0]["joints"]]
+    ends: dict[int, int] = {}
+    for nd in nodes:
+        m = re.fullmatch(r"Cape(\d+)_(\d+)", nd.get("name", ""))
+        if m and (nd.get("extras") or {}).get("cloth"):
+            ends[int(m[1])] = max(ends.get(int(m[1]), 0), int(m[2]))
+    if not ends:
+        return None
+    chains = [f"Cape{s}_{x}" for s in sorted(ends) for x in (0, ends[s])]
+    legs = [(nd["name"], float(nd["extras"]["clothCollider"])) for nd in nodes
+            if isinstance((nd.get("extras") or {}).get("clothCollider"), (int, float))]
+    return chains, [x for nm, _ in legs for x in (nm, HUMANOID_BONES.get(nm, nm))], [r for _, r in legs]
+
+
+def _with_springs(scene: str, cape: tuple[list[str], list[str], list[float]]) -> str:
+    """model.tscn plus the cape_springs node (after the levels, so the skeleton is there when it starts)."""
+    head, _, rest = scene.partition("\n")
+    steps = int(head.split("load_steps=")[1].split()[0])
+    head = head.replace(f"load_steps={steps}", f"load_steps={steps + 1}")
+    at = rest.index('[ext_resource type="PackedScene"')
+    rest = rest[:at] + '[ext_resource type="Script" path="cape_springs.gd" id="10_cape"]\n' + rest[at:]
+    chains, legs, radii = cape
+
+    def strs(xs):
+        return ", ".join(f'"{x}"' for x in xs)
+    return (head + "\n" + rest + '\n[node name="cape_springs" type="Node" parent="."]\nscript = ExtResource("10_cape")\n'
+            f"chains = PackedStringArray({strs(chains)})\nleg_bones = PackedStringArray({strs(legs)})\n"
+            "leg_radii = PackedFloat32Array(" + ", ".join(f"{r:g}" for r in radii) + ")\n")
 
 
 def _rigged(glb: bytes) -> tuple[str, list[str], bool] | None:
@@ -662,6 +752,7 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
         glb = Path(lods).read_bytes()
         rig = _rigged(glb)
         humanoid = bool(rig) and HUMANOID_CORE <= set(rig[1])
+        cape = _cape(glb) if rig else None
         with zipfile.ZipFile(packed, "w") as z:
             body = moving and bool(pieces)
             collision = (README_MOVING if body else README_COLLISION).format(count=len(pieces)) if pieces else ""
@@ -669,10 +760,15 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                 one = "All levels are on this one skeleton, so one animation moves them all" if rig[2] else (
                     "Only LOD0 is on this skeleton: the other levels' bones didn't match it, so they keep their own")
                 collision += (README_HUMANOID if humanoid else README_RIG).format(
-                    n=5 if pieces else 4, bones=len(rig[1]), levels="; " + one[0].lower() + one[1:], levels_cap=one)
+                    n=5 if pieces else 4, bones=len(rig[1]), levels="; " + one[0].lower() + one[1:], levels_cap=one,
+                    cloth="" if cape else (" Cloth such as capes follows the legs and arms; give it spring bones or "
+                                           "cloth in Godot if it\n     needs to swing."))
+                if cape:
+                    collision += README_CAPE.format(n=6 if pieces else 5, chains=len(cape[0]) // 2)
             readme = README.format(count=len(levels), chain=chain, switch=switch, collision=collision,
                                    more=("  moving_body.gd the moving body, with Size\n" if body else "")
                                    + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else "")
+                                   + ("  cape_springs.gd  swings the cape's bones (spring bones)\n" if cape else "")
                                    + (README_PARALLAX if depth is not None else "")
                                    + (README_IMPOSTOR.format(level=len(levels), px=imp_px) if impostor else ""),
                                    fov_node='"levels" node' if body else "scene's root node",
@@ -683,6 +779,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                 z.writestr(_entry("moving_body.gd"), MOVING_BODY_GD, zipfile.ZIP_DEFLATED)
             if humanoid:
                 z.writestr(_entry("model.glb.import"), _import_file(rig[0]), zipfile.ZIP_DEFLATED)
+            if cape:
+                z.writestr(_entry("cape_springs.gd"), CAPE_SPRINGS_GD, zipfile.ZIP_DEFLATED)
             z.writestr(_entry("model.glb"), glb, zipfile.ZIP_STORED)  # textures inside are already packed
             if depth is not None:
                 z.writestr(_entry("parallax.gd"), PARALLAX_GD, zipfile.ZIP_DEFLATED)
@@ -693,8 +791,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                 for k, f in zip(("color", "normal", "orm"), imp_files):
                     z.writestr(_entry(f"impostor_{k}.png"), Path(f).read_bytes(), zipfile.ZIP_STORED)
                     z.writestr(_entry(f"impostor_{k}.png.import"), IMPOSTOR_IMPORT[k], zipfile.ZIP_DEFLATED)
-            z.writestr(_entry("model.tscn"), _scene(switch_px, pieces, moving, depth, impostor, len(levels)),
-                       zipfile.ZIP_DEFLATED)
+            scene = _scene(switch_px, pieces, moving, depth, impostor, len(levels))
+            z.writestr(_entry("model.tscn"), _with_springs(scene, cape) if cape else scene, zipfile.ZIP_DEFLATED)
     except Exception as exc:  # a full disk or the like: the job's other files are still good
         packed.unlink(missing_ok=True)
         steps.append(f"no Godot package: {str(exc)[:160]}")
@@ -708,9 +806,12 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
         after["godot"]["impostorPx"] = imp_px
     if rig:
         after["godot"]["skeleton"] = "humanoid" if humanoid else "own"
+    if cape:
+        after["godot"]["capeChains"] = len(cape[0]) // 2
     steps.append(f"Godot package godot.zip: {FOLDER}/model.tscn switches the {len(levels)} levels by itself"
                  + (f", with {len(pieces)} collision pieces" if pieces else "")
                  + ("; its skeleton is mapped to Godot's humanoid profile for ready-made animations" if humanoid else "")
+                 + (f"; the cape's {len(cape[0]) // 2} bone chains swing by themselves (cape_springs.gd)" if cape else "")
                  + ("; LOD0 has parallax from the height map (parallax.gd)" if depth is not None else "")
                  + (f"; under {imp_px:g} px across the impostor stands in (2 triangles)" if impostor else "")
                  + (" (a RigidBody3D: it falls and can be pushed)" if moving and pieces else "")

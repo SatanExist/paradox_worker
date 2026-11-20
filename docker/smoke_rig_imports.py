@@ -27,7 +27,8 @@ import torch  # noqa: E402
 if not torch.cuda.is_available():
     torch.cuda.get_device_name = lambda *a, **k: "no GPU at build"
 import demo  # noqa: F401,E402  SkinTokens' entry (model, tokenizer, bpy server client)
-import envelope, grown, judge, judge4, kind, ourxfer, rename  # noqa: F401,E401,E402
+import cape, envelope, grown, judge, judge4, kind, ourxfer, rename  # noqa: F401,E401,E402
+import open3d  # noqa: F401,E402  cape.py's ray casts (cape: true)
 from studio_bridge.tools_ops import OPERATIONS  # noqa: E402
 
 assert "auto_rig" in OPERATIONS

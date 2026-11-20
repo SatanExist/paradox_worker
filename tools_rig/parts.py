@@ -31,6 +31,8 @@ ENV = float(os.environ.get("ENV", "2"))
 MAXRIM = 600
 src, out = sys.argv[1:3]
 V, F, W, heads, kids, names = rig(src)
+_j, _ = load(src)
+cloth = np.array([bool(_j["nodes"][n].get("extras", {}).get("cloth")) for n in _j["skins"][0]["joints"]])
 J = len(names)
 adj = [[] for _ in range(J)]
 for p, ks in enumerate(kids):
@@ -66,7 +68,7 @@ if len(pr):
 h1, h2 = o[pr], o[pr + 1]
 Vw = np.zeros((nw, 3))
 Vw[wv] = V
-rule = Envelope(Vw, heads, kids, ENV)
+rule = Envelope(Vw, heads, kids, ENV, cloth)
 par, env = rule.par, rule.env
 print("joint envelopes (x limb radius", ENV, "):", " ".join(f"{names[i]}={env[i]:.3f}" for i in range(J) if par[i] >= 0
                                                          and names[i].endswith(("Arm", "ForeArm", "UpLeg", "Spine2"))))

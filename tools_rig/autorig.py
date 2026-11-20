@@ -1,6 +1,6 @@
 """The auto_rig operation's worker side (studio_bridge.tools_ops.auto_rig runs it as its own process).
 Runs in the SkinTokens environment with cwd = the SkinTokens folder (SKINTOKENS_DIR):
-  python autorig.py <out dir> [--tries N] [--post] [--kind human|creature] <in.glb> ...
+  python autorig.py <out dir> [--tries N] [--post] [--kind human|creature] [--cape] <in.glb> ...
 Per model: SkinTokens (any creature) with retry when the network gives no skeleton (it stops on an assert, ~1 in 40),
 up to N tries kept and the best one chosen (human rig with standard names first, then the one whose skin distorts
 least when each bone bends 30 degrees, judge4.py: published posing + as-rigid-as-possible energy, no cut-offs of ours;
@@ -9,6 +9,9 @@ animations) or "creature" (own skeleton, its own animations). Every model gets i
 (SigLIP pictures, only where SIGLIP_DIR and Blender are set up) adds a note when it doesn't look like a character.
 --kind is the user's switch, as Mixamo / AccuRIG ask it: human (standard names by the humanoid template and plain
 signs, no proportion limits) or creature (own skeleton, no names; the default).
+--cape (the user's switch, off by default; human rigs): loose cloth (capes, robes, long skirts) gets its own bone
+chains hung from the hips (cape.py), so it no longer stretches with the legs and an engine can swing it. Off, the
+rig file is the same as without the switch.
 Repeatable: same model and switches on the same machine -> the same rig file, byte for byte (repeatable(),
 seeded_server.py). judge4 / parts / inner need libigl + scipy: they run in RIG_TOOLS_PYTHON (default: this Python).
 Writes <name>_rig.glb (names applied when human) and <name>_report.json; prints timings per stage."""
@@ -121,7 +124,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     out = Path(args.pop(0))
-    tries, post, mode = 1, False, "creature"
+    tries, post, mode, cape = 1, False, "creature", False
     while args and args[0].startswith("--"):
         a = args.pop(0)
         if a == "--tries":
@@ -131,6 +134,8 @@ if __name__ == "__main__":
         elif a == "--kind":
             mode = args.pop(0)
             assert mode in ("human", "creature"), mode
+        elif a == "--cape":
+            cape = True
     out.mkdir(parents=True, exist_ok=True)
     clock = {}
     _post = demo.post_bpy_payload
@@ -203,6 +208,32 @@ if __name__ == "__main__":
                 j["nodes"][nodes[b]]["name"] = nm
             info.update(namedBones=len(m), fingers=extra.get("fingers"))
         write(final, j, rest)
+        # cape bones (only when asked): before parts.py, which lets cloth bones blend with each other (envelope.py)
+        cape_msgs = []
+        if cape and kind != "humanoid":
+            cape_msgs.append("cape bones: not added, they hang from the named hips and legs, so they need Rig type: Human")
+        elif cape:
+            tc = time.time()
+            done = subprocess.run([sys.executable, str(HERE / "cape.py"), str(final), str(final)], capture_output=True,
+                                  text=True, timeout=900, cwd=str(HERE), env={**os.environ, "OPENBLAS_NUM_THREADS": "1"})
+            if done.returncode != 0:
+                cape_msgs.append("cape bones: the check failed, the rig has none")
+                print("CAPE FAILED", src.stem, done.stderr[-400:], flush=True)
+            else:
+                cp = json.loads(done.stdout.strip().splitlines()[-1])
+                info.update(cape=cp)
+                if not cp["chains"]:
+                    cape_msgs.append(f"cape bones: none added ({cp['why']})")
+                else:
+                    cape_msgs.append(f"cape bones: {cp['chains']} chains of swinging bones hung from the hips for the "
+                                     f"loose cloth ({cp['clothPct']} % of the skin), so it no longer stretches with the "
+                                     "legs; game_prep's Godot package swings them with spring bones")
+                    if cp["outsideLegs"] < 0.5:  # fewer than half of the moved points hang outside the legs
+                        cape_msgs.append(f"warning: only {round(100 * cp['outsideLegs'])} % of what was taken as cloth "
+                                         "hangs outside the legs; the rest lies inside their thickness, which looks "
+                                         "like armour plates or double walls rather than a cape. If the model has no "
+                                         "cape, rig it again with Cape off")
+            print(f"TIME {src.stem} cape {time.time() - tc:.1f}s", flush=True)
         # fused body parts (a fist grown into a thigh, an arm into a pouch): part the skin where two bones may not share
         # it (joint envelopes, parts.py) and cap the openings; runs in the worker venv (numpy + scipy)
         tp = time.time()
@@ -242,15 +273,18 @@ if __name__ == "__main__":
         steps.append(msg)
         steps.append(parts_msg)
         steps.extend(fused_msgs)
-        # Known limit, said every time (like Mixamo / AccuRIG, we give no bones to loose cloth): long loose parts get no
-        # bones of their own and follow the nearest body bone; games swing them with the engine's cloth or spring bones.
-        steps.append("note: long loose parts (capes, long skirts, long hair) have no bones of their own and follow the "
-                     "nearest body bone, so a cape can stretch with the legs; to make them swing, add cloth physics or "
-                     "spring bones in your engine (Godot SpringBoneSimulator3D, Unity cloth, Unreal Chaos Cloth)")
+        steps.extend(cape_msgs)
+        # Known limit, said whenever cape bones were not asked for (like Mixamo / AccuRIG, no bones for loose cloth by
+        # default): long loose parts follow the nearest body bone; games swing them with cloth or spring bones.
+        if not cape:
+            steps.append("note: long loose parts (capes, long skirts, long hair) have no bones of their own and follow "
+                         "the nearest body bone, so a cape can stretch with the legs; for a cape, robe or long skirt "
+                         "turn on Cape (Rig type: Human) and it gets swinging bones; or add cloth physics or spring "
+                         "bones in your engine (Godot SpringBoneSimulator3D, Unity cloth, Unreal Chaos Cloth)")
         if seen is not None and seen["pick"] != "character":
             steps.append(f"note: on the pictures this looks like {'a statue' if seen['pick'] == 'statue' else 'an object'}, "
                          "not a character; the rig is there if you want to animate it anyway")
         rep = {"operation": "auto_rig", "steps": steps, "before": {"file": src.name},
-               "after": {"kind": kind, "rigType": mode, "looksLike": seen, "tries": len(kept), "chosenTry": k + 1, "seconds": round(time.time() - t0), **info}}
+               "after": {"kind": kind, "rigType": mode, "cape": cape, "looksLike": seen, "tries": len(kept), "chosenTry": k + 1, "seconds": round(time.time() - t0), **info}}
         json.dump(rep, open(out / f"{src.stem}_report.json", "w"), indent=1)
         print("RIG", src.stem, kind, info, round(time.time() - t0), "s", flush=True)

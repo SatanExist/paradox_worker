@@ -1932,7 +1932,8 @@ def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
     """A skeleton and skin weights for any creature (SkinTokens, MIT), like Mixamo / AccuRIG but not only people.
     Needs the rig worker (GPU, Dockerfile.rig) or this PC's SkinTokens install: SKINTOKENS_DIR (its folder, the cwd)
     and RIG_PYTHON (its Python). params: rigType "creature" (own skeleton, the default) or "human" (standard bone
-    names, so ready-made humanoid animations play); tries 1-3 (best by the bend test). The model keeps its mesh and
+    names, so ready-made humanoid animations play); tries 1-3 (best by the bend test); cape true (human rigs, off by
+    default): loose cloth (a cape, robe, long skirt) gets swinging bone chains from the hips. The model keeps its mesh and
     materials; game_prep on the result keeps the skin (its cut keeps original points with their weights)."""
     rig_type = str(params.get("rigType") or "creature").lower()
     if rig_type not in RIG_TYPES:
@@ -1940,6 +1941,9 @@ def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
     tries = int(params.get("tries") or 1)
     if not 1 <= tries <= MAX_RIG_TRIES:
         raise ValueError(f"tries must be 1 to {MAX_RIG_TRIES}")
+    cape = params.get("cape", False)
+    if not isinstance(cape, bool):
+        raise ValueError("cape must be true or false")
     folder, python = os.getenv("SKINTOKENS_DIR", ""), os.getenv("RIG_PYTHON", "")
     if not (folder and python and Path(folder, "demo.py").is_file()):
         raise RuntimeError("auto_rig runs on the rig worker (SKINTOKENS_DIR and RIG_PYTHON are not set here)")
@@ -1949,7 +1953,8 @@ def auto_rig(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str,
             src = Path(tmp) / "model.glb"
             shutil.copyfile(plain, src)
             done = _run_tree(
-                [python, str(TOOLS_RIG / "autorig.py"), str(Path(tmp) / "out"), "--tries", str(tries), "--kind", rig_type, str(src)],
+                [python, str(TOOLS_RIG / "autorig.py"), str(Path(tmp) / "out"), "--tries", str(tries), "--kind", rig_type,
+                 *(["--cape"] if cape else []), str(src)],
                 cwd=folder, timeout=600 * tries + 600, env={**os.environ, "CUBLAS_WORKSPACE_CONFIG": ":4096:8"},
             )
             report_path, rig_path = Path(tmp) / "out" / "model_report.json", Path(tmp) / "out" / "model_rig.glb"
