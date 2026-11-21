@@ -6,13 +6,18 @@ The light version gets new UVs of its own (its cut ignored the old seams) and te
 heavy one, ray by ray: base colour, roughness, metalness and a tangent normal map that carries the shape
 the cut took away. Writes the maps (PNG) and the light model's triangle corners with their new UVs and
 normals into <out dir>, for tools_node/graft.mjs to put into the light model. Same files and settings
-give the same pixels: Cycles on the CPU with a fixed seed and sample count. Prints a JSON line on stdout.
+give the same pixels: Cycles on the CPU with a fixed seed and sample count, and the normal map turned into
+tangent space against tools_node/tangents.mjs (node on the PATH; "tangents" in the settings says where it is).
+Prints a JSON line on stdout.
 """
 
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 
 import bmesh
@@ -191,6 +196,49 @@ for o in low:
         weighted.weight = 50
         bpy.ops.object.modifier_apply(modifier=weighted.name)
 
+# The normal map is baked against tangents of our own (synced tangents, as Marmoset and Substance bake): Blender's own
+# MikkTSpace runs on many threads and came out a hair different each call (~1e-7 on 3-5 % of the mech's corners), so a
+# rerun now and then turned a texel or four the other way, by one step (mech, dog). tools_node/tangents.mjs is the
+# MikkTSpace graft.mjs writes into the file, on one thread: the same numbers every time. Blender bakes the normals in
+# object space and they are turned into tangent space below, as Blender's bake does it (bake.cc,
+# RE_bake_normal_world_to_tangent). 18 of 18 mech bakes came out the same (Blender's way: 11 of 12), the maps as
+# Blender's inside the islands to one step, look the same on mech, scorpion and dog, ~10 s more a bake (2026-11-21).
+TANGENTS = PARAMS.get("tangents") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools_node", "tangents.mjs")
+corner_normals, corner_tangents = [], []
+triangles_before = 0
+for o in low:
+    mesh = o.data
+    n = len(mesh.loops)
+    starts = np.empty(len(mesh.polygons), dtype=np.int64)
+    mesh.polygons.foreach_get("loop_start", starts)
+    if n != 3 * len(mesh.polygons) or not np.array_equal(starts, 3 * np.arange(len(mesh.polygons))):
+        raise SystemExit("the light model came in with faces that aren't triangles")
+    co = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co)
+    loop_vertex = np.empty(n, dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loop_vertex)
+    normals = np.empty(n * 3, dtype=np.float32)
+    mesh.corner_normals.foreach_get("vector", normals)
+    uv = np.empty(n * 2, dtype=np.float32)
+    mesh.uv_layers.active.data.foreach_get("uv", uv)
+    work = tempfile.mkdtemp(prefix="tangents-")
+    try:
+        np.hstack([co.reshape(-1, 3)[loop_vertex], normals.reshape(-1, 3), uv.reshape(-1, 2)]).tofile(os.path.join(work, "in.f32"))
+        subprocess.run([shutil.which("node") or "node", TANGENTS, os.path.join(work, "in.f32"), os.path.join(work, "out.f32")],
+                       check=True, capture_output=True, timeout=600)
+        corner_tangents.append(np.fromfile(os.path.join(work, "out.f32"), dtype=np.float32).reshape(-1, 4).astype(np.float64))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    corner_normals.append(normals.reshape(-1, 3).astype(np.float64))
+    # Which triangle (counted from 1, 0 = none) and where in it each texel lies: Blender bakes these as the light model's
+    # own light (where() below), texel for texel as it bakes the normals.
+    mesh.attributes.new("bake_triangle", "FLOAT", "FACE").data.foreach_set(
+        "value", (np.arange(len(mesh.polygons)) + triangles_before + 1).astype(np.float32))
+    mesh.attributes.new("bake_corner", "FLOAT_VECTOR", "CORNER").data.foreach_set(
+        "vector", np.tile(np.eye(3, dtype=np.float32), (len(mesh.polygons), 1)).ravel())
+    triangles_before += len(mesh.polygons)
+corner_normals, corner_tangents = np.vstack(corner_normals), np.vstack(corner_tangents)
+
 
 def image(name, colour, size=None):
     img = bpy.data.images.new(name, size or BAKE, size or BAKE, alpha=False, float_buffer=False)
@@ -198,11 +246,33 @@ def image(name, colour, size=None):
     return img
 
 
-# Every light part gets one material whose active node is the image being baked into.
+# Every light part gets one material whose active node is the image being baked into. Baked onto itself, it gives off
+# (corner 0's share, corner 1's share, triangle) at each texel, or a picture laid on by its UVs (show).
 target = bpy.data.materials.new("baked")
 target.use_nodes = True
 nodes = target.node_tree.nodes
+links = target.node_tree.links
 slot = nodes.new("ShaderNodeTexImage")
+corner_share = nodes.new("ShaderNodeAttribute")
+corner_share.attribute_name = "bake_corner"
+which_triangle = nodes.new("ShaderNodeAttribute")
+which_triangle.attribute_name = "bake_triangle"
+split = nodes.new("ShaderNodeSeparateXYZ")
+where_light = nodes.new("ShaderNodeCombineXYZ")
+glow = nodes.new("ShaderNodeEmission")
+shown = nodes.new("ShaderNodeTexImage")
+shown.interpolation = "Closest"  # texel for texel
+shown.extension = "EXTEND"
+surface = next((n for n in nodes if n.type == "OUTPUT_MATERIAL"), None) or nodes.new("ShaderNodeOutputMaterial")
+links.new(corner_share.outputs["Vector"], split.inputs[0])
+links.new(split.outputs["X"], where_light.inputs["X"])
+links.new(split.outputs["Y"], where_light.inputs["Y"])
+links.new(which_triangle.outputs["Fac"], where_light.inputs["Z"])
+links.new(where_light.outputs[0], glow.inputs["Color"])
+glow.inputs["Strength"].default_value = 1.0
+for link in list(surface.inputs["Surface"].links):
+    links.remove(link)
+links.new(glow.outputs[0], surface.inputs["Surface"])
 nodes.active = slot
 for o in low:
     o.data.materials.clear()
@@ -226,36 +296,109 @@ def run(kind, img, margin=None, **extra):
         o.select_set(False)
 
 
-def run_in_parts(kind, img, **extra):
-    """Into img, a quarter at a time: each part has room around it for the margin, cut off when put together."""
+def float_image(name, size):
+    img = bpy.data.images.new(name, size, size, alpha=True, float_buffer=True)
+    img.colorspace_settings.name = "Non-Color"
+    return img
+
+
+def run_self(img, margin, show=None):
+    """The light model baked onto itself, the heavy one out of the way: where in which triangle each texel lies, or
+    (show) that picture laid back on, for Blender's margin around the islands."""
+    slot.image = img
+    if show is not None:
+        shown.image = show
+        links.new(shown.outputs["Color"], glow.inputs["Color"])
+    for o in high:
+        o.hide_render = True
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        for i, o in enumerate(low):
+            o.select_set(True)
+            bpy.context.view_layer.objects.active = o
+            bpy.ops.object.bake(type="EMIT", use_selected_to_active=False, use_clear=(i == 0), margin=margin)
+            o.select_set(False)
+    finally:
+        for o in high:
+            o.hide_render = False
+        if show is not None:
+            links.new(where_light.outputs[0], glow.inputs["Color"])
+            shown.image = None
+
+
+def to_tangent(normal, where):
+    """Object-space normals (0..1, as baked) into tangent space against our corner normals and tangents, texel by
+    texel, as bake.cc does: tangent and normal interpolated (not renormalised), bitangent = sign * normal x tangent,
+    that matrix inverted, the result normalised and stored with Blender's 1e-5 lean towards 128. Alpha 1 where a
+    triangle lies, 0 elsewhere."""
+    out = np.empty(normal.shape, dtype=np.float32)
+    out[...] = (0.5, 0.5, 1.0, 0.0)
+    triangle = np.rint(where[..., 2]).astype(np.int64)
+    on = (triangle >= 1) & (triangle <= len(corner_normals) // 3)
+    out[on, 3] = 1.0
+    # A texel whose ray met nothing Blender leaves out of the bake for its margin to fill from the neighbours (here in
+    # object space, before the turn); left out of that too, it stays flat, as Blender clears a normal map.
+    use = on & (normal[..., 3] > 0.5)
+    first = 3 * (triangle[use] - 1)
+    w0, w1 = where[..., 0][use].astype(np.float64), where[..., 1][use].astype(np.float64)
+    w = np.stack([w0, w1, 1.0 - w0 - w1], -1)[..., None]
+    corners = first[:, None] + np.arange(3)
+    nn = (w * corner_normals[corners]).sum(1)
+    tt = (w * corner_tangents[corners][..., :3]).sum(1)
+    sign = np.where((w[..., 0] * corner_tangents[corners][..., 3]).sum(1) < 0, -1.0, 1.0)
+    bb = np.cross(nn, tt) * sign[:, None]
+    g = normal[use][:, :3].astype(np.float64) * 2.0 - 1.0
+    # tangent * x + bitangent * y + normal * z = g, solved by the adjugate: the inverse's rows are bitangent x normal,
+    # normal x tangent and tangent x bitangent over the determinant (only its sign matters, normalised after).
+    v = np.stack([(np.cross(bb, nn) * g).sum(-1), (np.cross(nn, tt) * g).sum(-1), (np.cross(tt, bb) * g).sum(-1)], -1)
+    v *= np.sign((tt * np.cross(bb, nn)).sum(-1))[:, None]
+    v /= np.linalg.norm(v, axis=-1, keepdims=True)
+    out[use, :3] = (v * 0.5 + 0.5 + 1e-5).astype(np.float32)
+    return out
+
+
+def bake_normal(img):
+    """The tangent-space normal map into img; past the base size a quarter at a time, each part with room around it for
+    the margin, cut off when put together."""
     whole = img.size[0]
-    part = whole // 2
-    pad = MARGIN * whole // BAKE
+    parts = 2 if whole > BAKE else 1
+    part = whole // parts
+    pad = MARGIN * whole // BAKE if parts > 1 else 0
     side = part + 2 * pad
-    piece = image("normal_part", False, side)
+    margin = pad if parts > 1 else MARGIN * whole // BAKE
+    normal, where = float_image("normal_object", side), float_image("normal_where", side)
+    turned, edged = float_image("normal_tangent", side), float_image("normal_edged", side)
     uvs = []
     for o in low:
         uv = np.empty(len(o.data.loops) * 2, dtype=np.float64)
         o.data.uv_layers.active.data.foreach_get("uv", uv)
         uvs.append(uv)
     done = np.empty((whole, whole, 4), dtype=np.float32)
-    got = np.empty((side, side, 4), dtype=np.float32)
-    for y in range(2):
-        for x in range(2):
-            for o, uv in zip(low, uvs):
-                moved = uv.copy()
-                moved[0::2] = (uv[0::2] * whole - x * part + pad) / side
-                moved[1::2] = (uv[1::2] * whole - y * part + pad) / side
-                o.data.uv_layers.active.data.foreach_set("uv", moved)
-                o.data.update()
-            run(kind, piece, margin=pad, **extra)
-            piece.pixels.foreach_get(got.ravel())
+    for y in range(parts):
+        for x in range(parts):
+            if parts > 1:
+                for o, uv in zip(low, uvs):
+                    moved = uv.copy()
+                    moved[0::2] = (uv[0::2] * whole - x * part + pad) / side
+                    moved[1::2] = (uv[1::2] * whole - y * part + pad) / side
+                    o.data.uv_layers.active.data.foreach_set("uv", moved)
+                    o.data.update()
+            run("NORMAL", normal, margin=margin, normal_space="OBJECT")
+            # No margin here: Blender's margin blends neighbours, and a blend of triangle numbers is none.
+            run_self(where, 0)
+            turned.pixels.foreach_set(to_tangent(rgba(normal), rgba(where)).ravel())
+            run_self(edged, margin, show=turned)
+            got = rgba(edged)
+            got[(got[..., :3] == 0).all(-1)] = (0.5, 0.5, 1.0, 1.0)  # past the margin (cleared black): flat, as Blender clears
+            got[..., 3] = 1.0
             done[y * part:(y + 1) * part, x * part:(x + 1) * part] = got[pad:pad + part, pad:pad + part]
-    for o, uv in zip(low, uvs):
-        o.data.uv_layers.active.data.foreach_set("uv", uv)
-        o.data.update()
+    if parts > 1:
+        for o, uv in zip(low, uvs):
+            o.data.uv_layers.active.data.foreach_set("uv", uv)
+            o.data.update()
     img.pixels.foreach_set(done.ravel())
-    bpy.data.images.remove(piece)
+    for i in (normal, where, turned, edged):
+        bpy.data.images.remove(i)
 
 
 def shine(socket_name):
@@ -430,7 +573,6 @@ def again_longer(name, img, bake_it):
 t = time.time()
 maps["normal"] = image("normal", False, BAKE * NORMAL_SUPER)
 scene.cycles.samples = NORMAL_SAMPLES
-bake_normal = lambda img: (run_in_parts if NORMAL_SUPER > 1 else run)("NORMAL", img, normal_space="TANGENT")
 bake_normal(maps["normal"])
 scene.cycles.samples = SAMPLES
 timings["normal"] = round(time.time() - t, 1)

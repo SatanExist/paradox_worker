@@ -24,6 +24,7 @@ on:
       - "tools_node/graft.mjs"
       - "tools_node/lod.mjs"
       - "tools_node/pose.mjs"
+      - "tools_node/tangents.mjs"
       - ".github/workflows/build-tools.yml"
   workflow_dispatch:
 

@@ -1078,7 +1078,7 @@ def _bake(in_path: Path, out_path: Path, shift: list[float], size: int, high: Pa
     try:
         done = subprocess.run(
             [_blender(), "-b", "--factory-startup", "--python-exit-code", "1", "-P", str(TOOLS_BLENDER / "bake.py"), "--",
-             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {}), **({"fill": True} if fill else {}), **({"height": True} if height else {})})],
+             str(heavy_copy), str(light_copy), str(work), json.dumps({"size": size, "shift": shift, "tangents": str(TOOLS_NODE / "tangents.mjs"), "normalOnly": not _glb_json(in_path).get("textures"), **({"normalSuper": 1} if quick else {}), **({"fill": True} if fill else {}), **({"height": True} if height else {})})],
             capture_output=True,
             text=True,
             timeout=900,
