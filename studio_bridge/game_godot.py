@@ -433,12 +433,26 @@ void light() {
 }
 '''
 
-# Colour and occlusion/roughness/metalness as Godot compresses textures for 3D (VRAM, with mipmaps): a far view needs
-# no more, a quarter of the memory. Normal + depth kept lossless: compressed, its smaller copies lit white patches on
-# the mech at 60 and 40 px (2026-11-18; Godot 4.7, block compression of three free normal components plus depth).
+# Colour and occlusion/roughness/metalness compressed for the GPU (VRAM, with mipmaps) in Godot's "High Quality"
+# (BC7 on desktop, ASTC on mobile): a quarter of the memory. Its default (DXT1) evens out the fine grain inside each
+# 4x4 block, and since light adds up in linear numbers a grainy texture comes out darker: the scorpion's atlas lit
+# 8 % too dark under the sky (2026-11-20). Normal + depth kept lossless: compressed, its smaller copies lit white
+# patches on the mech at 60 and 40 px (2026-11-18; Godot 4.7, block compression of three free normal components
+# plus depth).
 IMPOSTOR_IMPORT = {k: ('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n'
-                       f'compress/mode={0 if k == "normal" else 2}\ndetect_3d/compress_to=0\nmipmaps/generate=true\n')
+                       + ('compress/mode=0\n' if k == "normal" else 'compress/mode=2\ncompress/high_quality=true\n')
+                       + 'detect_3d/compress_to=0\nmipmaps/generate=true\n')
                    for k in ("color", "normal", "orm")}
+# The model's own textures: Godot takes them out of model.glb into model_<image name>.jpg/.png on import and, once
+# the editor sees them in 3D, compresses them its default way (DXT1, detect_3d). On grainy AI textures that darkens
+# them: colour -3.5 % on the mech, -7.8 % on the scorpion, the whole model -1.3 / -3.3 % (2026-11-20, against the
+# same textures uncompressed); in "High Quality" (BC7) under 0.4 %, for twice DXT1's memory (11.2 -> 16.8 MB for a
+# 2048 set). So each colour / roughness texture gets this import file beside model.glb: the md5 mark differs from
+# the image's, so Godot still writes the image out of the glb (nothing stored twice) and imports it with these
+# settings. Normal maps keep Godot's own way (red-green BC5, the same memory as BC7).
+MODEL_TEXTURE_IMPORT = ('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\ngenerator_parameters={\n'
+                        '"md5": "polylab"\n}\n\n[params]\n\ncompress/mode=2\ncompress/high_quality=true\n'
+                        'detect_3d/compress_to=0\nmipmaps/generate=true\n')
 IMPOSTOR_RES = ('[ext_resource type="Shader" path="impostor.gdshader" id="6_imp"]\n'
                 '[ext_resource type="Texture2D" path="impostor_color.png" id="7_imc"]\n'
                 '[ext_resource type="Texture2D" path="impostor_normal.png" id="8_imn"]\n'
@@ -561,6 +575,10 @@ README_MOVING = '''  4. Physics: the scene's root is a RigidBody3D with {count} 
 README_PARALLAX = ('  parallax.gd    parallax on LOD0 from height.png, so grooves look deep up close (Height Scale\n'
                    '                 measured from the original; set Enabled off on the "parallax" node to drop it)\n'
                    '  height.png     the height map: white the surface, black the deepest groove (16-bit)\n')
+README_TEXTURES = ('  {files}  Godot\'s import settings for the model\'s colour and roughness\n'
+                   '                 textures (Godot writes them out of model.glb): "High Quality" (BC7), as the default\n'
+                   '                 (DXT1) darkens grainy textures; for half their memory untick High Quality in the\n'
+                   '                 Import dock\n')
 README_IMPOSTOR = ('  impostor.gdshader, impostor_*.png  the farthest view: the model as pictures on 2 triangles\n'
                    '                 (node impostor_LOD{level}), shown when the model is under {px:g} px across\n')
 SCALING = "Scaling the scene is fine: the switch distances follow its size."
@@ -712,6 +730,38 @@ def _import_file(path: str) -> str:
             '"retarget/rest_fixer/fix_silhouette/enable": true\n}\n}\n}\n')
 
 
+def _texture_files(glb: bytes) -> list[str]:
+    """The files Godot writes model.glb's colour / roughness images to on import (not normal maps), named its way
+    (Godot 4.7 GLTFDocument::_parse_images: model_ + the image's name without folder or extension, a repeat
+    getting _<index>, + .jpg / .png from the image's type). Images of other types are left to Godot."""
+    import json
+    import struct
+
+    n = struct.unpack("<I", glb[12:16])[0]
+    j = json.loads(glb[20:20 + n])
+    images = j.get("images") or []
+    source = [t.get("source") for t in j.get("textures") or []]
+    normal = {source[m["normalTexture"]["index"]] for m in j.get("materials") or [] if "normalTexture" in m
+              and m["normalTexture"].get("index", -1) < len(source)}
+    used, files = set(), []
+    for i, im in enumerate(images):
+        name = str(im.get("name") or "")
+        name = name[max(name.rfind("/"), name.rfind("\\")) + 1:]
+        if name.rfind(".") >= 0:
+            name = name[:name.rfind(".")]
+        name = name.strip("".join(map(chr, range(33))))
+        for ch in ':/\\?*"|%<>':
+            name = name.replace(ch, "_")
+        name = name or str(i)
+        while name in used:
+            name += f"_{i}"
+        used.add(name)
+        ext = {"image/jpeg": ".jpg", "image/png": ".png"}.get(im.get("mimeType", ""))
+        if ext and i not in normal and "bufferView" in im:
+            files.append(f"model_{name}{ext}")
+    return files
+
+
 def _entry(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(f"{FOLDER}/{name}", date_time=(1980, 1, 1, 0, 0, 0))
     info.external_attr = 0o644 << 16
@@ -753,6 +803,7 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
         rig = _rigged(glb)
         humanoid = bool(rig) and HUMANOID_CORE <= set(rig[1])
         cape = _cape(glb) if rig else None
+        textures = _texture_files(glb)
         with zipfile.ZipFile(packed, "w") as z:
             body = moving and bool(pieces)
             collision = (README_MOVING if body else README_COLLISION).format(count=len(pieces)) if pieces else ""
@@ -766,7 +817,9 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                 if cape:
                     collision += README_CAPE.format(n=6 if pieces else 5, chains=len(cape[0]) // 2)
             readme = README.format(count=len(levels), chain=chain, switch=switch, collision=collision,
-                                   more=("  moving_body.gd the moving body, with Size\n" if body else "")
+                                   more=(README_TEXTURES.format(files=", ".join(sorted(
+                                       {f"model_*{Path(f).suffix}.import" for f in textures}))) if textures else "")
+                                   + ("  moving_body.gd the moving body, with Size\n" if body else "")
                                    + ("  model.glb.import  Godot's import settings: the humanoid Bone Map\n" if humanoid else "")
                                    + ("  cape_springs.gd  swings the cape's bones (spring bones)\n" if cape else "")
                                    + (README_PARALLAX if depth is not None else "")
@@ -782,6 +835,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
             if cape:
                 z.writestr(_entry("cape_springs.gd"), CAPE_SPRINGS_GD, zipfile.ZIP_DEFLATED)
             z.writestr(_entry("model.glb"), glb, zipfile.ZIP_STORED)  # textures inside are already packed
+            for f in textures:
+                z.writestr(_entry(f + ".import"), MODEL_TEXTURE_IMPORT, zipfile.ZIP_DEFLATED)
             if depth is not None:
                 z.writestr(_entry("parallax.gd"), PARALLAX_GD, zipfile.ZIP_DEFLATED)
                 z.writestr(_entry("height.png"), Path(height).read_bytes(), zipfile.ZIP_STORED)  # PNG: packed already
@@ -802,6 +857,8 @@ def add_godot(report: dict[str, Any], lods_asked: bool = True, pieces: list | No
                       "collisionPieces": len(pieces or []), "fileMb": round(packed.stat().st_size / 1048576, 2)}
     if moving and pieces:
         after["godot"]["body"] = "RigidBody3D"
+    if textures:
+        after["godot"]["textureCompression"] = "BC7"
     if impostor:
         after["godot"]["impostorPx"] = imp_px
     if rig:
