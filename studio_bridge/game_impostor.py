@@ -7,7 +7,9 @@ octahedral impostor (Fortnite); Amplify Impostors (Unity) and Godot's impostor p
 Godot plugins' licences read differently on different pages (MIT, AGPL, credit required).
 
 tools_blender/impostor.py pictures the light model (LOD0, with its baked textures) from 12 x 12 directions over the
-upper half-sphere into three atlases: colour, normal + depth, occlusion / roughness / metalness. The impostor takes
+upper half-sphere into atlases: colour, depth, occlusion / roughness / metalness, and the normals under each pixel in
+12 bins (mean normal + share per bin, each bin lit as its own lobe: one averaged normal per pixel lit the mech's front
+6-9 % too bright and its back 31-55 % too dark; with the bins 4.5 % on average, 9 % at worst). The impostor takes
 over when the model is under maxScreenPx across (PolyLab's measure, as the LOD levels): the size at which one atlas
 pixel is one screen pixel. Not for a rigged model: a picture can't move with its skeleton.
 The Godot package (game_godot) adds it after the last LOD level. Never fails the job.
@@ -25,12 +27,12 @@ from typing import Any
 FRAMES = 12  # 144 pictures, as Brucks' and Amplify's defaults go: about 8 degrees apart
 FRAME_PX = 85  # 12 x 85 = a 1020 px atlas; see after.impostor.maxScreenPx for the size it serves
 PX_FRAME = 1.05  # PolyLab measures a model in a frame 5 % wider than its diagonal (game_godot.LOD_SWITCH_GD)
-FILES = ("color", "normal", "orm")
+FILES = ("color", "depth", "orm", "bins")
 
 
 def add_impostor(model: Path, report: dict[str, Any]) -> None:
-    """Adds extraFiles impostor_color.png, impostor_normal.png, impostor_orm.png and after.impostor, or a step
-    saying why not."""
+    """Adds extraFiles impostor_color.png, impostor_depth.png, impostor_orm.png, impostor_bins.png and
+    after.impostor, or a step saying why not."""
     from studio_bridge import tools_ops as t
 
     steps, after = report["steps"], report["after"]
@@ -65,9 +67,11 @@ def add_impostor(model: Path, report: dict[str, Any]) -> None:
     # One atlas pixel per screen pixel: the bounding sphere (2 * radius) framePx pixels across.
     px = info["framePx"] * PX_FRAME * info["diagonal"] / (2 * info["radius"])
     after["impostor"] = {"frames": info["frames"], "framePx": info["framePx"], "atlasPx": info["frames"] * info["framePx"],
-                         "radius": round(info["radius"], 6), "centre": [round(c, 6) for c in info["centre"]],
-                         "maxScreenPx": round(px, 1), "seconds": info["seconds"]}
+                         "normalBins": info["bins"], "radius": round(info["radius"], 6),
+                         "centre": [round(c, 6) for c in info["centre"]], "maxScreenPx": round(px, 1),
+                         "seconds": info["seconds"]}
     steps.append(f"impostor for the farthest view: the model pictured from {info['frames'] ** 2} sides "
-                 f"({info['frames'] * info['framePx']} px atlases: colour, normal and depth, occlusion/roughness/metalness), "
-                 f"for an engine to draw on 2 triangles when the model is under {round(px)} px across "
-                 f"(impostor_color.png, impostor_normal.png, impostor_orm.png; {info['seconds']:.0f} s)")
+                 f"({info['frames'] * info['framePx']} px atlases: colour, depth, occlusion/roughness/metalness, and the "
+                 f"normals in {info['bins']} direction bins for its own light), for an engine to draw on 2 triangles when "
+                 f"the model is under {round(px)} px across (impostor_color.png, impostor_depth.png, impostor_orm.png, "
+                 f"impostor_bins.png; {info['seconds']:.0f} s)")

@@ -7,8 +7,16 @@ that faces the camera and shows the model as pictured from that side. Pictures f
 over the upper half-sphere, laid out by the hemi-octahedral map (Ryan Brucks' impostors, Fortnite): grid point
 (i, j) -> u, v in [-1, 1] -> x = (u - v) / 2, z = (u + v) / 2, y = 1 - |x| - |z| (glTF axes, Y up). Each picture is
 an orthographic view of the model's bounding sphere, one render each: base colour as light, the rest as extra passes.
-Writes color.png (base colour, sRGB, alpha = coverage), normal.png (model-space normal in RGB, the pixel's average, so shorter where normals differ; depth in A: 0 the
-sphere's near side, 1 its far side), orm.png (as glTF: R occlusion, G roughness, B metalness) and prints a JSON line.
+Writes color.png (base colour, sRGB, alpha = coverage), depth.png (grey: 0 the sphere's near side, 1 its far side),
+orm.png (as glTF: R occlusion, G roughness, B metalness; alpha = coverage), bins.png and prints a JSON line.
+
+bins.png: the normals under each pixel, sorted into 12 bins by the nearest of 12 fixed model-space directions (an
+icosahedron's corners). One atlas per bin, stacked top to bottom: RGB the bin's mean normal (glTF axes, * 0.5 + 0.5;
+its length tells how much the normals in it agree), A the bin's share of the pixel. A pixel's light is the sum of its
+bins' lights, each bin its own lobe: one averaged normal can't light a pixel that holds panels facing different ways
+(the mech's front 6-9 % too bright, its back lit 31-55 % too dark; 2026-11-20). Multi-lobe normal distributions as
+in Tan et al. 2005 and Han et al. 2007, with fixed directions so filtering and blending of the bins stay exact.
+Stored as mean + share, not as sums: 8-bit sums round small bins away.
 Cycles on the CPU, fixed seed and samples: the same pixels each run.
 """
 import json
@@ -29,6 +37,13 @@ PARAMS = json.loads(argv[2]) if len(argv) > 2 else {}
 N = int(PARAMS.get("frames", 12))
 F = int(PARAMS.get("framePx", 85))
 SAMPLES = 16
+# Bin directions, glTF axes: the 12 corners of an icosahedron, evenly spread (6 cube faces were too coarse: panels
+# 45 degrees between two axes split between bins and lit wrong; 26 directions lit hardly better, 2026-11-20).
+_G = (1 + 5 ** 0.5) / 2
+BINS = np.array([p for a in (1, -1) for b in (_G, -_G) for p in ([0, a, b], [a, b, 0], [b, 0, a])], float)
+BINS /= np.linalg.norm(BINS, axis=1, keepdims=True)
+K = len(BINS)
+GROUPS = (K + 2) // 3  # shares go 3 to a colour pass
 os.makedirs(OUT, exist_ok=True)
 t0 = time.time()
 
@@ -79,7 +94,7 @@ scene.collection.objects.link(cam)
 scene.camera = cam
 
 # Every material shows its base colour as light (emission) and hands the rest to the picture as extra passes (AOVs):
-# normal, depth, and occlusion / roughness / metalness like glTF's ORM texture. One render per picture.
+# depth, occlusion / roughness / metalness like glTF's ORM texture, and the normal binned. One render per picture.
 sources = []
 for mat in {s.material for o in meshes for s in o.material_slots if s.material}:
     nt = mat.node_tree
@@ -112,10 +127,6 @@ for mat in {s.material for o in meshes for s in o.material_slots if s.material}:
         rgb.outputs[0].default_value = bsdf.inputs["Base Color"].default_value
         color = rgb.outputs[0]
     normal = source("Normal") or nt.nodes.new("ShaderNodeNewGeometry").outputs["Normal"]
-    half = nt.nodes.new("ShaderNodeVectorMath")
-    half.operation = "MULTIPLY_ADD"
-    nt.links.new(normal, half.inputs[0])
-    half.inputs[1].default_value = half.inputs[2].default_value = (0.5, 0.5, 0.5)
     depth = nt.nodes.new("ShaderNodeMath")
     depth.operation = "MULTIPLY_ADD"
     nt.links.new(nt.nodes.new("ShaderNodeCameraData").outputs["View Z Depth"], depth.inputs[0])
@@ -137,13 +148,60 @@ for mat in {s.material for o in meshes for s in o.material_slots if s.material}:
             nt.links.new(src, orm.inputs[k])
         else:
             orm.inputs[k].default_value = bsdf.inputs[name].default_value
-    for name, sock in (("nrm", half.outputs[0]), ("dep", depth.outputs[0]), ("orm", orm.outputs[0])):
+    for name, sock in (("dep", depth.outputs[0]), ("orm", orm.outputs[0])):
         aov = nt.nodes.new("ShaderNodeOutputAOV")
         aov.aov_name = name
         nt.links.new(sock, aov.inputs["Value" if name == "dep" else "Color"])
 
+    def math(op, a, b):
+        node = nt.nodes.new("ShaderNodeMath")
+        node.operation = op
+        for k, x in enumerate((a, b)):
+            if isinstance(x, float):
+                node.inputs[k].default_value = x
+            else:
+                nt.links.new(x, node.inputs[k])
+        return node.outputs[0]
+
+    # Each sample puts its normal in the bin of the nearest direction (the first of them on a tie, so a normal right
+    # between two always lands in one): dot above every earlier bin's and at least every later one's (running maxima
+    # from both ends). Cycles averages the samples, so a pixel gets each bin's sum of normals and its share.
+    dots = []
+    for b in BINS:
+        dp = nt.nodes.new("ShaderNodeVectorMath")
+        dp.operation = "DOT_PRODUCT"
+        nt.links.new(normal, dp.inputs[0])
+        dp.inputs[1].default_value = (b[0], -b[2], b[1])  # glTF -> Blender axes
+        dots.append(dp.outputs["Value"])
+    before, after = [None] * K, [None] * K
+    for j in range(1, K):
+        before[j] = dots[0] if j == 1 else math("MAXIMUM", before[j - 1], dots[j - 1])
+    for j in range(K - 2, -1, -1):
+        after[j] = dots[K - 1] if j == K - 2 else math("MAXIMUM", after[j + 1], dots[j + 1])
+    shares = []
+    for j in range(K):
+        parts = ([math("GREATER_THAN", dots[j], before[j])] if before[j] is not None else []) + (
+            [math("SUBTRACT", 1.0, math("LESS_THAN", dots[j], after[j]))] if after[j] is not None else [])
+        ind = parts[0] if len(parts) == 1 else math("MULTIPLY", parts[0], parts[1])
+        vec = nt.nodes.new("ShaderNodeVectorMath")
+        vec.operation = "SCALE"
+        nt.links.new(normal, vec.inputs[0])
+        nt.links.new(ind, vec.inputs["Scale"])
+        aov = nt.nodes.new("ShaderNodeOutputAOV")
+        aov.aov_name = f"b{j}"
+        nt.links.new(vec.outputs[0], aov.inputs["Color"])
+        shares.append(ind)
+    for g in range(GROUPS):
+        cmb = nt.nodes.new("ShaderNodeCombineXYZ")
+        for c in range(3):
+            if 3 * g + c < K:
+                nt.links.new(shares[3 * g + c], cmb.inputs[c])
+        aov = nt.nodes.new("ShaderNodeOutputAOV")
+        aov.aov_name = f"s{g}"
+        nt.links.new(cmb.outputs[0], aov.inputs["Color"])
+
 vl = scene.view_layers[0]
-for name in ("nrm", "dep", "orm"):
+for name in ["dep", "orm"] + [f"b{j}" for j in range(K)] + [f"s{g}" for g in range(GROUPS)]:
     a = vl.aovs.add()
     a.name = name
     a.type = "VALUE" if name == "dep" else "COLOR"
@@ -158,7 +216,8 @@ files.format.file_format = "OPEN_EXR"
 files.format.color_mode = "RGBA"
 files.format.color_depth = "32"
 files.file_slots.clear()
-PASSES = {"color": "Image", "normal": "nrm", "depth": "dep", "orm": "orm"}
+PASSES = {"color": "Image", "depth": "dep", "orm": "orm", **{f"b{j}": f"b{j}" for j in range(K)},
+          **{f"s{g}": f"s{g}" for g in range(GROUPS)}}
 for kind, sock in PASSES.items():
     files.file_slots.new(kind + "_")
     tree.links.new(layers.outputs[sock], files.inputs[kind + "_"])
@@ -209,39 +268,52 @@ shutil.rmtree(os.path.join(OUT, "frame"))
 # Cycles gives colour times coverage: divide it out, then pad empty pixels from their neighbours (like a bake
 # margin) so filtering at the outline never pulls in black.
 cover = atlas["color"][..., 3:4]
-seen = cover[..., 0] > 0
 vals = {k: atlas[k][..., :3] / np.maximum(cover, 1e-6) for k in atlas}
-n = vals["normal"] * 2 - 1
-vals["normal"] = np.stack([n[..., 0], n[..., 2], -n[..., 1]], -1)  # Blender's axes -> glTF's
-# The average of the normals under a pixel, not made unit length: how short it is tells how much they differ, and
-# the impostor shader lights with that (diffuse by its length, highlights rougher: Han et al. 2007, Toksvig).
-vals["normal"] /= np.maximum(np.linalg.norm(vals["normal"], axis=-1, keepdims=True), 1.0)
 
 
-def shifted(a, dy, dx):
-    out = np.zeros_like(a)
-    ys = slice(max(dy, 0), F + min(dy, 0)), slice(max(-dy, 0), F - max(dy, 0))
-    xs = slice(max(dx, 0), F + min(dx, 0)), slice(max(-dx, 0), F - max(dx, 0))
-    out[:, :, ys[0], xs[0]] = a[:, :, ys[1], xs[1]]
-    return out
+def pad(vals, have):
+    """Each empty pixel takes the mean of its filled 4-neighbours, ring after ring, within each picture. Only the
+    ring that grows is worked on (the same sums in the same order as over whole pictures, so the same pixels)."""
+    have = have.reshape(N * N, F, F).copy()
+    flat = {k: v.reshape(N * N, F, F, -1) for k, v in vals.items()}  # views: written through
+    for _ in range(F):
+        if have.all():
+            break
+        near = np.zeros_like(have)
+        near[:, 1:] |= have[:, :-1]
+        near[:, :-1] |= have[:, 1:]
+        near[:, :, 1:] |= have[:, :, :-1]
+        near[:, :, :-1] |= have[:, :, 1:]
+        p, y, x = np.nonzero(~have & near)
+        if not len(p):
+            break
+        cnt = np.zeros(len(p), np.float32)
+        acc = {k: np.zeros((len(p), v.shape[-1]), np.float32) for k, v in flat.items()}
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            yy, xx = y - dy, x - dx
+            inside = (yy >= 0) & (yy < F) & (xx >= 0) & (xx < F)
+            yy, xx = yy.clip(0, F - 1), xx.clip(0, F - 1)
+            w = (inside & have[p, yy, xx]).astype(np.float32)
+            cnt += w
+            for k, v in flat.items():
+                acc[k] += v[p, yy, xx] * w[:, None]
+        for k, v in flat.items():
+            v[p, y, x] = acc[k] / cnt[:, None]
+        have[p, y, x] = True
 
 
-have = seen.copy()
-for _ in range(F):
-    if have.all():
-        break
-    w = have.astype(np.float32)
-    acc = {k: np.zeros_like(v) for k, v in vals.items()}
-    cnt = np.zeros_like(w)
-    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        sw = shifted(w, dy, dx)
-        cnt += sw
-        for k in vals:
-            acc[k] += shifted(vals[k] * w[..., None], dy, dx)
-    grow = ~have & (cnt > 0)
-    for k in vals:
-        vals[k][grow] = acc[k][grow] / cnt[grow][:, None]
-    have |= grow
+# Bins: each bin's share of the pixel's covered samples, padded like the colour (at the outline filtering then still
+# sums the shares to 1, not to the coverage), and its mean normal (sum / share, glTF axes, no longer than 1), padded
+# where the bin is empty from where it isn't, so filtering never pulls a bin's mean toward nothing.
+shares = np.ascontiguousarray(np.concatenate([vals[f"s{g}"] for g in range(GROUPS)], -1)[..., :K])
+means = []
+for j in range(K):
+    b, s = vals[f"b{j}"], shares[..., j:j + 1]
+    m = np.where(s > 0, np.stack([b[..., 0], b[..., 2], -b[..., 1]], -1) / np.maximum(s, 1e-12), 0.0).astype(np.float32)
+    m /= np.maximum(np.linalg.norm(m, axis=-1, keepdims=True), 1.0)
+    pad({"m": m}, s[..., 0] > 0)
+    means.append(m)
+pad({"color": vals["color"], "depth": vals["depth"], "orm": vals["orm"], "shares": shares}, cover[..., 0] > 0)
 
 
 def srgb(c):
@@ -254,23 +326,26 @@ def tile(a):
     return a.transpose(0, 2, 1, 3, 4).reshape(N * F, N * F, a.shape[-1])
 
 
-def png(path, rgba):
-    rows = (rgba.clip(0, 1) * 255 + 0.5).astype(np.uint8)
+def png(path, px):
+    """8-bit PNG: 1 channel grey, 4 RGBA."""
+    rows = (px.clip(0, 1) * 255 + 0.5).astype(np.uint8)
     raw = b"".join(b"\x00" + r.tobytes() for r in rows)
 
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
-    head = struct.pack(">IIBBBBB", rgba.shape[1], rgba.shape[0], 8, 6, 0, 0, 0)
+    head = struct.pack(">IIBBBBB", px.shape[1], px.shape[0], 8, {1: 0, 4: 6}[px.shape[-1]], 0, 0, 0)
     with open(path, "wb") as fh:
         fh.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
 png(os.path.join(OUT, "color.png"), tile(np.concatenate([srgb(vals["color"]), cover], -1)))
-png(os.path.join(OUT, "normal.png"), tile(np.concatenate([vals["normal"] * 0.5 + 0.5, vals["depth"][..., :1]], -1)))
+png(os.path.join(OUT, "depth.png"), tile(vals["depth"][..., :1]))
 png(os.path.join(OUT, "orm.png"), tile(np.concatenate([vals["orm"], cover], -1)))
+png(os.path.join(OUT, "bins.png"), np.concatenate([tile(np.concatenate([m * 0.5 + 0.5, shares[..., j:j + 1]], -1))
+                                                   for j, m in enumerate(means)], 0))
 c = [float(centre[0]), float(centre[2]), float(-centre[1])]  # back to glTF axes
 box = pts.max(0) - pts.min(0)
-info = {"frames": N, "framePx": F, "radius": R, "centre": c, "diagonal": float(np.linalg.norm(box)),
+info = {"frames": N, "framePx": F, "bins": K, "radius": R, "centre": c, "diagonal": float(np.linalg.norm(box)),
         "seconds": round(time.time() - t0, 1)}
 print(json.dumps({"impostor": info}))
