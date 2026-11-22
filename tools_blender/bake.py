@@ -32,7 +32,13 @@ SIZE = int(PARAMS.get("size", 2048))
 # A model coloured by its materials alone, no textures: only the normal map is baked, the materials stay.
 # Baked into one atlas, BrainStem's 59 flat colours came out 86% of the picture off.
 NORMAL_ONLY = bool(PARAMS.get("normalOnly"))
-SAMPLES = int(PARAMS.get("samples", 8))
+# Rays per texel for the colour, metal-roughness and glow maps (EMIT passes: no light, only the heavy
+# surface's own texture read where the ray lands). 8 only spread each texel's ray over its own small square,
+# a little smoothing the texture already has: at 1 the colour came out 49 dB off 8 (mean 0.35/255), metal-
+# roughness 61 dB, the judge the same (mech 2.16/2.17, scorpion 5.76/5.78, dog 0.94/0.94), the same to the
+# eye side by side and blinking, and each such pass about 2.5x faster (mech 32 -> 12.5 s; the whole bake
+# 132 -> ~97 s). Repeats stay byte-same (2026-11-22). The normal and height passes use 1 already.
+SAMPLES = int(PARAMS.get("samples", 1))
 # How far rays look for the heavy surface, as a share of the model's size: they start this far out and
 # look as far in. At 2% rays from the Rodin pump's wall met the hose hanging in front of it first and drew
 # the hose onto the wall, and a groove's walls drew each other; at 0.5% the pump came out clean (2.62 ->
