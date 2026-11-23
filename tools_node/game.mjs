@@ -386,10 +386,31 @@ function cut(prims, ratio, flags = []) {
     const target = Math.floor((p.indices.length / 3) * ratio) * 3;
     // Plain simplify takes no locks: with points to keep and nothing else to weigh, one zero attribute.
     const [attributes, stride, weights] = p.stride ? [p.attributes, p.stride, p.budgetWeights] : [new Float32Array(p.positions.length / 3), 1, [0]];
-    [p.indices] = p.stride || p.lock
-      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, attributes, stride, weights, p.lock ?? null, target, Number.MAX_VALUE, flags)
-      : MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, Number.MAX_VALUE, flags);
+    const run = (limit, fl) => p.stride || p.lock
+      ? MeshoptSimplifier.simplifyWithAttributes(p.indices, p.positions, 3, attributes, stride, weights, p.lock ?? null, target, limit, fl)
+      : MeshoptSimplifier.simplify(p.indices, p.positions, 3, target, limit, fl);
+    [p.indices] = budgetSimplify(run, Number.MAX_VALUE, flags, target);
   }
+}
+
+/**
+ * A budget cut may drop separate pieces (Prune) only when they are smaller than the error the cut needs to reach
+ * the budget anyway. With no error limit, Prune drops whatever the collapses cannot shrink: when locked seams stall
+ * the cut, that is the whole model (truck at 8000, Meshy pistol at 8000: 0 triangles, 2026-11-23). So the collapses
+ * run alone first. When they reach the budget, their error is the bound. When locked seams stall them, the error
+ * they climb to says nothing about the model (Hunyuan mech at 3000: 1.16, more than the model's size); the bound is
+ * then the error the collapses need with seams loosened, which is what the caller does next. Prune runs again
+ * within that bound, so a stall stays a stall and the caller loosens the seams. When Prune stayed within the bound
+ * anyway (the usual case), its result is kept as it was. `run(limit, flags)` returns meshopt's [indices, error];
+ * `target` is the index count asked for.
+ */
+function budgetSimplify(run, error, flags, target) {
+  if (error !== Number.MAX_VALUE || !flags.includes("Prune")) return run(error, flags);
+  const pruned = run(error, flags);
+  const alone = flags.filter((f) => f !== "Prune");
+  let [kept, bound] = run(error, alone);
+  if (kept.length > target && !alone.includes("Permissive")) [, bound] = run(error, ["Permissive", ...alone]);
+  return pruned[1] <= bound ? pruned : run(bound, flags);
 }
 
 /**
@@ -433,7 +454,8 @@ function cutTogether(prims, { targetTris = 0, error = Number.MAX_VALUE, budget =
   const weights = budget
     ? [BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, BUDGET_NORMAL_WEIGHT, 0, 0, ...skin]
     : [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT, UV_WEIGHT, UV_WEIGHT, ...skin];
-  const [kept] = MeshoptSimplifier.simplifyWithAttributes(indices, positions, 3, attributes, STRIDE, weights, lock, targetTris * 3, error, flags);
+  const run = (limit, fl) => MeshoptSimplifier.simplifyWithAttributes(indices, positions, 3, attributes, STRIDE, weights, lock, targetTris * 3, limit, fl);
+  const [kept] = budgetSimplify(run, error, flags, targetTris * 3);
   // back to the parts: each triangle belongs to the part of its first vertex
   const owner = (v) => {
     let lo = 0;
