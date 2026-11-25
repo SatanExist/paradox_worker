@@ -377,6 +377,9 @@ def _refine_cut(m, radius: float, size: float, rounds: int = 200):
         if not need.any():
             break
         V, F = _split_longest(V, F, need, E, fe, L)
+        del t, E, fe, L
+        if len(F) >= COLLECT_FROM_FACES:  # each round's mesh and its tables go now (see _lean): direct3ds2_knight's
+            gc.collect()  # 13 rounds on 1.7M faces held 7.25 GB, 1.25 GB so, same output
     return trimesh.Trimesh(V, F, process=False)
 
 
@@ -770,14 +773,31 @@ def _chamber_block(m, log: Log, ball_mm: float = BALL_MM):
 
 
 def _drop_pockets(m):
-    """Inside-out shells (sealed pockets within the body) and crumbs under 1 mm³ go: the body is solid there."""
+    """Inside-out shells (sealed pockets within the body) and crumbs under 1 mm³ go: the body is solid there.
+    The parts are trimesh's split, in its order (its face adjacency, labels and grouping), but kept as labels: a
+    signed volume per part by one sum, and the kept faces taken in one go. trimesh.split makes a mesh of each part
+    first (+1.6-2.6 GB on 3-5M faces) and tries to close the open ones; the meshes here are closed."""
+    import numpy as np
     import trimesh
 
-    parts = m.split(only_watertight=False)
-    if len(parts) <= 1:
+    F = np.asarray(m.faces)
+    groups = trimesh.grouping.group(trimesh.graph.connected_component_labels(m.face_adjacency, node_count=len(F)), min_len=1)
+    if len(groups) <= 1:
         return _lean(m)
-    kept = [q for q in parts if q.volume > CRUMB_MM3]
-    return _lean(trimesh.util.concatenate(kept)) if kept else _lean(m)
+    V = np.asarray(m.vertices, np.float64)
+    gid = np.empty(len(F), np.int64)
+    for k, g in enumerate(groups):
+        gid[g] = k
+    t = V[F]
+    vol = np.bincount(gid, np.einsum("ij,ij->i", t[:, 0], np.cross(t[:, 1], t[:, 2])), len(groups)) / 6.0
+    del t
+    kept = [g for k, g in enumerate(groups) if vol[k] > CRUMB_MM3]
+    if not kept:
+        return _lean(m)
+    face = np.concatenate(kept)
+    part = np.repeat(np.arange(len(kept), dtype=np.int64), [len(g) for g in kept])
+    uniq, inv = np.unique(part[:, None] * len(V) + F[face], return_inverse=True)  # each part's vertices, in order
+    return _lean(trimesh.Trimesh(V[uniq % len(V)], inv.reshape(-1, 3), process=False))
 
 
 def _manifold_union(meshes):
@@ -1020,7 +1040,10 @@ def _finish(m, log: Log, shared: dict[str, Any]):
     return m, {"piecesBridged": bridged}
 
 
-_WRAP_CHILD = r"""
+# A child Python's first lines: it goes when the tool does, even when the tool is killed (the memory guard): on
+# Linux the kernel kills it (PR_SET_PDEATHSIG; a watching thread can't run while a C call holds the GIL),
+# elsewhere a thread notices between calls. The tool's pid is the child's last argument.
+_GONE_WITH_PARENT = r"""
 import os, sys, threading, time
 def alive(pid):
     if os.name != "nt":
@@ -1047,7 +1070,10 @@ def watch(pid):  # between C calls: gone with its parent
 if sys.platform.startswith("linux"):  # and during them: the kernel kills it with its parent
     import ctypes, signal
     ctypes.CDLL(None).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
-threading.Thread(target=watch, args=(int(sys.argv[4]),), daemon=True).start()
+threading.Thread(target=watch, args=(int(sys.argv[-1]),), daemon=True).start()
+"""
+
+_WRAP_CHILD = _GONE_WITH_PARENT + r"""
 sys.path.insert(0, sys.argv[1])
 import numpy as np
 from studio_bridge.print_solid import _wrap
@@ -1949,8 +1975,9 @@ def wall_thickness(m, seed: int = SEED):
     return pts, _ray_thickness(m, pts, inward)
 
 
-def _ray_thickness(m, pts, inward):
-    """Thickness at `pts` going along unit `inward` (see wall_thickness)."""
+def _ray_thickness(m, pts, inward, ei=None):
+    """Thickness at `pts` going along unit `inward` (see wall_thickness). `ei`: an Embree intersector already built
+    on `m`, used instead of a second one (on trellis2_harbor's 6.3M cut faces a second tree held 1.9 GB more)."""
     import igl.embree
     import numpy as np
 
@@ -1961,8 +1988,9 @@ def _ray_thickness(m, pts, inward):
     a = np.radians(THICKNESS_CONE_DEG)
     dirs = [inward] + [np.cos(a) * inward + np.sin(a) * (np.cos(k * np.pi / 3) * u + np.sin(k * np.pi / 3) * w) for k in range(6)]
     along = [1.0] + [float(np.cos(a))] * 6
-    ei = igl.embree.EmbreeIntersector()
-    ei.init(np.asfortranarray(m.vertices, np.float32), np.asfortranarray(m.faces, np.int32), True)
+    if ei is None:
+        ei = igl.embree.EmbreeIntersector()
+        ei.init(np.asfortranarray(m.vertices, np.float32), np.asfortranarray(m.faces, np.int32), True)
     start = (pts + inward * 1e-3).astype(np.float32)  # just inside, so the ray doesn't hit its own face
     dist = np.full((len(pts), len(dirs)), np.inf)
     for j, (d, cos) in enumerate(zip(dirs, along)):
@@ -2200,7 +2228,8 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0, leaf_to
     th = across.copy()
     if not draft:
         maybe = across < 1.5 * lo
-        th[maybe] = _ray_thickness(s, centre[maybe], inward[maybe])
+        th[maybe] = _ray_thickness(s, centre[maybe], inward[maybe], ei)
+    del ei
     thin = (th < lo) & (hit >= 0)
     if draft:
         open_p = open_q = np.ones(int(thin.sum()))
@@ -2374,6 +2403,227 @@ def _tapered(s, faces, th, meet, stub=0.0):
     return out, short, leaf
 
 
+THICKEN_BLOCK_MM = 15.0  # the grown layer is joined cube by cube of this size (10-30 mm came out alike)
+# What one exact union needs at most: a base, a share per pair of crossing faces, found by CGAL itself in seconds
+# before the union, and a share per face. CGAL's own cost, not a fit to a model: the same 23.4 KB a pair on the 197
+# cubes of trellis2_knight and trellis2_statue (correlation 0.998 / 0.999), worst miss +0.1 GB; 1.4 KB a face with no
+# crossings at all (meshy_rover's moved surface, 2.66M faces: +3.75 GB), small on a cube, most of a whole surface.
+UNION_PEAK_BASE_GB = 0.05
+UNION_PEAK_PER_PAIR_KB = 23.4
+UNION_PEAK_PER_FACE_KB = 1.4
+# The one union's join with the body after it: Manifold's batch add of two meshes lying on each other over most of
+# their faces (the moved surface's unmoved part is the body's own), 1.5 KB a face of both (meshy_rover: +5.6 GB on
+# 2.17M + 1.67M faces, more than the union before it; two meshes 0.01 mm apart took 0.7 KB a face, as the cubes' join).
+JOIN_SAME_PEAK_PER_FACE_KB = 1.5
+
+_BLOCK_CHILD = _GONE_WITH_PARENT + r"""
+import numpy as np
+import igl.copyleft.cgal as cgal
+with np.load(sys.argv[1]) as d:
+    V, F = d["V"], d["F"]
+V, F, _ = cgal.mesh_boolean(V, F, type_str="union")
+np.savez(sys.argv[2] + ".part.npz", V=np.asarray(V, np.float64), F=np.asarray(F, np.int64))
+os.replace(sys.argv[2] + ".part.npz", sys.argv[2])
+"""
+
+
+def _grown_union(body, V0, F, X, log: Log):
+    """`body` with the layer that moving V0 (the body's surface, cut finer) by X grows, as one closed mesh.
+    One exact union of the whole moved surface is the cheaper way, and is taken when its memory, predicted from its
+    crossing pairs and faces, and that of its join with the body after, fits the budget below. It pays for every crossing at once, though: 11 GB on trellis2_knight and
+    22 GB on trellis2_statue, over the guard's 7. Those go cube by cube:
+    1. A vertex moves out only: no part of the surface goes into the body. The faces that grow by the tolerance or
+       more are the layer, in cubes of THICKEN_BLOCK_MM by their centres; a cube whose union would need more than
+       half the budget is halved across its longest side until it fits (EMBER's subdivision).
+    2. Each cube's layer is a closed shell: its old faces turned over, the moved ones, and walls along its rim. One
+       exact union each (CGAL) resolves its crossings. The cubes are independent, so they run side by side in child
+       processes, largest first, each started only when this process's memory, the predicted peaks of those running
+       and its own fit the budget the wrap beside the repair keeps too (WRAP_BESIDE_SHARE of TOOLS_MEMORY_GB). A cube
+       that still fits nowhere (this process past its half) runs alone; past the limit the guard decides, as before.
+       Their solids wait on disk until all are done.
+    3. The body and the cubes' solids, each simplified within half the tolerance first, are joined by Manifold and
+       simplified within the other half (see joined).
+    The layer meets the body along whole faces and the cubes meet along their cut walls, and Manifold's join leaves
+    touching seams there (zero-volume slivers: coplanar faces it can't perturb apart). PrusaSlicer reads them without
+    a message and its layers match within 0.03 mm². Unlike the one union, solid material inside the body is not
+    carved out (290 mm³ lost on trellis2_knight). A union with no shells at all (EMBER, Trettner 2022) would leave
+    no seams: a bigger task, not done."""
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    import igl.copyleft.cgal as cgal
+    import manifold3d as mf
+    import numpy as np
+    import trimesh
+
+    t0 = time.time()
+    try:
+        import psutil
+
+        def mine() -> int:
+            return psutil.Process().memory_info().rss
+    except ImportError:  # the worker image may not have it: /proc
+        def mine() -> int:
+            return int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+
+    budget = WRAP_BESIDE_SHARE * float(os.getenv("TOOLS_MEMORY_GB") or 7.0) * 2**30
+
+    def need(pairs: int, faces: int) -> float:
+        return UNION_PEAK_BASE_GB * 2**30 + (UNION_PEAK_PER_PAIR_KB * pairs + UNION_PEAK_PER_FACE_KB * faces) * 2**10
+
+    def closed(V, F):  # CGAL's union, in one fixed order, as a Manifold (two solids touching along an edge parted)
+        piece = _fixed_order(trimesh.Trimesh(V, F, process=False))
+        for k in range(2):
+            q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(piece.vertices, np.float64),
+                                      tri_verts=np.ascontiguousarray(piece.faces, np.uint64)))
+            if q.status() == mf.Error.NoError or k:
+                break
+            piece = _part_touching(piece)
+        if q.status() != mf.Error.NoError:
+            raise RuntimeError(f"a union is not a closed manifold: {q.status()}")
+        return q
+
+    def joined(solids, first=0.0):  # the body and the solids, one closed mesh within the tolerance
+        # `first`: the body and the solids are simplified within it before the join and the result within the rest
+        # after. Two sets each moved by at most a and b have their union moved by at most max(a, b), so the whole
+        # stays within the tolerance; Manifold's join needs ~0.7 KB a face of its input, and half the tolerance
+        # halves the input (trellis2_harbor: 2.18M + 8.9M -> 1.16M + 4.0M faces, join +4.85 -> +2.7 GB).
+        b = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(body.vertices, np.float64),
+                                  tri_verts=np.ascontiguousarray(body.faces, np.uint64)))
+        parts = [b.simplify(first) if first else b] + solids
+        del b
+        g = mf.Manifold.batch_boolean(parts, mf.OpType.Add)
+        del parts[:]
+        g = g.simplify(THICKEN_TOLERANCE_MM - first).to_mesh64()
+        return trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
+
+    # When it fits, one union of the whole moved surface, simplified first (the flat parts need none of the cut's
+    # vertices): its crossings are only the surface's own, 4-5x fewer than the cubes' shells have (bottoms and rim
+    # walls cross the rest: 114k against 582k pairs on hunyuan_lighthouse), so it is the faster way. Joined with the
+    # body after, so what it carves out of solid material inside is given back: the same shape as the cubes' within
+    # 0.1 % of the volume, all of it under 0.5 mm from the surface. The join is needed: where a move is longer than
+    # the faces round it (0.75 mm against 0.3-0.6 mm edges) faces turn over, and the moved surface alone leaves out
+    # bits of the body (meshy_rover: 103 spots up to 0.44 mm under the original surface, even moving out only).
+    q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(V0 + X, np.float64), tri_verts=np.ascontiguousarray(F, np.uint64)))
+    if q.status() == mf.Error.NoError:
+        g = q.simplify(THICKEN_TOLERANCE_MM).to_mesh64()
+        Vm, Fm = np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64)
+        del q, g
+        whole = max(need(len(cgal.remesh_self_intersections(Vm, Fm, detect_only=True)[2]), len(Fm)),
+                    JOIN_SAME_PEAK_PER_FACE_KB * 2**10 * (len(body.faces) + len(Fm)))
+        if mine() + whole <= budget:
+            t1 = time.time()
+            Vu, Fu, _ = cgal.mesh_boolean(Vm, Fm, type_str="union")
+            del Vm, Fm
+            t2 = time.time()
+            out = joined([closed(Vu, Fu)])
+            log(f"  grown layer in one union: {len(F)} -> {len(out.faces)} faces, crossings {t1 - t0:.0f}s, union {t2 - t1:.0f}s "
+                f"(predicted {whole / 2**30:.2f} GB of {budget / 2**30:.2f}), join {time.time() - t2:.0f}s")
+            return out
+        del Vm, Fm
+    vn = trimesh.Trimesh(V0, F, process=False).vertex_normals
+    X = X - np.minimum((X * vn).sum(1), 0.0)[:, None] * vn
+    V1 = V0 + X
+    fn = np.cross(V0[F[:, 1]] - V0[F[:, 0]], V0[F[:, 2]] - V0[F[:, 0]])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1), 1e-30)[:, None]
+    grows = np.flatnonzero((X[F].mean(1) * fn).sum(1) >= THICKEN_TOLERANCE_MM)
+    groups = []
+    if len(grows):
+        cen = V0[F[grows]].mean(1)
+        ci = np.floor((cen - cen.min(0)) / THICKEN_BLOCK_MM).astype(np.int64)
+        key = (ci[:, 0] * 4096 + ci[:, 1]) * 4096 + ci[:, 2]
+        o = np.argsort(key, kind="stable")
+        groups = np.split(grows[o], np.flatnonzero(np.diff(key[o])) + 1)
+
+    def shell(g):  # the cube's layer, closed: bottom turned over, top, and two faces on each rim edge
+        uv, Fl = np.unique(F[g], return_inverse=True)
+        Fl = Fl.reshape(-1, 3)
+        n = len(uv)
+        e = Fl[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+        _, inv, cnt = np.unique(np.sort(e, 1), axis=0, return_inverse=True, return_counts=True)
+        rim = e[cnt[inv.ravel()] == 1]
+        p, q = rim[:, 0], rim[:, 1]
+        lowp = (uv[p] < uv[q])[:, None]  # the wall's diagonal by vertex number: the same seen from both cubes
+        t1 = np.where(lowp, np.c_[p, q, q + n], np.c_[p, q, p + n])
+        t2 = np.where(lowp, np.c_[p, q + n, p + n], np.c_[q, q + n, p + n])
+        return np.r_[V0[uv], V1[uv]], np.r_[Fl[:, ::-1], Fl + n, t1, t2].astype(np.int64)
+
+    # A cube whose union alone would pass its share is halved across the longest side of its faces' centres, again
+    # until each half fits (or is one face): EMBER's subdivision (Trettner 2022: split the box's longest axis in half
+    # until the part is small enough), measured in crossing pairs. The share is half the budget, the other half is
+    # this process's own (the surface, the body, the shells: 2.5 GB of 5.25 on trellis2_statue); by pairs only, so
+    # the same model is cut the same way whatever else is in memory.
+    cap = budget / 2
+    shells, peak = [], []
+    while groups:
+        g = groups.pop(0)
+        Vs, Fs = shell(g)
+        p = need(len(cgal.remesh_self_intersections(Vs, Fs, detect_only=True)[2]), len(Fs))
+        if p > cap and len(g) > 1:
+            c = V0[F[g]].mean(1)
+            a = int(np.argmax(c.max(0) - c.min(0)))
+            low = c[:, a] < (c[:, a].min() + c[:, a].max()) / 2
+            if low.any() and not low.all():
+                groups[:0] = [g[low], g[~low]]
+                continue
+        shells.append((Vs, Fs))
+        peak.append(p)
+    del V1, X, vn, fn, groups
+    t1 = time.time()
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    todo = sorted(range(len(shells)), key=lambda i: (-peak[i], i))
+    tmp = Path(tempfile.mkdtemp(prefix="grow-"))
+    run: dict[int, Any] = {}
+    solids: dict[int, Any] = {}
+    done: list[int] = []
+    try:
+        while todo or run:
+            while todo and len(run) < cpus:
+                used = mine() + sum(peak[k] for k in run)
+                j = next((i for i in todo if used + peak[i] <= budget), None if run else todo[0])
+                if j is None:
+                    break
+                todo.remove(j)
+                np.savez(tmp / f"{j}.in.npz", V=shells[j][0], F=shells[j][1])
+                shells[j] = None
+                with open(tmp / f"{j}.err", "wb") as err:
+                    run[j] = subprocess.Popen([sys.executable, "-c", _BLOCK_CHILD, str(tmp / f"{j}.in.npz"), str(tmp / f"{j}.out.npz"),
+                                               str(os.getpid())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err)
+            time.sleep(0.05)
+            for j in [k for k, p in run.items() if p.poll() is not None]:
+                p = run.pop(j)
+                if p.returncode != 0:
+                    err = (tmp / f"{j}.err").read_text(errors="replace").strip()
+                    raise RuntimeError(f"a block's union stopped (exit {p.returncode}): {err[-300:]}")
+                done.append(j)
+        # The solids wait on disk while the children run (in memory they grew this process by 1.7 GB on
+        # trellis2_statue, under the last cubes' unions), and are made and joined once all are done.
+        del shells
+        gc.collect()
+        t2 = time.time()
+        for j in sorted(done):
+            with np.load(tmp / f"{j}.out.npz") as d:
+                if len(d["F"]):
+                    solids[j] = closed(d["V"], d["F"]).simplify(THICKEN_TOLERANCE_MM / 2)
+            (tmp / f"{j}.out.npz").unlink()
+        out = joined([solids.pop(j) for j in sorted(solids)], THICKEN_TOLERANCE_MM / 2)
+    finally:
+        for p in run.values():
+            p.kill()
+            p.wait()
+        for _ in range(20):  # a launcher's real child may hold its files a moment longer (Windows)
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not tmp.exists():
+                break
+            time.sleep(0.25)
+    log(f"  grown layer: {len(grows)} faces in {len(peak)} blocks, crossings {t1 - t0:.0f}s, unions {t2 - t1:.0f}s (largest "
+        f"predicted {max(peak, default=0) / 2**30:.2f} GB of {budget / 2**30:.2f}, {cpus} at once at most), join {time.time() - t2:.0f}s")
+    return out
+
+
 def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     """Walls thinner than the printer holds made thick enough by moving their two sides apart, keeping their shape.
 
@@ -2392,14 +2642,12 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     4. A vertex takes the mean of its thin faces, so at a sharp edge the two sides cancel and the edge stays where it
        is. What is not thin follows by a second solve, the far surface holding still: a strap's narrow side gets taller,
        so the strap keeps its width. Nothing goes through the table.
-    5. The moved mesh is simplified within 0.02 mm, far under a 0.2 mm layer, as flat parts need none of the new
-       vertices, and one exact union resolves whatever now crosses.
+    5. The layer the moved surface grows is joined to the body cube by cube (_grown_union), within 0.02 mm, far
+       under a 0.2 mm layer: one exact union of the whole moved mesh took 11-22 GB.
     A sharp edge's last fraction of a millimetre stays thin by what it is, and a tapered edge (a blade's) is left as it
     is (_tapered): the slicer prints it as far as its nozzle can. `seen_too` False leaves walls seen on both
     sides as they are. `m` is closed, in mm. Returns (mesh, info), info None when nothing was thin."""
-    import manifold3d as mf
     import numpy as np
-    import trimesh
     from scipy.spatial import cKDTree
 
     t0 = time.time()
@@ -2427,27 +2675,22 @@ def thicken(m, printer: Printer, log: Log, seen_too: bool = True):
     # no growing through the table: on trellis2_chest walls under the flat bottom lifted it, 702 -> 295 mm2 on the bed
     moved = V + x
     moved[:, 1] = np.maximum(moved[:, 1], V[:, 1].min())
+    x = moved - V
     t2 = time.time()
-    moved = trimesh.Trimesh(moved, F, process=False)
     split_faces = len(F)
-    del got, x, V, F, tags
+    del got, moved, tags
     gc.collect()
-    # the flat parts need none of the new vertices, and the union pays for every face. Manifold takes a mesh that
-    # crosses itself as long as it is closed, and keeps it within the tolerance
-    q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(moved.vertices, np.float64), tri_verts=np.ascontiguousarray(moved.faces, np.uint64)))
-    grown = len(moved.faces)
-    if q.status() == mf.Error.NoError:
-        g = q.simplify(THICKEN_TOLERANCE_MM).to_mesh64()
-        moved = trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
-    del q
-    out = _fixed_order(_union(moved))
+    out = _grown_union(m, V, F, x, log)
+    del V, F, x
+    gc.collect()
     t3 = time.time()
-    if not out.is_watertight:
-        out = _part_touching(out)
     out = _drop_pockets(out)  # gaps between a skin and its core that the new walls closed, and dust: gone
     if not out.is_watertight:
+        out = _part_touching(out)
+    if not out.is_watertight:
         raise RuntimeError("the moved walls did not close")
-    log(f"  thicken: {len(tf)} thin faces of {split_faces}, moves {t2 - t1:.0f}s, union {t3 - t2:.0f}s, {grown} -> {len(out.faces)} faces")
+    out = _fixed_order(out)  # Manifold's join runs in threads: one fixed order, so the same model gives the same bytes
+    log(f"  thicken: {len(tf)} thin faces of {split_faces}, moves {t2 - t1:.0f}s, union {t3 - t2:.0f}s, {len(out.faces)} faces")
     info["addedCm3"] = round((float(out.volume) - float(m.volume)) / 1000, 2)
     info["secs"] = round(time.time() - t0, 1)
     return out, info
