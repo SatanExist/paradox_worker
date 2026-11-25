@@ -45,6 +45,7 @@ WRAP_ALPHA_MM = 0.5
 WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
 SLAB_FLOOR_MM = 0.02  # a given-back slab goes at least this deep, and is cut back no shallower where it folds (see _slabs)
+SLAB_PIN_ROUNDS = 200  # rounds past the halvings in _slabs, a ring pinned each: only a cap on a runaway
 BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own length are left as they are
 BRIDGE_FIRST_MM = 0.5  # pieces this close are tied first; the step grows by BRIDGE_STEP until all that can be are (see _bridge)
 BRIDGE_STEP = 1.5
@@ -66,6 +67,8 @@ THICKNESS_CONE_DEG = 20.0  # six rays round the inward normal at this angle, plu
 THIN_SPOT_CELL_MM = 2.0  # thin points closer than this belong to the same spot
 THIN_SPOT_MIN_MM2 = 1.0  # smaller thin spots are tips and needle points, not walls: not reported
 THICKEN_MARGIN_MM = 0.05  # thickened walls come out this much over the minimum, on each side
+CHAMBER_POINTS = 4000  # points inside the chamber block that tell a filled result from a paper skin (see _block)
+PAPER_FILLED_SHARE = 0.5  # a result that fills less of the chamber than this is a paper skin round a hollow
 THICKEN_NEAR_MM = 1.2  # how far from a thin wall the surface may move at all
 THICKEN_EDGE_MM = 0.6  # edges there are cut down to this, so the surface can bend
 THICKEN_NARROW_EDGE_MM = 0.3  # and to this where the two sides of a wall cancel: a narrow strap needs vertices in the middle of its sides
@@ -115,9 +118,11 @@ class Printer:
     bridge_reach_mm: float  # pieces floating farther than this and than their own length are left as they are
     shell_mm: float = 0.9  # printed solid this deep under the surface: two 0.45 mm perimeters (top/bottom 0.8-1.0 mm)
     infill: float = 0.15  # share of the inside filled deeper than that (PrusaSlicer's 15 %); 1 = printed solid
-    # a hollow skin is also filled on its own surface (see _filled). Off for fdm for now: its walls must grow to 0.8 mm,
-    # trellis2_crown's 0.33 mm strands then grow into each other (625k self-crossings) and thicken's exact union took
-    # 310 s and 14 GB where the wrap's coat had left it 4 s; resin's 0.4 mm took 94 s and 5.7 GB.
+    # a hollow skin is also filled on its own surface (see _filled). On for fdm since 2026-11-25: its walls grow to
+    # 0.8 mm and trellis2_crown's 0.33 mm strands grow into each other (625k self-crossings), so thicken's exact union
+    # took 14 GB; the union cube by cube (see _grown_union) and the faces given back as slabs (see _slabs) keep all 42
+    # corpus models within the 7 GiB guard (harbor 7.11 GB, statue 6.58), and filled is picked on all 10 models where it
+    # runs (bust, crown, statue, harbor, armor, knights, chests, aquarium): nearest the original once thickened.
     fill_own_surface: bool = False
     # a hollow left inside holds liquid: resin can't drain from it and we make no drain holes (slicers ask for them:
     # Lychee 3-5 mm, Formlabs 2.5 mm on Form 3, 0.75 mm on Form 4; under 0.5 mm they close). So when the chamber behind
@@ -138,7 +143,7 @@ class Printer:
 # resin: 0.05 mm layers, walls from 0.4 mm (Formlabs' guide for supported walls), detail from 0.2 mm, kept closer.
 PRINTERS = {
     "fdm": Printer("fdm", layer_mm=0.2, print_layer_mm=0.2, min_wall_mm=0.8, min_print_mm=0.4, skin_mm=SKIN_MM, wrap_alpha_mm=WRAP_ALPHA_MM, lost_mm=LOST_MM,
-                   bridge_reach_mm=BRIDGE_REACH_MM),
+                   bridge_reach_mm=BRIDGE_REACH_MM, fill_own_surface=True),
     "resin": Printer("resin", layer_mm=0.05, print_layer_mm=0.05, min_wall_mm=0.4, min_print_mm=0.2, skin_mm=0.6, wrap_alpha_mm=0.3, lost_mm=0.5, bridge_reach_mm=1.0,
                      infill=1.0, fill_own_surface=True, hollow_traps=True, plate_mm=(218.0, 122.0, 220.0), nozzle_mm=None),
 }
@@ -1228,6 +1233,14 @@ def _block(orig, shared: dict[str, Any], log: Log):
     if "block" not in shared:
         t = time.time()
         shared["block"] = _chamber_block(_skin(orig, shared), log)
+        block = shared["block"][0]
+        if block is not None:  # points spread through the chamber, the same every run (see _measure: paper)
+            import numpy as np
+
+            lo, hi = block.bounds
+            P = lo + np.random.default_rng(SEED).random((10 * CHAMBER_POINTS, 3)) * (hi - lo)
+            shared["chamberPts"] = P[_winding(block.vertices, block.faces, P, bool(block.is_watertight)) > 0.5][:CHAMBER_POINTS]
+            log(f"  chamber points {len(shared['chamberPts'])}")
         log(f"  chamber {time.time() - t:.0f}s")
         _tick(shared, "chamber", t)
     block, chamber = shared["block"]
@@ -1369,6 +1382,67 @@ def _pinned(tris0, dv, m: int, k: int):
     return T[keep], int((~flat).sum())
 
 
+def _unzipped(Fc):
+    """Fc's corners joined only across edges of exactly two faces: a vertex on an edge of three or more faces (a fin
+    grown on a surface) or where fans touch at a point gets one copy per side, as CGAL's
+    duplicate_non_manifold_vertices and OpenMesh do. Returns each new vertex's old one and the faces on the new ones."""
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    k = len(Fc)
+    e = Fc[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+    ca = (np.arange(k)[:, None] * 3 + [[0, 1, 2]]).ravel()
+    cb = (np.arange(k)[:, None] * 3 + [[1, 2, 0]]).ravel()
+    _, inv, cnt = np.unique(np.sort(e, 1), axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    two = np.flatnonzero(cnt[inv] == 2)
+    o = two[np.argsort(inv[two], kind="stable")].reshape(-1, 2)
+    i, j = o[:, 0], o[:, 1]
+    same = e[i, 0] == e[j, 0]
+    a2 = np.where(same, ca[j], cb[j])
+    b2 = np.where(same, cb[j], ca[j])
+    rows, cols = np.r_[ca[i], cb[i]], np.r_[a2, b2]
+    g = sp.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(3 * k, 3 * k))
+    _, lab = connected_components(g, directed=False)
+    uv = np.zeros(lab.max() + 1, np.int64)
+    uv[lab] = Fc.ravel()
+    return uv, lab.reshape(-1, 3)
+
+
+def _oriented(Fc):
+    """_unzipped, then wound one way (BFS, as libigl's bfs_orient: a face the model wound against its neighbours is
+    turned), then cut again where that can't hold (a Moebius-like strip: its seam). Returns the new vertices' old
+    ones, the faces on them, and which faces were turned."""
+    import igl
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    uv1, Fz = _unzipped(Fc)
+    Fo, _ = igl.bfs_orient(Fz)
+    Fo = np.asarray(Fo, np.int64)
+    turned = ~(Fo == Fz).all(1)
+    # cut at edges still wound the same way by both faces: corners join only across edges wound opposite
+    k = len(Fo)
+    e = Fo[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+    ca = (np.arange(k)[:, None] * 3 + [[0, 1, 2]]).ravel()
+    cb = (np.arange(k)[:, None] * 3 + [[1, 2, 0]]).ravel()
+    _, inv, cnt = np.unique(np.sort(e, 1), axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    two = np.flatnonzero(cnt[inv] == 2)
+    o = two[np.argsort(inv[two], kind="stable")].reshape(-1, 2)
+    i, j = o[:, 0], o[:, 1]
+    keep = e[i, 0] == e[j, 1]
+    i, j = i[keep], j[keep]
+    rows, cols = np.r_[ca[i], cb[i]], np.r_[cb[j], ca[j]]
+    g = sp.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(3 * k, 3 * k))
+    _, lab = connected_components(g, directed=False)
+    uv = np.zeros(lab.max() + 1, np.int64)
+    uv[lab] = uv1[Fo.ravel()]
+    return uv, lab.reshape(-1, 3), turned
+
+
 def _crossing_pairs(V, T):
     """Pairs of faces that cross each other, by CGAL's exact test (via libigl)."""
     import igl.copyleft.cgal as cgal
@@ -1378,13 +1452,16 @@ def _crossing_pairs(V, T):
     return np.asarray(r[2], np.int64).reshape(-1, 2)
 
 
-def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
+def _slabs(orig, faces, depth_max: float, body=None, log: Log = print, cover_mm: float = 0.0):
     """The original's own faces `faces` as solids, so the surface stays exactly as modelled: each connected patch
     is one slab (patches part at an edge of three faces), the patch itself outside, a copy of it pushed in (see
     _inward) and walls round its rim. One solid per face met its neighbours wall to wall, and the union cut every shared wall into slivers (hunyuan31_scorpion:
-    21k faces given back grew the body by 450k faces and the thickening ran out of memory). A patch whose own faces
-    are wound against each other goes back face by face. Returns the solids, how many are slabs, and how many faces
-    went back one by one.
+    21k faces given back grew the body by 450k faces and the thickening ran out of memory). Returns the solids, how
+    many are slabs, and how many faces went back one by one.
+    A patch is cut open at its edges of three or more faces and where its fans touch at a point, and wound one way
+    (see _oriented): 95 % of trellis2_bust's 11 182 faces that went back one by one were patches with a fin grown on
+    them (an edge of three faces) or wound against themselves, and those prisms took the fill past 14 GB. Cut open,
+    they are slabs (bust, crown, statue: 0 faces one by one).
     Where the full depth in still lands inside `body` (a sleeve over a core: tripo_sword's grip), the slab goes the
     full depth: what is behind is solid anyway, and a slab as thin as the gap to the core read as a thin wall, which
     the thickening blew up into ridges along its edges. Elsewhere (a strap hanging free) it stays as thin as modelled.
@@ -1397,7 +1474,11 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
     depth helps: the slab goes as it is, as those faces went before. What still crosses at the floor is a knife edge,
     where the two sides of a sheet meet: only the faces round those crossings go back face by face (the whole patch
     face by face gave the scorpion 11k prisms; resolving the slab by itself pinched a thin strap to nothing, and the
-    thickening then lost it). A slab thinner than a wall is fine: the thickening grows it, as a thin strap."""
+    thickening then lost it). Under the floor the depth goes to nothing, ring by ring (_pinned): a knife edge's two
+    sides meet there, and the slab ends on it. A face pinned at all three corners is no solid at all: it goes back as a
+    prism at the floor depth only where nothing else (the body, the slabs) covers it within `cover_mm`; covered, it is
+    the other side of a sheet already given back (hunyuan_lighthouse: dropping all 429 lost 0.24 % of its surface, up to
+    2.4 mm; this way 60 go back as prisms). A slab thinner than a wall is fine: the thickening grows it, as a thin strap."""
     import math
 
     import numpy as np
@@ -1425,8 +1506,10 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
         import manifold3d as mf
     except ImportError:
         mf = None
-    out, loose = [], [np.flatnonzero(~sound)]
-    rounds = max(1, math.ceil(math.log2(depth_max / SLAB_FLOOR_MM)))  # halvings down to the floor
+    out, loose, flats = [], [np.flatnonzero(~sound)], []
+    # halvings down to the floor, then a ring of vertices pinned to nothing a round; the rounds past the halvings only
+    # stop a runaway (as in _refine_cut)
+    rounds = max(1, math.ceil(math.log2(depth_max / SLAB_FLOOR_MM))) + SLAB_PIN_ROUNDS
     shrunk = knife = own = most = 0
     work = [(np.asarray(c, np.int64), None) for c in comps]
     while work:
@@ -1437,14 +1520,15 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
             turn = float((area[c] * flip[c]).sum()) > 0.5 * float(area[c].sum())
         Fc = F[c][:, [0, 2, 1]] if turn else F[c]  # wound outwards
         inward_c = n[c] if turn else -n[c]
-        e = Fc[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+        uz, Fz, tz = _oriented(Fc)  # cut open at fins and touching fans, wound one way (tz: faces turned)
+        inward_c = np.where(tz[:, None], -inward_c, inward_c)
+        e = Fz[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
         _, inv, cnt = np.unique(np.sort(e, 1), axis=0, return_inverse=True, return_counts=True)
         inv = inv.ravel()
         if cnt.max() > 2 or len(np.unique(e, axis=0)) < len(e):  # the model's own faces disagree on their winding
             loose.append(c)
             continue
-        uv, Fl = np.unique(Fc, return_inverse=True)
-        Fl = Fl.reshape(-1, 3)
+        uv, Fl = uz, Fz
         m = len(uv)
         vn = np.zeros((m, 3))
         np.add.at(vn, Fl.ravel(), np.repeat(inward_c * area[c][:, None], 3, 0))
@@ -1477,15 +1561,15 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
             fs = np.unique(movable.ravel())
             vs = np.unique(tris[fs[fs >= k]].ravel())
             vs = vs[vs >= m] - m
-            if (dv[vs] <= SLAB_FLOOR_MM).all():
+            if (dv[vs] <= 0).all():
                 break
-            dv[vs] = np.maximum(dv[vs] / 2, SLAB_FLOOR_MM)
+            dv[vs] = np.where(dv[vs] <= SLAB_FLOOR_MM, 0.0, np.maximum(dv[vs] / 2, SLAB_FLOOR_MM))
             most = max(most, r + 1)
         if not ok:  # a knife edge: the faces round its crossings go face by face, the rest is a slab again
             bad_v = np.unique(tris[np.unique(movable.ravel())].ravel()) % m
             bad = np.isin(Fl, bad_v).any(1)
             loose.append(c[bad])
-            flip[c[bad]] = turn  # in the way the patch voted, as deep as the slab got there
+            flip[c[bad]] = turn ^ tz[bad]  # in the way the patch voted, as deep as the slab got there
             depth[c[bad]] = dv[Fl[bad]].min(1)
             knife += 1
             if (~bad).any():
@@ -1493,6 +1577,11 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
             continue
         if r:
             shrunk += 1
+        flat = (dv[Fl] <= 0).all(1)  # pinned at all three corners: not in the slab (see the cover after the loop)
+        if flat.any():
+            flats.append((V[F[c[flat]]], n[c[flat]], turn ^ tz[flat]))
+        if not len(tris):
+            continue
         slab = trimesh.Trimesh(Vs, tris, process=False)
         if mf is not None:
             q = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(slab.vertices, np.float64),
@@ -1502,13 +1591,32 @@ def _slabs(orig, faces, depth_max: float, body=None, log: Log = print):
                 knife += 1
                 continue
         out.append(slab)
+    slabs = len(out)
     loose = np.concatenate(loose)
     if len(loose):
         full = fills[loose, flip[loose].astype(int)]
         out += _prisms(V, F[loose], n[loose], flip[loose], np.where(full, depth_max, depth[loose]))
+    single = len(loose)
+    if flats:  # faces pinned flat: back as prisms at the floor where nothing else covers them
+        import igl
+
+        T = np.concatenate([f[0] for f in flats])
+        cover = trimesh.util.concatenate(([body] if body is not None else []) + out[:slabs])
+        if len(cover.faces):
+            d = np.sqrt(igl.point_mesh_squared_distance(T.mean(1), np.asarray(cover.vertices, np.float64),
+                                                        np.asarray(cover.faces, np.int64))[0])
+        else:
+            d = np.full(len(T), np.inf)
+        bare = d > cover_mm
+        if bare.any():
+            k = int(bare.sum())
+            out += _prisms(T[bare].reshape(-1, 3), np.arange(3 * k).reshape(-1, 3), np.concatenate([f[1] for f in flats])[bare],
+                           np.concatenate([f[2] for f in flats])[bare].astype(bool), np.full(k, SLAB_FLOOR_MM))
+            single += k
+        log(f"  flat faces: {int((~bare).sum())} covered, {int(bare.sum())} back as prisms ({len(flats)} patches)")
     log(f"  slabs: {len(comps)} patches, {shrunk} shrunk where they folded (up to {most} rounds), {knife} times faces "
-        f"round a knife edge went one by one, {own} with the original crossing itself, {len(loose)} single faces")
-    return out, len(out) - len(loose), len(loose)
+        f"round a knife edge went one by one, {own} with the original crossing itself, {single} single faces")
+    return out, slabs, single
 
 
 def _restored(orig, repaired, shared, log: Log):
@@ -1533,7 +1641,7 @@ def _given_back(orig, m, printer: Printer, log: Log = print):
     bad, patch = _lost_faces(orig, m)
     if not bad.any():
         return m, 0, 0, 0
-    solids, slabs, single = _slabs(orig, patch, printer.min_wall_mm, body=m, log=log)
+    solids, slabs, single = _slabs(orig, patch, printer.min_wall_mm, body=m, log=log, cover_mm=printer.print_layer_mm)
     return _drop_pockets(_union(m, *solids)), int(patch.sum()), slabs, single
 
 
@@ -1614,7 +1722,37 @@ def _orig_seen(orig, pts, fi):
     return _seen(V, F, pts, n) | _seen(V, F, pts, -n)
 
 
-def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None) -> dict[str, Any]:
+def _under_thickness(orig, orig_pts, far, inside, V, F, tol: float, depth_max: float):
+    """Which original points (of those `far`) are buried under thickness: inside the result, the result's surface
+    straight out along the original's normal no farther than the nearest point, give or take a layer, and no deeper
+    than the printer requires there. The mirror of the test in _measure that tells thickness from added surface."""
+    import igl
+    import igl.embree
+    import numpy as np
+
+    out = np.zeros(len(orig_pts), dtype=bool)
+    k = np.flatnonzero(far & inside)
+    if not len(k):
+        return out
+    Vo, Fo = np.asarray(orig.vertices, np.float64), np.asarray(orig.faces, np.int64)
+    _, fi, _ = igl.point_mesh_squared_distance(orig_pts[k], Vo, Fo)
+    nrm = np.asarray(orig.face_normals, np.float64)[fi]
+    gone = np.sqrt(igl.point_mesh_squared_distance(orig_pts[k], V, F)[0])
+    hit = igl.embree.line_mesh_intersection(np.ascontiguousarray(orig_pts[k]), np.ascontiguousarray(nrm), V, F)
+    depth = np.full(len(k), np.inf)
+    h = hit[:, 0] >= 0
+    if h.any():
+        f, b = hit[h, 0].astype(np.int64), hit[h, 1:]
+        at = V[F[f, 0]] * (1 - b[:, :1] - b[:, 1:2]) + V[F[f, 1]] * b[:, :1] + V[F[f, 2]] * b[:, 1:2]
+        depth[h] = np.linalg.norm(at - orig_pts[k][h], axis=1)
+    # only as deep as the printer requires there: the shortfall of the original's own wall (a coat over a thick body,
+    # a lid over a slot, is not required: tripo_blaster's wrap buried its bolt heads and won)
+    need = np.maximum(depth_max - _ray_thickness(orig, orig_pts[k], -nrm), 0.0)
+    out[k] = (depth - gone <= tol) & (gone <= need + tol)
+    return out
+
+
+def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None, chamber_pts=None) -> dict[str, Any]:
     """'changed': how far the result is from the original where they show, both ways, as mesh comparison does it
     (Metro, Netfabb's and Magics' part compare; the F-score of shape reconstruction): the share of the original's
     surface seen from outside (`orig_seen`) that is no longer on the result's surface, lost or buried inside it (a wrap
@@ -1629,7 +1767,12 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None
     fixed 0.3 mm: the backs of potted_plant_02's leaves counted 25 % and the wrap's buried leaves nothing, and two
     rules picked round it (restored over wrap; 10 % more volume wins). Surface moved out of sight (the walls of a
     filled hollow) is counted apart, as 'changedHidden'. 'lost': original surface more than lost_mm from the result
-    and outside it. Skin buried inside the new solid was filled on purpose: not lost."""
+    and outside it. Skin buried inside the new solid was filled on purpose: not lost.
+    Original surface buried under no more than the thickness the printer requires there is thickness too, the mirror
+    of the test above (see _under_thickness): the given-back sheet's own face, under its new back, was counted changed.
+    Paper: when the chamber behind the skin is known (`chamber_pts`, see _block), a result is paper when it leaves the
+    chamber hollow (fills less than PAPER_FILLED_SHARE of its points); the wall estimate 2V/A said 'paper' of a filled
+    bust whose shell was thin in places. Without a chamber it is the wall estimate."""
     import igl
     import igl.embree
     import numpy as np
@@ -1660,6 +1803,7 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None
     outside[far] = w[:int(far.sum())] < 0.5
     lost = gone * outside
     kept_off = gone > tol
+    kept_off &= ~_under_thickness(orig, orig_pts, far, ~outside, V, F, tol, printer.min_wall_mm + 2 * THICKEN_MARGIN_MM)
     if orig_seen is not None:
         kept_off = kept_off[orig_seen]
     if len(i):
@@ -1677,6 +1821,11 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None
     wall = _thickness(m)
     parts = _pieces(m)
     volume = float(m.volume)
+    paper = wall is not None and wall < printer.skin_mm
+    chamber = {}
+    if chamber_pts is not None and len(chamber_pts) and watertight:
+        share = float((_winding(V, F, chamber_pts, True) > 0.5).mean())
+        chamber, paper = {"chamberFilledShare": round(share, 3)}, share < PAPER_FILLED_SHARE
     _lean(m)  # the candidate is kept until the pick: without its tables
     return {
         "watertight": watertight,
@@ -1688,7 +1837,8 @@ def _measure(orig, orig_pts, m, printer: Printer, orig_tree=None, orig_seen=None
         "changedHiddenShare": round(float((moved & ~seen).mean()), 4),
         "lostShare": round(float((lost > printer.lost_mm).mean()), 5),
         "lostMaxMm": round(float(lost.max()), 2),
-        "_paper": wall is not None and wall < printer.skin_mm,
+        **chamber,
+        "_paper": paper,
     }
 
 
@@ -1745,7 +1895,7 @@ def _passing(cands: list[dict[str, Any]], printer: Printer):
     return ok, note
 
 
-def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Printer, log: Log, thicken_seen: bool):
+def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Printer, log: Log, thicken_seen: bool, chamber_pts=None):
     """The pick judged on what is printed: every candidate the pick chooses from is thickened (see thicken) and
     measured again, and the least changed after thickening wins (first of equals: the order they were built in).
     Judged as built, a hollow wrap that looks a little better loses most to the thickening (tripo_blaster: wrap 5.3 %
@@ -1764,7 +1914,7 @@ def _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer: Pr
         except Exception as exc:  # noqa: BLE001 - it can't be judged after
             log(f"  thicken failed: {exc}")
             continue
-        a = _measure(orig, orig_pts, out, printer, orig_tree, orig_seen)
+        a = _measure(orig, orig_pts, out, printer, orig_tree, orig_seen, chamber_pts)
         c["changedAfter"], c["lostAfter"] = a["changedShare"], a["lostShare"]
         log(f"  {c['method']} after thickening: changed {a['changedShare']}, lost {a['lostShare']}")
         if judged is None or c["changedAfter"] < judged["changedAfter"]:
@@ -1844,7 +1994,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
             log(f"  {name} failed: {exc} (at {where})")
             return
         t2 = time.time()
-        c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree, orig_seen), **extra, "secs": round(time.time() - t1, 1)}
+        c = {"method": name, **_measure(orig, orig_pts, m, printer, orig_tree, orig_seen, shared.get("chamberPts")), **extra, "secs": round(time.time() - t1, 1)}
         _tick(shared, "measure", t2)
         c["stages"] = shared.pop("stages")
         log(f"  {name}: {c}")
@@ -1915,7 +2065,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         repaired = None
         gc.collect()
         t1 = time.time()
-        best = _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer, log, thicken_seen)
+        best = _pick_printed(cands, best, orig, orig_pts, orig_tree, orig_seen, printer, log, thicken_seen, shared.get("chamberPts"))
         stages["pickPrinted"] = round(time.time() - t1, 1)
     if best is None:
         raise RuntimeError(note)
@@ -1934,7 +2084,7 @@ def make_solid(mesh, mm_per_unit: float, log: Log = print, full=None, printer: P
         except Exception as exc:  # the model stays as picked; its thin spots are still reported
             log(f" thicken failed: {exc}")
         if thickened:  # measured against the original like the candidates, so the report says what it cost
-            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer, orig_tree, orig_seen).items() if not k.startswith("_")})
+            thickened.update({k: v for k, v in _measure(orig, orig_pts, out, printer, orig_tree, orig_seen, shared.get("chamberPts")).items() if not k.startswith("_")})
             log(f" thickened: {thickened}")
         stages["thicken"] = round(time.time() - t1, 1)
     out.apply_scale(1.0 / mm_per_unit)
