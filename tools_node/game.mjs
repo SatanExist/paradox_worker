@@ -588,6 +588,29 @@ if (before.textureMaxPx > textureSize) {
   steps.push(`textures shrunk from ${before.textureMaxPx}px to ${textureSize}px: up close they look softer than the original's`);
 }
 
+// Only PNG and JPEG are core glTF. WebP / AVIF need an extension (EXT_texture_webp / _avif, marked required) that
+// game engine importers may not read: Unity's official glTFast lists no EXT_texture_webp (features page, 6.10,
+// checked 2026-11-26), while AI generators ship WebP. So game files carry core formats only, chosen as graft.mjs
+// does for baked maps: JPEG 90 (4:4:4) for colour-like maps, PNG for normal maps and for colour with alpha.
+const root = doc.getRoot();
+let converted = 0;
+for (const t of root.listTextures()) {
+  if (!/image\/(webp|avif)/.test(t.getMimeType())) continue;
+  const mats = root.listMaterials();
+  const lossless = mats.some((m) => m.getNormalTexture() === t) ||
+    mats.some((m) => m.getBaseColorTexture() === t && m.getAlphaMode() !== "OPAQUE");
+  const img = sharp(Buffer.from(t.getImage()));
+  const out = await (lossless ? img.png({ compressionLevel: 9, adaptiveFiltering: true })
+    : img.removeAlpha().jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })).toBuffer();
+  t.setImage(new Uint8Array(out)).setMimeType(lossless ? "image/png" : "image/jpeg");
+  if (t.getURI()) t.setURI(t.getURI().replace(/\.(webp|avif)$/i, lossless ? ".png" : ".jpg"));
+  converted++;
+}
+if (converted) {
+  for (const e of root.listExtensionsUsed()) if (/^EXT_texture_(webp|avif)$/.test(e.extensionName)) e.dispose();
+  steps.push(`${converted} WebP/AVIF textures saved as JPEG/PNG: game engines' importers may not read WebP`);
+}
+
 // On the floor: centred on X/Z, lowest point at Y=0 (glTF is Y up, metres).
 await doc.transform(prune());
 const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
