@@ -1,9 +1,10 @@
 // node repair.mjs <in.glb> <out.glb>
 // Mends what a broken model shows as holes before anything else looks at it: T-junctions are stitched and
-// triangles turned inside out are turned back (one-way per piece, closed pieces outward). Run first by
+// triangles turned inside out are turned back (one-way per piece, closed pieces outward); exact duplicate
+// triangles are dropped. Run first by
 // game_prep (tools_ops.py), so the search for hidden faces, the cut, the bake and the look check all see the
 // mended model, as mesh tools do (Blender's Recalculate Outside, CGAL's repair before processing).
-// Writes <out.glb> only when it mended something; prints {before, stitched, turned, wrote} as JSON on stdout,
+// Writes <out.glb> only when it mended something; prints {before, duplicates, stitched, turned, wrote} as JSON,
 // `before` being the original as the user uploaded it.
 import { Logger, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
@@ -37,6 +38,42 @@ function byKey(keys, order, n) {
   const out = new Uint32Array(order.length);
   for (let i = 0; i < order.length; i++) out[start[keys[order[i]]]++] = order[i];
   return out;
+}
+
+/**
+ * Duplicate triangles: the same three points in the same order, twice (AI meshes have up to 0.3 % of
+ * them, the lattice 282). They draw on top of each other (flicker, z-fighting) and spend budget for
+ * nothing; the cut keeps them, as it keeps everything that isn't merged. Dropped as mesh tools do
+ * (trimesh's unique_faces, MeshLab's Remove Duplicate Faces), but only a copy that runs the same way:
+ * a pair that runs opposite ways is a two-sided sheet (a leaf, a cape, a thin blade drawn from both
+ * sides) and stays. Points count as the same by position, as for the edges below. The first copy is kept.
+ */
+function dropDuplicates(doc) {
+  let dropped = 0;
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const position = prim.getAttribute("POSITION");
+      const indexAccessor = prim.getIndices();
+      if (prim.getMode() !== TRIANGLES || !position || !indexAccessor) continue;
+      const idx = indexAccessor.getArray();
+      const remap = MeshoptSimplifier.generatePositionRemap(Float32Array.from(position.getArray()), 3);
+      const seen = new Set();
+      const keep = [];
+      for (let t = 0; t < idx.length; t += 3) {
+        const a = remap[idx[t]], b = remap[idx[t + 1]], c = remap[idx[t + 2]];
+        // the same way round, from its lowest point: a->b->c, b->c->a and c->a->b are one key
+        const key = a <= b && a <= c ? `${a},${b},${c}` : b <= c ? `${b},${c},${a}` : `${c},${a},${b}`;
+        if (a === b || b === c || a === c || !seen.has(key)) {
+          seen.add(key);
+          keep.push(idx[t], idx[t + 1], idx[t + 2]);
+        }
+      }
+      if (keep.length === idx.length) continue;
+      dropped += (idx.length - keep.length) / 3;
+      indexAccessor.setArray(new idx.constructor(keep)); // same index type: the kept values are the old ones
+    }
+  }
+  return dropped;
 }
 
 /**
@@ -366,8 +403,9 @@ for (const ext of doc.getRoot().listExtensionsUsed()) {
   if (UNPACK.has(ext.extensionName)) ext.dispose();
 }
 await doc.transform(dedup(), weld());
+const duplicates = dropDuplicates(doc); // first: a copy would make its edges look shared by three
 const stitched = stitchTJunctions(doc);
 const turned = orientOutward(doc);
-const wrote = stitched + turned > 0;
+const wrote = duplicates + stitched + turned > 0;
 if (wrote) await io.write(output, doc);
-console.log(JSON.stringify({ before, stitched, turned, wrote }));
+console.log(JSON.stringify({ before, duplicates, stitched, turned, wrote }));

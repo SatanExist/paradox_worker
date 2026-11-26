@@ -1516,8 +1516,8 @@ def game_prep(in_path: Path, out_path: Path, params: dict[str, Any]) -> dict[str
 
 
 def _mended(in_path: Path) -> dict[str, Any] | None:
-    """The model with what shows as holes mended (tools_node/repair.mjs: T-junctions stitched, faces turned
-    inwards turned back), in a file of its own with the original's stats and the report steps; None when
+    """The model with what shows as holes mended (tools_node/repair.mjs: duplicate triangles dropped, T-junctions
+    stitched, faces turned inwards turned back), in a file of its own with the original's stats and the report steps; None when
     nothing needed mending, so a sound model goes on as it was uploaded."""
     node = shutil.which("node")
     if not node or not (TOOLS_NODE / "repair.mjs").is_file():
@@ -1535,6 +1535,8 @@ def _mended(in_path: Path) -> dict[str, Any] | None:
         path.unlink(missing_ok=True)
         return None
     steps = []
+    if result.get("duplicates"):
+        steps.append(f"removed {result['duplicates']} duplicate triangles (the same triangle twice: it flickers in an engine and spends the budget)")
     if result["stitched"]:
         steps.append(f"stitched {result['stitched']} T-junctions (edges that met without sharing a vertex: seen as holes, they stop the cut)")
     if result["turned"]:
