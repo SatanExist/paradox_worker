@@ -46,6 +46,8 @@ WRAP_OFFSET_MM = 0.02  # hugs the surface: the wrap sits 0.02 mm outside it
 RESTORE_FAR_MM = 0.3  # original surface this far outside the repair was lost by it: given back (see _restored)
 SLAB_FLOOR_MM = 0.02  # a given-back slab goes at least this deep, and is cut back no shallower where it folds (see _slabs)
 SLAB_PIN_ROUNDS = 200  # rounds past the halvings in _slabs, a ring pinned each: only a cap on a runaway
+JOIN_CHUNK = 64  # cube solids added to the body per union in _grown_union's join (fixed: the seams inside depend on it)
+RAY_CHUNK = 262144  # points a chunk in _ray_thickness: 4.6M points at once held 1.8 GB of rays (trellis2_harbor, 0.6 mm nozzle)
 BRIDGE_REACH_MM = 1.5  # pieces floating farther than this and than their own length are left as they are
 BRIDGE_FIRST_MM = 0.5  # pieces this close are tied first; the step grows by BRIDGE_STEP until all that can be are (see _bridge)
 BRIDGE_STEP = 1.5
@@ -2131,6 +2133,12 @@ def _ray_thickness(m, pts, inward, ei=None):
     import igl.embree
     import numpy as np
 
+    if ei is None:
+        ei = igl.embree.EmbreeIntersector()
+        ei.init(np.asfortranarray(m.vertices, np.float32), np.asfortranarray(m.faces, np.int32), True)
+    if len(pts) > RAY_CHUNK:  # each point is its own: in chunks, the seven directions' arrays stay small
+        return np.concatenate([_ray_thickness(m, pts[i:i + RAY_CHUNK], inward[i:i + RAY_CHUNK], ei)
+                               for i in range(0, len(pts), RAY_CHUNK)])
     helper = np.where(np.abs(inward[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]])
     u = np.cross(inward, helper)
     u /= np.linalg.norm(u, axis=1, keepdims=True)
@@ -2138,9 +2146,6 @@ def _ray_thickness(m, pts, inward, ei=None):
     a = np.radians(THICKNESS_CONE_DEG)
     dirs = [inward] + [np.cos(a) * inward + np.sin(a) * (np.cos(k * np.pi / 3) * u + np.sin(k * np.pi / 3) * w) for k in range(6)]
     along = [1.0] + [float(np.cos(a))] * 6
-    if ei is None:
-        ei = igl.embree.EmbreeIntersector()
-        ei.init(np.asfortranarray(m.vertices, np.float32), np.asfortranarray(m.faces, np.int32), True)
     start = (pts + inward * 1e-3).astype(np.float32)  # just inside, so the ray doesn't hit its own face
     dist = np.full((len(pts), len(dirs)), np.inf)
     for j, (d, cos) in enumerate(zip(dirs, along)):
@@ -2424,6 +2429,10 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0, leaf_to
     Wf = sp.csr_matrix((np.r_[agree, agree], (np.r_[pa, pb], np.r_[pb, pa])), shape=(len(nf), len(nf)))
     degf = np.asarray(Wf.sum(1)).ravel()
     del pos, fa, pa, pb, agree
+    # the mesh's tables (edges, adjacency) aren't needed past here; trimesh's caches hold themselves in a cycle, so
+    # they go only when collected (as in _lean)
+    del s
+    gc.collect()
     weight = np.zeros(len(nf))
     weight[which] = area / float(area.mean())
     wish = np.zeros((len(nf), 4))
@@ -2459,12 +2468,28 @@ def _wall_moves(V, F, near, target, lo, seen_too, draft=False, meet=0.0, leaf_to
     if len(free):
         E = np.sort(F[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
         key = np.unique(E[:, 0] * n + E[:, 1])
-        E = np.c_[key // n, key % n]
-        W = sp.csr_matrix((np.ones(len(E) * 2), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
-        deg = np.asarray(W.sum(1)).ravel()
-        L = sp.diags(deg) - W
-        Lff = L[free][:, free].tocsr()
-        rhs = -L[free][:, np.nonzero(ok)[0]] @ x[ok]
+        del E
+        a, b = key // n, key % n
+        del key
+        deg = np.bincount(np.r_[a, b], minlength=n).astype(np.float64)
+        # the graph Laplacian's free rows only, built straight from the edges: the whole one, its row slice and that
+        # slice's column slice held 0.8 GB more through the solve on trellis2_harbor's 6.9M cut faces at a 0.6 mm
+        # nozzle. The same entries in the same canonical order as diag(deg) - W sliced: the solve is the same to the bit.
+        at_free = np.full(n, -1, np.int64)
+        at_free[free] = np.arange(len(free))
+        at_ok = np.full(n, -1, np.int64)
+        at_ok[ok] = np.arange(int(ok.sum()))
+        fa_, fb_, oa_, ob_ = at_free[a], at_free[b], at_ok[a], at_ok[b]
+        both_free = (fa_ >= 0) & (fb_ >= 0)
+        r = np.r_[fa_[both_free], fb_[both_free], np.arange(len(free))]
+        c = np.r_[fb_[both_free], fa_[both_free], np.arange(len(free))]
+        Lff = sp.csr_matrix((np.r_[-np.ones(2 * int(both_free.sum())), deg[free]], (r, c)), shape=(len(free), len(free)))
+        to_ok = np.r_[fa_[(fa_ >= 0) & (ob_ >= 0)], fb_[(fb_ >= 0) & (oa_ >= 0)]]
+        ok_col = np.r_[ob_[(fa_ >= 0) & (ob_ >= 0)], oa_[(fb_ >= 0) & (oa_ >= 0)]]
+        B = sp.csr_matrix((-np.ones(len(to_ok)), (to_ok, ok_col)), shape=(len(free), int(ok.sum())))
+        del a, b, r, c, fa_, fb_, oa_, ob_, both_free, to_ok, ok_col, at_free, at_ok
+        rhs = -B @ x[ok]
+        del B
         pre = sp.diags(1.0 / deg[free])
         for c in range(3):
             x[free, c] = spl.cg(Lff, rhs[:, c], M=pre, rtol=1e-5, atol=0, maxiter=1500)[0]
@@ -2643,10 +2668,17 @@ def _grown_union(body, V0, F, X, log: Log):
         # halves the input (trellis2_harbor: 2.18M + 8.9M -> 1.16M + 4.0M faces, join +4.85 -> +2.7 GB).
         b = mf.Manifold(mf.Mesh64(vert_properties=np.ascontiguousarray(body.vertices, np.float64),
                                   tri_verts=np.ascontiguousarray(body.faces, np.uint64)))
-        parts = [b.simplify(first) if first else b] + solids
+        g = b.simplify(first) if first else b
         del b
-        g = mf.Manifold.batch_boolean(parts, mf.OpType.Add)
-        del parts[:]
+        # The solids are added to the body JOIN_CHUNK at a time: one batch union of all of them holds every operand's
+        # working tables through its last union (trellis2_harbor at a 0.6 mm nozzle: body + 439 cubes, 7.75M faces,
+        # +3.7 GB); added in fixed chunks, each union holds the result so far and one chunk (+1.9 GB, 25 s against
+        # 18 s). Same outer surface: only the touching seams inside differ. Grouping the cubes first (a tree) or
+        # fewer threads leave the peak as it was.
+        for i in range(0, len(solids), JOIN_CHUNK):
+            g = mf.Manifold.batch_boolean([g] + solids[i:i + JOIN_CHUNK], mf.OpType.Add)
+            g.status()  # the union is lazy: made now, so the chunk's solids can go
+            solids[i:i + JOIN_CHUNK] = [None] * len(solids[i:i + JOIN_CHUNK])
         g = g.simplify(THICKEN_TOLERANCE_MM - first).to_mesh64()
         return trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
 
