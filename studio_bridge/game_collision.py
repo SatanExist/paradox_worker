@@ -26,6 +26,12 @@ from typing import Any
 
 MAX_PIECES = 16
 MAX_POINTS = 64
+# CoACD's tree search (MCTS) per cut: 50 tries instead of its default 150. CoACD first splits to its concavity goal
+# (~48 pieces on the mech) and then merges down to our 16, so most of the search is spent on cuts the merge undoes.
+# Trial 2026-11-26 on 6 models: -26..-48 % time (mech 154 -> 84 s), the same fit (surface outside the pieces
+# unchanged, farthest point outside +0.15 % of the size at most), same bytes on a repeat, pieces look the same.
+# Raising the concavity goal instead (0.1) was faster but left the drill with 5 pieces and 4.4 % of it outside.
+MCTS_ITERATIONS = 50
 LIMIT_S = 900  # from the job's start; a slow server gets this long, then the job goes on without collision
 
 
@@ -111,7 +117,8 @@ def _make(in_path: Path, out: Path) -> None:
     coacd.set_log_level("error")
     mesh = _load(in_path)  # unpacks Draco / meshopt; refuses an empty or flat model
     pieces = coacd.run_coacd(coacd.Mesh(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64)),
-                             max_convex_hull=MAX_PIECES, max_ch_vertex=MAX_POINTS, decimate=True, seed=0)
+                             max_convex_hull=MAX_PIECES, max_ch_vertex=MAX_POINTS, decimate=True, seed=0,
+                             mcts_iterations=MCTS_ITERATIONS)
     pieces = [(np.asarray(v, float), np.asarray(f, np.int64)) for v, f in pieces if len(v) >= 4 and len(f) >= 4]
     if not pieces:
         raise RuntimeError("CoACD found no pieces")
