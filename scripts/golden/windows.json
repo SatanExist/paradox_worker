@@ -56,8 +56,8 @@
  },
  "game_mech_package": {
   "extras": {
-   "collision.glb": "e72f36c273b1529c1fa2ea582ebfb15b",
-   "godot.zip": "57f0a37aa0382454a3bf2cd375328eb4",
+   "collision.glb": "44f61eeaea46202c8c4604392a003845",
+   "godot.zip": "2dead21295b9320dac949ccd9157b099",
    "lods.glb": "c572fb14d67b848d15a4221975a351f8",
    "preview.png": "1069388e271a734151c0a9efaf363721"
   },
@@ -69,7 +69,7 @@
    "after.budgetReached": true,
    "after.collision.file": "collision.glb",
    "after.collision.pieces": 16,
-   "after.collision.points": 1023,
+   "after.collision.points": 1024,
    "after.deviation.lostMaxPct": 0.731,
    "after.deviation.maxPct": 0.73,
    "after.deviation.meanPct": 0.017,
