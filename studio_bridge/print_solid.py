@@ -265,7 +265,10 @@ def _wrap(V, F, alpha: float, offset: float = WRAP_OFFSET_MM):
     os.close(fd)
     try:
         P.write_to_file(name)  # the bindings have no array export; OFF is a few seconds even at 1M faces
-        return trimesh.load(name, process=False)
+        m = trimesh.load(name, process=False)
+        # a bare mesh: a loaded one keeps the temp file's name in its metadata, and the GLB export writes it out
+        # (a server path in the user's file, and different bytes every run)
+        return trimesh.Trimesh(vertices=m.vertices, faces=m.faces, process=False)
     finally:
         os.unlink(name)
 
