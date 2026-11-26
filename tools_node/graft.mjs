@@ -1,0 +1,267 @@
+// node graft.mjs <low.glb> <bake dir> <out.glb>
+// Puts what tools_blender/bake.py baked into the light model itself: its triangle corners get the new UVs
+// and the smooth normals the normal map was baked against, its vertices are split where the new UV
+// seams run, and one material carries the baked maps. Everything else in the file stays as game.mjs left
+// it — nodes, skins, animations, morph targets: sent through Blender's exporter, rigs came out redone
+// (CesiumMan 57% off its original at rest).
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Logger, NodeIO } from "@gltf-transform/core";
+import { ALL_EXTENSIONS, KHRMaterialsSpecular } from "@gltf-transform/extensions";
+import { prune, reorder, tangents, unweld, weld } from "@gltf-transform/functions";
+import { generateTangents } from "mikktspace";
+import { MeshoptEncoder } from "meshoptimizer";
+import sharp from "sharp";
+
+const [lowPath, bakeDir, outPath] = process.argv.slice(2);
+const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+const doc = await io.read(lowPath);
+doc.setLogger(new Logger(Logger.Verbosity.ERROR));
+const meshes = JSON.parse(readFileSync(join(bakeDir, "corners.json"), "utf8"));
+const data = new Float32Array(new Uint8Array(readFileSync(join(bakeDir, "corners.f32"))).buffer);
+const STRIDE = 8; // position 3, normal 3, uv 2
+const total = data.length / STRIDE;
+
+// Blender may hold the mesh as the file does or turned Z up; whichever lines the corners up is the one.
+const AXES = [
+  (x, y, z) => [x, y, z],
+  (x, y, z) => [x, z, -y],
+];
+const TRIANGLES = 4;
+
+// Triangles are found by where their corners are, not by order: Blender joins a mesh's primitives
+// into one and drops degenerate triangles, so counting corners went astray (BrainStem, a small fox).
+// Corners are bucketed on a fine grid and matched within a cell of it, neighbours included: a point on
+// a cell's edge can round either way.
+let span = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    const pos = prim.getAttribute("POSITION");
+    if (pos) span = Math.max(span, ...pos.getMax([]).map((v, i) => v - pos.getMin([])[i]));
+  }
+}
+const GRID = 1e-5 * (span || 1);
+
+function bakedTriangles(axes) {
+  const at = new Float64Array(total * 3);
+  const cells = new Map();
+  for (let c = 0; c < total; c++) {
+    const b = data.subarray(c * STRIDE, c * STRIDE + 3);
+    const p = axes(b[0], b[1], b[2]);
+    at.set(p, c * 3);
+    if (c % 3) continue; // a triangle is filed under its first corner
+    const key = p.map((v) => Math.round(v / GRID)).join(",");
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(c / 3);
+  }
+  return { at, cells };
+}
+
+// A needle's two near corners both fall within reach of one baked corner, so each point is given its own.
+const ORDERS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+
+/** The baked triangle over these three points, and which of its corners each point is; null if none. */
+function findTriangle(found, points) {
+  const close = (corner, p) => Math.abs(found.at[corner * 3] - p[0]) + Math.abs(found.at[corner * 3 + 1] - p[1]) + Math.abs(found.at[corner * 3 + 2] - p[2]) <= 3 * GRID;
+  for (const p0 of points) {
+    const [i, j, k] = p0.map((v) => Math.round(v / GRID));
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let d = -1; d <= 1; d++) {
+      for (const t of found.cells.get(`${i + a},${j + b},${k + d}`) ?? []) {
+        const which = ORDERS.find((order) => order.every((q, n) => close(3 * t + q, points[n])));
+        if (which) return { t, which };
+      }
+    }
+  }
+  return null;
+}
+
+const place = (() => {
+  // the axes under which a sample of the model's triangles is found
+  let best = null;
+  for (const axes of AXES) {
+    const found = bakedTriangles(axes);
+    let hits = 0;
+    let tried = 0;
+    for (const mesh of doc.getRoot().listMeshes()) {
+      for (const prim of mesh.listPrimitives()) {
+        const idx = prim.getIndices()?.getArray();
+        const pos = prim.getAttribute("POSITION");
+        if (!idx || !pos) continue;
+        for (let c = 0; c + 2 < idx.length && tried < 300; c += 3 * 37) {
+          hits += findTriangle(found, [0, 1, 2].map((k) => pos.getElement(idx[c + k], []))) ? 1 : 0;
+          tried++;
+        }
+      }
+    }
+    if (!best || hits > best.hits) best = { hits, tried, found, axes };
+  }
+  if (best.hits < 0.9 * best.tried) throw new Error(`the baked mesh doesn't line up with the model (${best.hits} of ${best.tried} triangles found)`);
+  return best;
+})();
+
+/** A new accessor like `accessor`, holding its elements in the order `pick` gives (old vertex per new one). */
+function picked(accessor, pick) {
+  const size = accessor.getElementSize();
+  const old = accessor.getArray();
+  const out = new old.constructor(pick.length * size);
+  for (let v = 0; v < pick.length; v++) for (let k = 0; k < size; k++) out[v * size + k] = old[pick[v] * size + k];
+  return doc.createAccessor().setType(accessor.getType()).setArray(out).setNormalized(accessor.getNormalized()).setBuffer(accessor.getBuffer());
+}
+
+// Colour, roughness/metalness and glow go in as JPEG, like the originals carry them: as Blender's PNGs the
+// light model's file came out heavier than the original (mech: 14.2 MB against 8.1; its colour 4.5 MB as PNG,
+// 0.95 as JPEG). Quality 90 with full-resolution colour: halved colour would smear roughness into metalness,
+// which share a pixel in different channels. The normal map stays PNG, as JPEG's blocks would show up as
+// shading, but packed harder: Blender writes it loosely, and the same pixels took a fifth less room (computer
+// 4.4 -> 3.4 MB). No `effort` there: in sharp it turns on a palette, which moved half the pixels by up to 19.
+async function texture(name, jpeg = false) {
+  const png = sharp(readFileSync(join(bakeDir, `${name}.png`))).removeAlpha();
+  const image = await (jpeg ? png.jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })
+    : png.png({ compressionLevel: 9, adaptiveFiltering: true })).toBuffer();
+  return doc.createTexture(name).setImage(new Uint8Array(image)).setMimeType(jpeg ? "image/jpeg" : "image/png");
+}
+// How strongly the surface reflects (KHR_materials_specular) is in none of the baked maps, and the new material
+// dropped it: Hunyuan writes specularColorFactor 2 (the operative came out darker than its original) or
+// specularFactor 0, no reflections (the low-poly knight came out paler: exam 8, 2026-11-08). Kept when every part
+// says the same and with no texture of its own (that texture would follow the old UVs, which are gone).
+function keptSpecular() {
+  const found = new Set();
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const s = prim.getMaterial()?.getExtension("KHR_materials_specular");
+      found.add(s ? JSON.stringify([s.getSpecularFactor(), s.getSpecularColorFactor(), !!(s.getSpecularTexture() || s.getSpecularColorTexture())]) : "none");
+    }
+  }
+  if (found.size !== 1) return null;
+  const [one] = found;
+  if (one === "none") return null;
+  const [factor, color, textured] = JSON.parse(one);
+  return textured ? null : doc.createExtension(KHRMaterialsSpecular).createSpecular().setSpecularFactor(factor).setSpecularColorFactor(color);
+}
+const specular = keptSpecular();
+// Only a normal map (the model had no textures): each part keeps its own material and gets the map.
+const normalOnly = !existsSync(join(bakeDir, "baseColor.png"));
+const normalMap = await texture("normal");
+const material = normalOnly
+  ? null
+  : doc.createMaterial("baked")
+    .setBaseColorTexture(await texture("baseColor", true))
+    .setMetallicRoughnessTexture(await texture("metallicRoughness", true))
+    .setNormalTexture(normalMap)
+    .setMetallicFactor(1)
+    .setRoughnessFactor(1);
+// A model that gave off light of its own (Rodin's: all its colour is there) keeps its glow, baked too.
+if (material && existsSync(join(bakeDir, "emissive.png"))) material.setEmissiveTexture(await texture("emissive", true)).setEmissiveFactor([1, 1, 1]);
+if (material && specular) material.setExtension("KHR_materials_specular", specular);
+
+let corners = 0;
+let vertices = 0;
+let dropped = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    if (prim.getMode() !== TRIANGLES || !prim.getIndices()) continue;
+    const idx = prim.getIndices().getArray();
+    const pos = prim.getAttribute("POSITION");
+    const seen = new Map();
+    const pick = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+    for (let c = 0; c + 2 < idx.length; c += 3) {
+      const points = [0, 1, 2].map((k) => pos.getElement(idx[c + k], []));
+      const hit = findTriangle(place.found, points);
+      if (!hit) {
+        const [p, q, r] = points;
+        const cross = [(q[1] - p[1]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[1] - p[1]), (q[2] - p[2]) * (r[0] - p[0]) - (q[0] - p[0]) * (r[2] - p[2]), (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])];
+        if (Math.hypot(...cross) > GRID * GRID) throw new Error(`a triangle of mesh "${mesh.getName()}" is missing from the bake`);
+        dropped++; // degenerate: Blender dropped it, and there is nothing to draw
+        continue;
+      }
+      for (let k = 0; k < 3; k++) {
+        const corner = 3 * hit.t + hit.which[k];
+        const b = data.subarray(corner * STRIDE, (corner + 1) * STRIDE);
+        const n = place.axes(b[3], b[4], b[5]);
+        const key = `${idx[c + k]}|${b[6]}|${b[7]}|${n[0]}|${n[1]}|${n[2]}`;
+        let v = seen.get(key);
+        if (v === undefined) {
+          v = pick.length;
+          seen.set(key, v);
+          pick.push(idx[c + k]);
+          const len = Math.hypot(n[0], n[1], n[2]) || 1;
+          normals.push(n[0] / len, n[1] / len, n[2] / len);
+          uvs.push(b[6], 1 - b[7]); // Blender's V runs up, glTF's down
+        }
+        indices.push(v);
+      }
+    }
+    corners += indices.length;
+    vertices += pick.length;
+    for (const semantic of prim.listSemantics()) {
+      const accessor = prim.getAttribute(semantic);
+      if (semantic === "NORMAL" || semantic.startsWith("TEXCOORD_")) prim.setAttribute(semantic, null);
+      else prim.setAttribute(semantic, picked(accessor, pick));
+    }
+    for (const target of prim.listTargets()) {
+      for (const semantic of target.listSemantics()) target.setAttribute(semantic, picked(target.getAttribute(semantic), pick));
+    }
+    const buffer = prim.getAttribute("POSITION").getBuffer();
+    prim.setAttribute("NORMAL", doc.createAccessor().setType("VEC3").setArray(Float32Array.from(normals)).setBuffer(buffer));
+    prim.setAttribute("TEXCOORD_0", doc.createAccessor().setType("VEC2").setArray(Float32Array.from(uvs)).setBuffer(buffer));
+    prim.setIndices(doc.createAccessor().setType("SCALAR").setArray(Uint32Array.from(indices)).setBuffer(buffer));
+    if (normalOnly) prim.setMaterial((prim.getMaterial() ?? doc.createMaterial("baked")).setNormalTexture(normalMap));
+    else prim.setMaterial(material);
+  }
+}
+await doc.transform(prune());
+// Tangents for the normal map, worked out the way Blender's bake did (MikkTSpace) on the very normals and UVs
+// above, so every viewer lays the relief the way it was baked instead of guessing its own (three.js guesses
+// from screen slopes); any tangents the cut came with are stale after the new UVs and get replaced. On 8
+// models the site viewer came 0-2.3 % closer to the original, none further; the file grows ~2 %.
+// MikkTSpace wants every triangle corner apart: split, add, and weld the same corners back together.
+await doc.transform(unweld(), tangents({ generateTangents, overwrite: true }));
+// A corner of a sliver with no area gets a zero tangent (1 of the scorpion's 14k at 20k), which glTF forbids
+// and a viewer would turn into a dark speck: give it any direction along the surface there instead.
+let flatTangents = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    const tangent = prim.getAttribute("TANGENT");
+    const normal = prim.getAttribute("NORMAL");
+    if (!tangent || !normal) continue;
+    const t = tangent.getArray();
+    const n = normal.getArray();
+    for (let v = 0; v < tangent.getCount(); v++) {
+      const [x, y, z] = [t[4 * v], t[4 * v + 1], t[4 * v + 2]];
+      if (Math.abs(Math.hypot(x, y, z) - 1) < 1e-3) continue;
+      const [a, b, c] = [n[3 * v], n[3 * v + 1], n[3 * v + 2]];
+      const [p, q, r] = Math.abs(a) < 0.9 ? [0, c, -b] : [-c, 0, a]; // normal × x axis, or × y axis
+      const len = Math.hypot(p, q, r) || 1;
+      t.set([p / len, q / len, r / len, 1], 4 * v);
+      flatTangents++;
+    }
+  }
+}
+await doc.transform(weld());
+// The new seams split vertices: put the drawing order right again, as game.mjs does, and say how it came out
+// (vertex cache misses per triangle through a cache of 16).
+await MeshoptEncoder.ready;
+await doc.transform(reorder({ encoder: MeshoptEncoder, target: "performance" }));
+let misses = 0;
+let triangles = 0;
+for (const mesh of doc.getRoot().listMeshes()) {
+  for (const prim of mesh.listPrimitives()) {
+    const order = prim.getIndices();
+    if (prim.getMode() !== TRIANGLES || !order) continue;
+    const cache = new Int32Array(16).fill(-1);
+    let head = 0;
+    for (const v of order.getArray()) {
+      if (cache.includes(v)) continue;
+      cache[head] = v;
+      head = (head + 1) % 16;
+      misses++;
+    }
+    triangles += order.getCount() / 3;
+  }
+}
+await io.write(outPath, doc);
+const vertexCacheMisses = triangles ? Math.round((misses / triangles) * 1000) / 1000 : 0;
+process.stdout.write(JSON.stringify({ graft: { corners, vertices, dropped, flatTangents, vertexCacheMisses } }));

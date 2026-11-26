@@ -1,8 +1,9 @@
 """
 RunPod handler: tools on a finished model (print prep, …) → new GLB in R2.
 
-CPU only, no weights. The lab submits {operation, model_url, params, output_key};
-the work itself lives in studio_bridge/tools_ops.py so the lab can run it locally too.
+The lab submits {operation, model_url, params, output_key}; the work itself lives in
+studio_bridge/tools_ops.py so the lab can run it locally too. Two images run this same handler:
+Dockerfile.tools (CPU, no weights: print_prep, game_prep) and Dockerfile.rig (GPU, SkinTokens: auto_rig).
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ def handler(job: dict) -> dict:
             "extra_urls": extra_urls,
             "report": report,
             "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-            "variant": "tools",
+            "variant": os.getenv("PARADOX_WORKER_VARIANT", "tools"),
         }
     except Exception as exc:
         tb = traceback.format_exc()

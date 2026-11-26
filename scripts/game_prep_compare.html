@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сравнение game_prep</title>
+<style>
+  :root {
+    --bg: #f4f3f0; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #dcdad4;
+    --accent: #2f6fde; --good: #1f8a4c; --warn: #b5671a; --view: #e9e7e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #1f1f1d; --text: #ecebe7; --muted: #9b9a95; --line: #34332f;
+      --accent: #6f9cf0; --good: #4cc27f; --warn: #e39a52; --view: #262624; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  .group { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .group span { color: var(--muted); margin-right: 4px; font-size: 13px; }
+  button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { position: relative; flex: 1; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .divider { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--line); }
+  .card { position: absolute; top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel);
+    border: 1px solid var(--line); min-width: 220px; pointer-events: none; }
+  .card.left { left: 12px; } .card.right { left: calc(50% + 12px); }
+  .card h2 { font-size: 13px; margin: 0 0 6px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .card dl { display: grid; grid-template-columns: auto auto; gap: 2px 14px; margin: 0; }
+  .card dt { color: var(--muted); } .card dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+  .good { color: var(--good); } .warn { color: var(--warn); }
+  .hint { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+  @media (max-width: 700px) { .card { min-width: 0; font-size: 12px; } .card.right { left: calc(50% + 6px); } .card.left { left: 6px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>game_prep: оригинал ↔ результат</h1>
+  <div class="group" id="models"><span>Модель</span></div>
+  <div class="group" id="versions"><span>Справа</span></div>
+  <div class="group"><span>Вид</span>
+    <button id="wire" aria-pressed="false">Сетка</button>
+    <button id="clay" aria-pressed="false">Без текстур</button>
+    <button id="reset">Сбросить камеру</button>
+  </div>
+</header>
+<main id="view">
+  <canvas id="c"></canvas>
+  <div class="divider"></div>
+  <div class="card left"><h2>Оригинал</h2><dl id="statsL"></dl></div>
+  <div class="card right"><h2 id="titleR">Результат</h2><dl id="statsR"></dl></div>
+  <div class="loading" id="loading">Загрузка…</div>
+  <div class="hint">Крутить — левая кнопка мыши, сдвиг — правая, зум — колесо. Камера общая для обеих половин.</div>
+</main>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+// Opened from a bench folder (scripts/game_prep_bench.py): report.json and the results sit next
+// to this page. ?models=<dir> is where the originals are (default: the folder above),
+// ?old=<dir> an earlier bench run to show as "old", ?model=…&file=… any file on the right.
+const query = new URLSearchParams(location.search);
+const MODELS_DIR = query.get("models") || "..";
+const OLD_DIR = query.get("old");
+const MODES = [["5k", "5k"], ["20k", "20k"], ["q0.5%", "≤0.5%"]];
+const file = (dir, name) => `${dir ? dir + "/" : ""}${encodeURIComponent(name)}`;
+const VERSIONS = [
+  ...MODES.map(([mode, label]) => ({ id: `new_${mode}`, label: `новая ${label}`, mode, url: (m) => file("", `${m}_${mode}.glb`) })),
+  ...(OLD_DIR ? MODES.map(([mode, label]) => ({ id: `old_${mode}`, label: `старая ${label}`, mode, old: true, url: (m) => file(OLD_DIR, `${m}_${mode}.glb`) })) : []),
+];
+let MODELS = ["sword", "camera", "drill", "mech", "scorpion", "watch"];
+const state = { model: "mech", version: "new_5k", wire: false, clay: false };
+try { Object.assign(state, JSON.parse(localStorage.getItem("gp-compare") || "{}")); } catch {}
+if (!VERSIONS.some((v) => v.id === state.version)) state.version = "new_5k";
+if (query.get("model")) state.model = query.get("model");
+if (query.get("file")) {
+  VERSIONS.push({ id: "file", label: query.get("file"), mode: "-", url: () => encodeURIComponent(query.get("file")) });
+  state.version = "file";
+}
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setScissorTest(true);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const bg = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--view").trim());
+const makeScene = () => { const s = new THREE.Scene(); s.environment = env; s.background = bg; return s; };
+const scenes = [makeScene(), makeScene()];
+const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 1000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+const loader = new GLTFLoader()
+  .setDRACOLoader(new DRACOLoader().setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/"))
+  .setMeshoptDecoder(MeshoptDecoder);
+const cache = new Map();
+const load = (url) => {
+  if (!cache.has(url)) cache.set(url, loader.loadAsync(url).then((g) => g.scene));
+  return cache.get(url);
+};
+const clayMat = new THREE.MeshStandardMaterial({ color: 0xc8c4bc, roughness: 0.85, metalness: 0 });
+
+let report = [];
+fetch("report.json").then((r) => r.json()).then((d) => {
+  report = d;
+  const names = [...new Set(d.map((r) => r.model))];
+  if (names.length && names.join() !== MODELS.join()) {
+    MODELS = names;
+    for (const old of document.querySelectorAll("#models button")) old.remove();
+    buttons("models", MODELS, "model", (m) => m);
+    if (!MODELS.includes(state.model)) { state.model = MODELS[0]; show(true); }
+    sync();
+  }
+  showStats();
+}).catch(() => {});
+
+/** Same rule as game_prep: centred on X/Z, lowest point on the floor. */
+function place(obj) {
+  obj.position.set(0, 0, 0);
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const c = box.getCenter(new THREE.Vector3());
+  obj.position.set(-c.x, -box.min.y, -c.z);
+  return box.getSize(new THREE.Vector3());
+}
+
+function style(obj) {
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    if (!o.userData.mat) o.userData.mat = o.material;
+    o.material = state.clay ? clayMat : o.userData.mat;
+    for (const m of [].concat(o.material)) m.wireframe = state.wire;
+  });
+}
+
+let shown = [null, null];
+let token = 0;
+async function show(fitCamera) {
+  const t = ++token;
+  const version = VERSIONS.find((v) => v.id === state.version);
+  document.getElementById("loading").style.display = "grid";
+  try {
+    const [a, b] = await Promise.all([load(file(MODELS_DIR, `${state.model}.glb`)), load(version.url(state.model))]);
+    if (t !== token) return;
+    shown.forEach((o, i) => o && scenes[i].remove(o));
+    shown = [a, b];
+    const size = place(a); place(b);
+    shown.forEach((o, i) => { style(o); scenes[i].add(o); });
+    if (fitCamera) fit(size);
+  } catch (e) {
+    document.getElementById("statsR").innerHTML = `<dt class="warn">Не загрузилось</dt><dd>${e.message ?? e}</dd>`;
+  }
+  document.getElementById("loading").style.display = "none";
+  showStats();
+}
+
+function fit(size) {
+  const r = size.length() / 2;
+  controls.target.set(0, size.y / 2, 0);
+  camera.position.set(r * 1.6, size.y / 2 + r * 0.6, r * 1.9);
+  camera.near = r / 100; camera.far = r * 100; camera.updateProjectionMatrix();
+  controls.update();
+}
+
+const n = (x) => x.toLocaleString("ru-RU");
+/** Colour by how visible the change is: max under ~0.75% is hard to see, over 3% usually shows. */
+const devCls = (pct, good, bad) => (pct <= good ? "good" : pct >= bad ? "warn" : "");
+function showStats() {
+  const version = VERSIONS.find((v) => v.id === state.version);
+  document.getElementById("titleR").textContent = version.label;
+  const row = report.find((r) => r.model === state.model && r.mode === version.mode);
+  const L = document.getElementById("statsL"), R = document.getElementById("statsR");
+  if (!row) { L.innerHTML = R.innerHTML = ""; return; }
+  L.innerHTML = `<dt>Треугольники</dt><dd>${n(row.trisBefore)}</dd>`;
+  const side = version.old ? row.old : row.new;
+  if (!side) { R.innerHTML = ""; return; }
+  R.innerHTML =
+    `<dt>Треугольники</dt><dd>${n(side.tris)}</dd>` +
+    `<dt>Осталось</dt><dd>${(side.tris / row.trisBefore * 100).toFixed(2)}%</dd>` +
+    `<dt>Отклонение, среднее</dt><dd class="${devCls(side.meanPct, 0.15, 0.6)}">${side.meanPct.toFixed(3)}%</dd>` +
+    `<dt>Отклонение, макс.</dt><dd class="${devCls(side.maxPct, 0.75, 3)}">${side.maxPct.toFixed(2)}%</dd>` +
+    (side.normalMeanDeg !== undefined ? `<dt>Нормали, среднее</dt><dd class="${devCls(side.normalMeanDeg, 12, 30)}">${side.normalMeanDeg}°</dd>` : "") +
+    (side.fileMb ? `<dt>Файл</dt><dd>${side.fileMb} МБ</dd>` : "");
+}
+
+function buttons(host, items, key, label) {
+  const el = document.getElementById(host);
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.textContent = label(it);
+    b.onclick = () => { state[key] = it.id ?? it; save(); sync(); show(key === "model"); };
+    b.dataset.v = it.id ?? it;
+    el.append(b);
+  }
+}
+function sync() {
+  for (const b of document.querySelectorAll("#models button")) b.setAttribute("aria-pressed", b.dataset.v === state.model);
+  for (const b of document.querySelectorAll("#versions button")) b.setAttribute("aria-pressed", b.dataset.v === state.version);
+  document.getElementById("wire").setAttribute("aria-pressed", state.wire);
+  document.getElementById("clay").setAttribute("aria-pressed", state.clay);
+}
+function save() { try { localStorage.setItem("gp-compare", JSON.stringify(state)); } catch {} }
+buttons("models", MODELS, "model", (m) => m);
+buttons("versions", VERSIONS, "version", (v) => v.label);
+for (const key of ["wire", "clay"]) {
+  document.getElementById(key).onclick = () => { state[key] = !state[key]; save(); sync(); shown.forEach((o) => o && style(o)); };
+}
+document.getElementById("reset").onclick = () => shown[0] && fit(new THREE.Box3().setFromObject(shown[0]).getSize(new THREE.Vector3()));
+sync();
+show(true);
+
+function frame() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio()) || canvas.height !== Math.floor(h * renderer.getPixelRatio())) {
+    renderer.setSize(w, h, false);
+  }
+  camera.aspect = w / 2 / h; camera.updateProjectionMatrix();
+  controls.update();
+  const half = Math.floor(w / 2);
+  [[0, half], [half, w - half]].forEach(([x, width], i) => {
+    renderer.setViewport(x, 0, width, h); renderer.setScissor(x, 0, width, h);
+    renderer.render(scenes[i], camera);
+  });
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
