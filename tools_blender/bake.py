@@ -363,9 +363,12 @@ def to_tangent(normal, where):
     return out
 
 
-def bake_normal(img):
+def bake_normal(img, need=None):
     """The tangent-space normal map into img; past the base size a quarter at a time, each part with room around it for
-    the margin, cut off when put together."""
+    the margin, cut off when put together. `need` (texels of img, rows from the bottom): only the parts holding one of
+    them are baked, the rest left flat. Each part's texels come from its own bake alone, so the parts baked are the
+    same as in a whole run: again_longer takes only the missed texels, and the truck's 10 lay in one quarter of four
+    (that pass 21.9 s, 2026-11-27)."""
     whole = img.size[0]
     parts = 2 if whole > BAKE else 1
     part = whole // parts
@@ -380,8 +383,11 @@ def bake_normal(img):
         o.data.uv_layers.active.data.foreach_get("uv", uv)
         uvs.append(uv)
     done = np.empty((whole, whole, 4), dtype=np.float32)
+    done[...] = (0.5, 0.5, 1.0, 1.0)
     for y in range(parts):
         for x in range(parts):
+            if need is not None and not need[y * part:(y + 1) * part, x * part:(x + 1) * part].any():
+                continue
             if parts > 1:
                 for o, uv in zip(low, uvs):
                     moved = uv.copy()
@@ -491,9 +497,19 @@ def rgba(img):
     return a.reshape(img.size[1], img.size[0], 4)
 
 
+_covered = {}
+
+
 def covered(size):
     """Texels whose centre lies on the light model's new UVs (rows from the bottom, as Blender keeps pixels), one
-    texel in from the islands' edges."""
+    texel in from the islands' edges. Kept once made: the UVs don't change after the unwrap (bake_normal moves them
+    for its parts and puts them back before anything asks), and each call took ~1.5 s on 10k triangles."""
+    if size not in _covered:
+        _covered[size] = _covered_now(size)
+    return _covered[size].copy()
+
+
+def _covered_now(size):
     cov = np.zeros((size, size), dtype=bool)
     for o in low:
         uv = np.empty(len(o.data.loops) * 2, dtype=np.float64)
@@ -557,7 +573,8 @@ def back_from_aside():
 
 
 def again_longer(name, img, bake_it):
-    """Bake img once more with longer rays and take that for the texels the first rays missed."""
+    """Bake img once more with longer rays and take that for the texels the first rays missed (bake_it(img, those
+    texels): a bake may skip what holds none of them)."""
     if missed is None or not missed.any():
         return
     side = img.size[0]
@@ -566,7 +583,7 @@ def again_longer(name, img, bake_it):
     set_reach(LONG_REACH * REACH)
     set_aside()
     try:
-        bake_it(longer)
+        bake_it(longer, where)
     finally:
         set_reach(REACH)
         back_from_aside()
@@ -603,7 +620,7 @@ if not NORMAL_ONLY:
     run("EMIT", maps["metallicRoughness"])
     missed = misses()
     missed_first = int(missed.sum())
-    again_longer("metallicRoughness", maps["metallicRoughness"], lambda img: run("EMIT", img))
+    again_longer("metallicRoughness", maps["metallicRoughness"], lambda img, need: run("EMIT", img))
     unshine(undo)
     timings["metallicRoughness"] = round(time.time() - t, 1)
     t = time.time()
@@ -618,7 +635,7 @@ if not NORMAL_ONLY and glows():
     t = time.time()
     maps["emissive"] = image("emissive", True)
     run("EMIT", maps["emissive"])
-    again_longer("emissive", maps["emissive"], lambda img: run("EMIT", img))
+    again_longer("emissive", maps["emissive"], lambda img, need: run("EMIT", img))
     timings["emissive"] = round(time.time() - t, 1)
 
 # Base colour is baked as light the heavy model gives off too: Cycles' diffuse colour pass is base colour x
@@ -628,7 +645,7 @@ for name, socket_name, colour in [] if NORMAL_ONLY else [("baseColor", "Base Col
     shine(socket_name)
     maps[name] = image(name, colour)
     run("EMIT", maps[name])
-    again_longer(name, maps[name], lambda img: run("EMIT", img))
+    again_longer(name, maps[name], lambda img, need: run("EMIT", img))
     timings[name] = round(time.time() - t, 1)
 
 # The normal map tilts the light model's surface at most TILT degrees. Steeper texels are rays that met the

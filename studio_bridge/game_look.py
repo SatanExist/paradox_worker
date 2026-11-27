@@ -203,6 +203,21 @@ def _draw(m: dict[str, Any], centre, radius: float, view, res: int = RES, away: 
     return seen.reshape(res, res), pictures
 
 
+DRAW_THREADS = 8
+
+
+def _draw_all(m: dict[str, Any], jobs: list[tuple]) -> list[tuple[Any, dict[str, Any]]]:
+    """_draw for each (centre, radius, view, res, away), in order, several at once: for the light result only (the
+    original, up to millions of triangles, is drawn one view at a time, once a job, so its memory peak stays as it
+    was). Each view is drawn on its own
+    from the same model, so the pictures are the same bytes as one by one; numpy lets go of the interpreter in its big
+    steps (libigl's Embree call doesn't), so 8 threads drew the mech's 24 close frames 5.4 -> 3.5 s (2026-11-27)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(min(DRAW_THREADS, len(jobs)) or 1) as pool:
+        return list(pool.map(lambda job: _draw(m, *job), jobs))
+
+
 def _sphere(k: int):
     """k directions spread evenly over the sphere (a Fibonacci spiral: the same every run)."""
     import numpy as np
@@ -374,9 +389,9 @@ def compare(original: Path, result: Path, shift, preview: Path | None = None, re
     b = _load(Path(result), tex)
     b["V"] = b["V"] - np.asarray(shift, float)
     per_view, rows = {}, []
-    for name, view in VIEWS.items():
+    drawn_b = _draw_all(b, [(centre, radius, view, res) for view in VIEWS.values()])
+    for (name, view), (mb, pb) in zip(VIEWS.items(), drawn_b):
         ma, pa = drawn_views[name]
-        mb, pb = _draw(b, centre, radius, view, res)
         both, union = ma & mb, ma | mb
         diff = {k: float(np.abs(pa[k] - pb[k]).mean(-1)[both].mean()) if both.any() else 0.0 for k in pa}
         glance = np.where(ma ^ mb, 1.0, np.abs(pa["look"] - pb["look"]).mean(-1))
@@ -544,8 +559,8 @@ def close_up(original: Path, result: Path, shift) -> dict[str, Any]:
     b = _load(Path(result), CLOSE_TEX)
     b["V"] = b["V"] - np.asarray(shift, float)
     frames = []
-    for at, half, view, ma, seen_a in originals:
-        mb, pb = _draw(b, at, half, view, CLOSE_RES, CLOSE_AWAY * half / CLOSE_FRAME)
+    drawn_b = _draw_all(b, [(at, half, view, CLOSE_RES, CLOSE_AWAY * half / CLOSE_FRAME) for at, half, view, _, _ in originals])
+    for (at, half, view, ma, seen_a), (mb, pb) in zip(originals, drawn_b):
         union = ma | mb
         if union.mean() < 0.1:
             continue
