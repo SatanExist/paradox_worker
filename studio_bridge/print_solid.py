@@ -830,12 +830,25 @@ def _manifold_union(meshes):
     return trimesh.Trimesh(np.array(g.vert_properties[:, :3], np.float64), np.array(g.tri_verts, np.int64), process=False)
 
 
+def _exact_union(V, F):
+    """libigl's exact self-union (CGAL arithmetic) of one mesh, written the same way every run. Its parallel loops
+    start a few output triangles at another corner from run to run (hunyuan31_drill: 1-6 of 20k; vertices, faces,
+    their order and birth faces otherwise the same), so the same model gave two files. Blender fixed the same in
+    its boolean's parallel loop (T92962); libigl comes built, so each triangle is turned to start at its smallest
+    vertex: a cyclic shift, the side it faces stays. The cube children run this function's source too."""
+    import igl.copyleft.cgal as cgal
+    import numpy as np
+
+    V, F, _ = cgal.mesh_boolean(np.asarray(V, np.float64), np.asarray(F, np.int64), type_str="union")
+    F = np.asarray(F, np.int64)
+    k = np.argmin(F, axis=1) if len(F) else np.zeros(0, np.int64)
+    return np.asarray(V, np.float64), F[np.arange(len(F))[:, None], (k[:, None] + np.arange(3)) % 3]
+
+
 def _union(*meshes):
     """One union. Several meshes: Manifold when it takes them all (see _manifold_union). One mesh, or what
     Manifold won't take: one exact union in CGAL arithmetic, which resolves every self-crossing. Needs
     consistently oriented input."""
-    import igl.copyleft.cgal as cgal
-    import numpy as np
     import trimesh
 
     if len(meshes) > 1:
@@ -843,7 +856,7 @@ def _union(*meshes):
         if out is not None:
             return out
     allm = trimesh.util.concatenate(list(meshes)) if len(meshes) > 1 else meshes[0]
-    V, F, _ = cgal.mesh_boolean(np.asarray(allm.vertices, np.float64), np.asarray(allm.faces, np.int64), type_str="union")
+    V, F = _exact_union(allm.vertices, allm.faces)
     return trimesh.Trimesh(V, F, process=False)
 
 
@@ -2591,12 +2604,11 @@ UNION_PEAK_PER_FACE_KB = 1.4
 # 2.17M + 1.67M faces, more than the union before it; two meshes 0.01 mm apart took 0.7 KB a face, as the cubes' join).
 JOIN_SAME_PEAK_PER_FACE_KB = 1.5
 
-_BLOCK_CHILD = _GONE_WITH_PARENT + r"""
+_BLOCK_CHILD = _GONE_WITH_PARENT + __import__("inspect").getsource(_exact_union) + r"""
 import numpy as np
-import igl.copyleft.cgal as cgal
 with np.load(sys.argv[1]) as d:
     V, F = d["V"], d["F"]
-V, F, _ = cgal.mesh_boolean(V, F, type_str="union")
+V, F = _exact_union(V, F)
 np.savez(sys.argv[2] + ".part.npz", V=np.asarray(V, np.float64), F=np.asarray(F, np.int64))
 os.replace(sys.argv[2] + ".part.npz", sys.argv[2])
 """
@@ -2698,7 +2710,7 @@ def _grown_union(body, V0, F, X, log: Log):
                     JOIN_SAME_PEAK_PER_FACE_KB * 2**10 * (len(body.faces) + len(Fm)))
         if mine() + whole <= budget:
             t1 = time.time()
-            Vu, Fu, _ = cgal.mesh_boolean(Vm, Fm, type_str="union")
+            Vu, Fu = _exact_union(Vm, Fm)
             del Vm, Fm
             t2 = time.time()
             out = joined([closed(Vu, Fu)])
