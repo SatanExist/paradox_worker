@@ -228,14 +228,27 @@ def _drop_pockets(m):
     return trimesh.util.concatenate(kept) if kept else m
 
 
-def _union(*meshes):
-    """One exact union (CGAL arithmetic): resolves every self-crossing. Needs consistently oriented input."""
+def _exact_union(V, F):
+    """libigl's exact self-union (CGAL arithmetic) of one mesh, written the same way every run. Its parallel loops
+    start a few output triangles at another corner from run to run (hunyuan31_drill: 1-6 of 20k; vertices, faces,
+    their order and birth faces otherwise the same), so the same model gave two files. Blender fixed the same in
+    its boolean's parallel loop (T92962); libigl comes built, so each triangle is turned to start at its smallest
+    vertex: a cyclic shift, the side it faces stays."""
     import igl.copyleft.cgal as cgal
     import numpy as np
+
+    V, F, _ = cgal.mesh_boolean(np.asarray(V, np.float64), np.asarray(F, np.int64), type_str="union")
+    F = np.asarray(F, np.int64)
+    k = np.argmin(F, axis=1) if len(F) else np.zeros(0, np.int64)
+    return np.asarray(V, np.float64), F[np.arange(len(F))[:, None], (k[:, None] + np.arange(3)) % 3]
+
+
+def _union(*meshes):
+    """One exact union (CGAL arithmetic): resolves every self-crossing. Needs consistently oriented input."""
     import trimesh
 
     allm = trimesh.util.concatenate(list(meshes)) if len(meshes) > 1 else meshes[0]
-    V, F, _ = cgal.mesh_boolean(np.asarray(allm.vertices, np.float64), np.asarray(allm.faces, np.int64), type_str="union")
+    V, F = _exact_union(allm.vertices, allm.faces)
     return trimesh.Trimesh(V, F, process=False)
 
 
